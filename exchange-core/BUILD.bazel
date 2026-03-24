@@ -92,3 +92,54 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "composite_listener",
+    hdrs = ["composite_listener.h"],
+    deps = [":listeners"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "composite_listener_test",
+    srcs = ["composite_listener_test.cc"],
+    deps = [
+        ":composite_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "orderbook",
+    srcs = ["orderbook.cc"],
+    hdrs = ["orderbook.h"],
+    deps = [":types", ":intrusive_list"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "orderbook_test",
+    srcs = ["orderbook_test.cc"],
+    deps = [
+        ":orderbook",
+        ":object_pool",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "match_algo",
+    hdrs = ["match_algo.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "match_algo_test",
+    srcs = ["match_algo_test.cc"],
+    deps = [
+        ":match_algo",
+        ":intrusive_list",
+        "@googletest//:gtest_main",
+    ],
+)
