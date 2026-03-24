@@ -754,7 +754,249 @@ The following journal files cover all engine behavior:
 
 ---
 
-## 9. Directory Structure
+## 9. SPSC Ring Buffer
+
+A lock-free single-producer single-consumer ring buffer for zero-copy inter-process and
+inter-thread communication. Lives in exchange-core as a reusable primitive.
+
+### 9.1 Design
+
+```cpp
+template <typename T, size_t Capacity>
+class SpscRingBuffer {
+    static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
+
+    alignas(64) std::atomic<size_t> write_pos_{0};  // cache-line aligned
+    alignas(64) std::atomic<size_t> read_pos_{0};   // separate cache line
+    alignas(64) std::array<T, Capacity> buffer_;
+
+public:
+    bool try_push(const T& item);    // returns false if full
+    bool try_pop(T& item);           // returns false if empty
+    size_t size() const;
+    bool empty() const;
+    bool full() const;
+};
+```
+
+**Key properties:**
+- Lock-free: uses `std::atomic` with acquire/release semantics, no mutexes
+- Cache-friendly: write_pos and read_pos on separate cache lines to avoid false sharing
+- Power-of-2 capacity: enables bitwise modulo (`pos & (Capacity - 1)`) instead of division
+- Fixed-size: entire buffer is pre-allocated, zero heap allocation after construction
+- Single producer, single consumer: no CAS loops needed, just load/store with memory ordering
+
+### 9.2 Shared Memory Transport
+
+For inter-process visualization, the ring buffer is placed in POSIX shared memory:
+
+```cpp
+// Producer side (engine process)
+class ShmProducer {
+    int fd_;
+    void* mapped_;
+    SpscRingBuffer<RecordedEvent, 65536>* ring_;
+
+public:
+    ShmProducer(const std::string& shm_name);  // shm_open + mmap + placement new
+    ~ShmProducer();                              // munmap + shm_unlink
+    bool publish(const RecordedEvent& event);
+};
+
+// Consumer side (viewer process)
+class ShmConsumer {
+    int fd_;
+    void* mapped_;
+    SpscRingBuffer<RecordedEvent, 65536>* ring_;
+
+public:
+    ShmConsumer(const std::string& shm_name);   // shm_open + mmap
+    ~ShmConsumer();                              // munmap + close
+    bool poll(RecordedEvent& event);
+};
+```
+
+The `RecordedEvent` struct must be trivially copyable for shared memory transport. This is
+already the case since all event fields are plain integers and enums.
+
+---
+
+## 10. Visualization Tools
+
+### 10.1 Offline Journal Visualizer
+
+A CLI tool that reads `.journal` files and replays them step-by-step, rendering the
+orderbook state at each action.
+
+**Usage:**
+
+```bash
+exchange-viz replay test-journals/limit_partial_fill.journal     # auto-step
+exchange-viz replay test-journals/limit_partial_fill.journal -i  # interactive (keyboard step)
+```
+
+**Display layout (FTXUI):**
+
+```
+┌─ Orderbook ──────────────────────┐  ┌─ Recent Trades ──────────┐
+│  BIDS            │  ASKS          │  │ 100.50 x 3   [id2 x id1]│
+│  100.50    7  (1)│  101.00  10 (1)│  │                          │
+│  100.25    5  (1)│  101.50  20 (2)│  │                          │
+│  100.00   15  (3)│  102.00   5 (1)│  │                          │
+└──────────────────┴────────────────┘  └──────────────────────────┘
+┌─ Order Events ────────────────────────────────────────────────────┐
+│ [ts=2000] ORDER_ACCEPTED id=2 cl_ord_id=2                        │
+│ [ts=2000] PARTIAL_FILL aggressor=2 resting=1 @ 100.50 qty=3      │
+│ [ts=2000] TRADE 100.50 x 3                                       │
+└───────────────────────────────────────────────────────────────────┘
+┌─ Status ──────────────────────────────────────────────────────────┐
+│ Action 3/15 │ Orders: 4/1000 │ Levels: 6/100 │ [n]ext [p]rev [q]│
+└───────────────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- Reconstructs orderbook state from L2/L3 events at each step
+- Interactive mode: `n` = next action, `p` = previous (rewind by replaying from start),
+  `q` = quit, `g` = go to action number
+- Shows bid/ask depth with order count per level
+- Shows recent trades
+- Shows order event log
+- Status bar with pool utilization and navigation
+
+**Implementation:** The visualizer reuses `JournalParser` from the test harness. It does
+NOT depend on the matching engine — it reconstructs state purely from the journal events.
+This means it works for both recorded production journals and hand-written test journals.
+
+### 10.2 Live TUI Viewer
+
+A separate process that reads events from a shared memory ring buffer and renders the
+same TUI display in real-time.
+
+**Usage:**
+
+```bash
+exchange-viz live /exchange-events    # reads from shm ring buffer
+```
+
+**Shared Memory Listener:**
+
+```cpp
+class SharedMemoryOrderListener : public OrderListenerBase {
+    ShmProducer& producer_;
+public:
+    explicit SharedMemoryOrderListener(ShmProducer& producer);
+    void on_order_accepted(const OrderAccepted& e) {
+        producer_.publish(RecordedEvent{e});
+    }
+    // ... same for all events
+};
+
+class SharedMemoryMdListener : public MarketDataListenerBase {
+    ShmProducer& producer_;
+public:
+    explicit SharedMemoryMdListener(ShmProducer& producer);
+    void on_top_of_book(const TopOfBook& e) {
+        producer_.publish(RecordedEvent{e});
+    }
+    // ... same for all events
+};
+```
+
+These listeners are included in a `CompositeListener` alongside the production listeners.
+The cost on the hot path is one `try_push` per event (a single atomic store if the buffer
+is not full — typically < 10ns).
+
+**Viewer architecture:**
+
+```
+Engine process:                         Viewer process:
+  MatchingEngine                          exchange-viz live /exchange-events
+    |                                          |
+    v                                          v
+  CompositeListener                       ShmConsumer
+    |-> ProductionListener                     |
+    |-> SharedMemoryOrderListener ──shm──>  poll loop
+    |-> SharedMemoryMdListener   ──shm──>     |
+                                               v
+                                          FTXUI TUI render
+```
+
+The viewer polls the ring buffer in a loop, reconstructs orderbook state from events,
+and re-renders the FTXUI display. If the viewer falls behind, events are dropped (ring
+buffer full → `try_push` returns false). This is acceptable for visualization — the viewer
+catches up on the next successful read.
+
+**Shared TUI code:** Both the offline visualizer and live viewer share the same FTXUI
+rendering components. The only difference is the event source (journal parser vs. shm consumer).
+
+---
+
+## 11. Directory Structure
+
+```
+exchange/
+├── MODULE.bazel
+├── .bazelrc
+├── BUILD.bazel
+├── exchange-core/
+│   ├── BUILD.bazel
+│   ├── types.h                  # Price, Quantity, OrderId, Timestamp, enums, Order, PriceLevel, FillResult
+│   ├── object_pool.h            # ObjectPool<T, Capacity>
+│   ├── object_pool_test.cc
+│   ├── intrusive_list.h         # Intrusive doubly-linked list operations
+│   ├── intrusive_list_test.cc
+│   ├── spsc_ring_buffer.h       # Lock-free SPSC ring buffer
+│   ├── spsc_ring_buffer_test.cc
+│   ├── events.h                 # All callback event structs
+│   ├── listeners.h              # OrderListenerBase, MarketDataListenerBase
+│   ├── composite_listener.h     # CompositeOrderListener, CompositeMdListener
+│   ├── composite_listener_test.cc
+│   ├── orderbook.h              # OrderBook (bid/ask price level management)
+│   ├── orderbook.cc
+│   ├── orderbook_test.cc
+│   ├── stop_book.h              # Stop order management
+│   ├── stop_book.cc
+│   ├── stop_book_test.cc
+│   ├── match_algo.h             # FifoMatch, ProRataMatch policies
+│   ├── match_algo_test.cc
+│   ├── matching_engine.h        # MatchingEngine template
+│   └── matching_engine_test.cc  # Unit tests using direct C++ assertions
+│
+├── test-harness/
+│   ├── BUILD.bazel
+│   ├── recorded_event.h         # RecordedEvent variant type
+│   ├── recording_listener.h     # RecordingOrderListener, RecordingMdListener
+│   ├── recording_listener_test.cc
+│   ├── journal_parser.h         # Parse .journal files
+│   ├── journal_parser.cc
+│   ├── journal_parser_test.cc
+│   ├── journal_writer.h         # Write recorded events to .journal format
+│   ├── journal_writer.cc
+│   ├── journal_writer_test.cc
+│   ├── test_runner.h            # Replay journal + assert
+│   ├── test_runner.cc
+│   └── test_runner_test.cc
+│
+├── test-journals/
+│   └── *.journal                # Test scenario files (see Section 8.8)
+│
+├── tools/
+│   ├── BUILD.bazel
+│   ├── shm_transport.h          # ShmProducer, ShmConsumer (POSIX shm wrappers)
+│   ├── shm_transport.cc
+│   ├── shm_transport_test.cc
+│   ├── shm_listener.h           # SharedMemoryOrderListener, SharedMemoryMdListener
+│   ├── tui_renderer.h           # Shared FTXUI rendering components
+│   ├── tui_renderer.cc
+│   ├── orderbook_state.h        # Reconstructed orderbook state from events
+│   ├── orderbook_state.cc
+│   ├── orderbook_state_test.cc
+│   ├── viz_replay.cc            # Offline journal visualizer (main)
+│   └── viz_live.cc              # Live shared memory viewer (main)
+│
+└── docs/
+    └── 2026-03-24-exchange-core-design.md
+```
 
 ```
 exchange/
@@ -807,7 +1049,7 @@ exchange/
 
 ---
 
-## 10. Implementation Tasks
+## 12. Implementation Tasks
 
 Tasks are ordered by dependency. Tasks within the same group have no dependencies on
 each other and can be implemented in parallel. Each task targets under 200 lines of code.
@@ -821,68 +1063,87 @@ each other and can be implemented in parallel. Each task targets under 200 lines
 | 3 | Intrusive linked list | `intrusive_list.h`, `intrusive_list_test.cc` | ~180 | insert_before, insert_after, remove, push_back, push_front operations + tests |
 | 4 | Callback event structs | `events.h` | ~100 | All event structs from Section 6.1 and 6.2, including OrderModifyRejected |
 | 5 | Listener interfaces | `listeners.h` | ~60 | OrderListenerBase and MarketDataListenerBase with default no-ops |
+| 6 | SPSC ring buffer | `spsc_ring_buffer.h`, `spsc_ring_buffer_test.cc` | ~180 | Lock-free SPSC ring buffer with power-of-2 capacity, cache-line aligned atomics, tests for push/pop/full/empty/wrap-around |
 
 ### Group 2 — Core Components (depends on Group 1)
 
 | # | Task | Files | Est. Lines | Description |
 |---|------|-------|-----------|-------------|
-| 6 | Composite listener | `composite_listener.h`, `composite_listener_test.cc` | ~150 | CompositeOrderListener and CompositeMdListener with fold-expression dispatch + tests |
-| 7 | Orderbook | `orderbook.h`, `orderbook.cc`, `orderbook_test.cc` | ~200 | Insert/remove orders, maintain sorted price levels, best bid/ask, level aggregation. Tests for insert, remove, price level creation/deletion |
-| 8 | Stop book | `stop_book.h`, `stop_book.cc`, `stop_book_test.cc` | ~180 | Insert stop orders, trigger check, remove triggered orders. Tests for trigger logic and cascade |
-| 9 | FIFO matching algorithm | `match_algo.h` (FIFO part), `match_algo_test.cc` (FIFO tests) | ~150 | FifoMatch::match implementation + tests for single fill, multi-fill, level exhaustion |
-| 10 | Pro-rata matching algorithm | `match_algo.h` (ProRata part), `match_algo_test.cc` (ProRata tests) | ~180 | ProRataMatch::match with remainder distribution + tests for proportional split, rounding, single-order edge case |
+| 7 | Composite listener | `composite_listener.h`, `composite_listener_test.cc` | ~150 | CompositeOrderListener and CompositeMdListener with fold-expression dispatch + tests |
+| 8 | Orderbook | `orderbook.h`, `orderbook.cc`, `orderbook_test.cc` | ~200 | Insert/remove orders, maintain sorted price levels, best bid/ask, level aggregation. Tests for insert, remove, price level creation/deletion |
+| 9 | Stop book | `stop_book.h`, `stop_book.cc`, `stop_book_test.cc` | ~180 | Insert stop orders, trigger check, remove triggered orders. Tests for trigger logic and cascade |
+| 10 | FIFO matching algorithm | `match_algo.h` (FIFO part), `match_algo_test.cc` (FIFO tests) | ~150 | FifoMatch::match implementation + tests for single fill, multi-fill, level exhaustion |
+| 11 | Pro-rata matching algorithm | `match_algo.h` (ProRata part), `match_algo_test.cc` (ProRata tests) | ~180 | ProRataMatch::match with remainder distribution + tests for proportional split, rounding, single-order edge case |
 
 ### Group 3 — Matching Engine (depends on Group 2)
 
 | # | Task | Files | Est. Lines | Description |
 |---|------|-------|-----------|-------------|
-| 11 | Engine: order validation + acceptance | `matching_engine.h` (partial) | ~200 | EngineConfig, OrderRequest, ModifyRequest, new_order validation path (tick/lot/band/tif/pool/id-space checks), OrderAccepted/Rejected callbacks, CRTP hooks. Unimplemented methods stubbed with assert(false). |
-| 12 | Engine: limit order matching | `matching_engine.h` (partial) | ~200 | Limit order match-and-insert flow, fill callbacks, market data callbacks, SMP check |
-| 13 | Engine: market/stop/stop-limit | `matching_engine.h` (partial) | ~180 | Market order handling (fill or cancel), stop/stop-limit insertion and trigger logic with iterative cascade |
-| 14 | Engine: cancel and modify | `matching_engine.h` (partial) | ~180 | cancel_order, modify_order (cancel-replace + amend-down policies), reject paths including OrderModifyRejected |
-| 15 | Engine: TIF handling + expiry | `matching_engine.h` (partial) | ~120 | IOC/FOK post-match logic, trigger_expiry for DAY/GTD bulk expiration (linear scan) |
-| 16 | Engine unit tests: core paths | `matching_engine_test.cc` (partial) | ~200 | Basic limit fill, market fill, cancel, reject paths |
-| 17 | Engine unit tests: advanced paths | `matching_engine_test.cc` (partial) | ~200 | Modify, SMP, stop triggers, TIF expiry, pool exhaustion |
+| 12 | Engine: order validation + acceptance | `matching_engine.h` (partial) | ~200 | EngineConfig, OrderRequest, ModifyRequest, new_order validation path (tick/lot/band/tif/pool/id-space checks), OrderAccepted/Rejected callbacks, CRTP hooks. Unimplemented methods stubbed with assert(false). |
+| 13 | Engine: limit order matching | `matching_engine.h` (partial) | ~200 | Limit order match-and-insert flow, fill callbacks, market data callbacks, SMP check |
+| 14 | Engine: market/stop/stop-limit | `matching_engine.h` (partial) | ~180 | Market order handling (fill or cancel), stop/stop-limit insertion and trigger logic with iterative cascade |
+| 15 | Engine: cancel and modify | `matching_engine.h` (partial) | ~180 | cancel_order, modify_order (cancel-replace + amend-down policies), reject paths including OrderModifyRejected |
+| 16 | Engine: TIF handling + expiry | `matching_engine.h` (partial) | ~120 | IOC/FOK post-match logic, trigger_expiry for DAY/GTD bulk expiration (linear scan) |
+| 17 | Engine unit tests: core paths | `matching_engine_test.cc` (partial) | ~200 | Basic limit fill, market fill, cancel, reject paths |
+| 18 | Engine unit tests: advanced paths | `matching_engine_test.cc` (partial) | ~200 | Modify, SMP, stop triggers, TIF expiry, pool exhaustion |
 
 ### Group 4 — Test Harness (depends on Group 1 only)
 
 | # | Task | Files | Est. Lines | Description |
 |---|------|-------|-----------|-------------|
-| 18 | Recorded event type | `recorded_event.h` | ~120 | RecordedEvent variant (std::variant or tagged union) covering all event types, equality comparison, to_string |
-| 19 | Recording listeners | `recording_listener.h`, `recording_listener_test.cc` | ~150 | RecordingOrderListener + RecordingMdListener, capture to vector, clear/size, tests |
-| 20 | Journal parser | `journal_parser.h`, `journal_parser.cc`, `journal_parser_test.cc` | ~200 | Parse CONFIG, ACTION and EXPECT lines, key=value extraction, error reporting on malformed lines |
-| 21 | Journal writer | `journal_writer.h`, `journal_writer.cc`, `journal_writer_test.cc` | ~150 | Serialize config + actions + recorded events to .journal text format, round-trip test with parser |
-| 22 | Test runner | `test_runner.h`, `test_runner.cc`, `test_runner_test.cc` | ~200 | Replay actions into engine, collect recorded events, compare against expectations, produce TestResult with diff |
+| 19 | Recorded event type | `recorded_event.h` | ~120 | RecordedEvent variant (std::variant or tagged union) covering all event types, equality comparison, to_string |
+| 20 | Recording listeners | `recording_listener.h`, `recording_listener_test.cc` | ~150 | RecordingOrderListener + RecordingMdListener, capture to vector, clear/size, tests |
+| 21 | Journal parser | `journal_parser.h`, `journal_parser.cc`, `journal_parser_test.cc` | ~200 | Parse CONFIG, ACTION and EXPECT lines, key=value extraction, error reporting on malformed lines |
+| 22 | Journal writer | `journal_writer.h`, `journal_writer.cc`, `journal_writer_test.cc` | ~150 | Serialize config + actions + recorded events to .journal text format, round-trip test with parser |
+| 23 | Test runner | `test_runner.h`, `test_runner.cc`, `test_runner_test.cc` | ~200 | Replay actions into engine, collect recorded events, compare against expectations, produce TestResult with diff |
 
 ### Group 5 — Journal Test Scenarios (depends on Groups 3 + 4)
 
 | # | Task | Files | Est. Lines | Description |
 |---|------|-------|-----------|-------------|
-| 23 | Happy path journals | `test-journals/basic_*.journal`, `limit_*.journal`, `market_*.journal`, `multiple_fills.journal` | ~200 | 8 journal files covering basic order entry and fills |
-| 24 | Order type journals | `test-journals/stop_*.journal`, `cancel_stop_order.journal`, `modify_stop_order.journal` | ~150 | 5 journal files for stop and stop-limit behavior |
-| 25 | TIF journals | `test-journals/ioc_*.journal`, `fok_*.journal`, `gtd_*.journal`, `day_*.journal` | ~180 | 8 journal files for all TIF behaviors |
-| 26 | Matching algo journals | `test-journals/fifo_*.journal`, `pro_rata_*.journal` | ~150 | 5 journal files for FIFO and pro-rata matching |
-| 27 | Cancel/modify journals | `test-journals/cancel_*.journal`, `modify_*.journal` | ~180 | 9 journal files for cancel and modify paths |
-| 28 | Failure/edge case journals | `test-journals/pool_*.journal`, `self_match_*.journal`, `*_reject.journal`, `empty_*.journal`, `market_order_tif.journal` | ~200 | 11 journal files for error handling and edge cases |
-| 29 | Market data journals | `test-journals/l1_*.journal`, `l2_*.journal`, `l3_*.journal`, `trade_*.journal` | ~150 | 4 journal files verifying all market data callback correctness |
-| 30 | Journal integration test | `test-harness/journal_integration_test.cc` | ~100 | Bazel test that loads and runs all .journal files, maps filenames to engine types (pro_rata_* -> ProRata engine, all others -> FIFO), fails if any scenario fails |
+| 24 | Happy path journals | `test-journals/basic_*.journal`, `limit_*.journal`, `market_*.journal`, `multiple_fills.journal` | ~200 | 8 journal files covering basic order entry and fills |
+| 25 | Order type journals | `test-journals/stop_*.journal`, `cancel_stop_order.journal`, `modify_stop_order.journal` | ~150 | 5 journal files for stop and stop-limit behavior |
+| 26 | TIF journals | `test-journals/ioc_*.journal`, `fok_*.journal`, `gtd_*.journal`, `day_*.journal` | ~180 | 8 journal files for all TIF behaviors |
+| 27 | Matching algo journals | `test-journals/fifo_*.journal`, `pro_rata_*.journal` | ~150 | 5 journal files for FIFO and pro-rata matching |
+| 28 | Cancel/modify journals | `test-journals/cancel_*.journal`, `modify_*.journal` | ~180 | 9 journal files for cancel and modify paths |
+| 29 | Failure/edge case journals | `test-journals/pool_*.journal`, `self_match_*.journal`, `*_reject.journal`, `empty_*.journal`, `market_order_tif.journal` | ~200 | 11 journal files for error handling and edge cases |
+| 30 | Market data journals | `test-journals/l1_*.journal`, `l2_*.journal`, `l3_*.journal`, `trade_*.journal` | ~150 | 4 journal files verifying all market data callback correctness |
+| 31 | Journal integration test | `test-harness/journal_integration_test.cc` | ~100 | Bazel test that loads and runs all .journal files, maps filenames to engine types (pro_rata_* -> ProRata engine, all others -> FIFO), fails if any scenario fails |
+
+### Group 6 — Visualization Tools (depends on Groups 1 + 4 for offline, Group 6a for live)
+
+| # | Task | Files | Est. Lines | Description |
+|---|------|-------|-----------|-------------|
+| 32 | Orderbook state reconstructor | `tools/orderbook_state.h`, `tools/orderbook_state.cc`, `tools/orderbook_state_test.cc` | ~200 | Reconstructs orderbook state (depth, trades, events) from a stream of RecordedEvents. Stateful: apply events incrementally. Tests for add/fill/cancel/level transitions. |
+| 33 | TUI renderer | `tools/tui_renderer.h`, `tools/tui_renderer.cc` | ~200 | FTXUI components: orderbook depth panel, recent trades panel, order event log, status bar. Takes OrderbookState as input, returns ftxui::Element. Shared by both offline and live viewers. |
+| 34 | Offline journal visualizer | `tools/viz_replay.cc` | ~150 | Main binary: loads journal via JournalParser, replays action-by-action, feeds events to OrderbookState, renders via TuiRenderer. Interactive keyboard controls (next/prev/goto/quit). |
+| 35 | Shared memory transport | `tools/shm_transport.h`, `tools/shm_transport.cc`, `tools/shm_transport_test.cc` | ~180 | ShmProducer + ShmConsumer wrapping POSIX shm_open/mmap over SpscRingBuffer. Tests for create/attach/publish/poll lifecycle. |
+| 36 | Shared memory listeners | `tools/shm_listener.h` | ~80 | SharedMemoryOrderListener + SharedMemoryMdListener: publish events to ShmProducer. Thin wrappers. |
+| 37 | Live TUI viewer | `tools/viz_live.cc` | ~120 | Main binary: attaches to shm via ShmConsumer, polls events, feeds to OrderbookState, renders via TuiRenderer. |
 
 ### Dependency Graph
 
 ```
-Group 1: [1] [2] [3] [4] [5]              (all parallel)
+Group 1: [1] [2] [3] [4] [5] [6]          (all parallel)
               |           |
-Group 2: [6] [7] [8] [9] [10]             (all parallel, depend on G1)
+Group 2: [7] [8] [9] [10] [11]            (all parallel, depend on G1)
               |
-Group 3: [11] -> [12] -> [13]             (sequential: validation -> matching -> order types)
+Group 3: [12] -> [13] -> [14]             (sequential: validation -> matching -> order types)
                    |
-                   +-> [14]                (cancel/modify needs matching)
-                   +-> [15]                (TIF needs post-match logic)
-          [16] [17] (after 11-15)          (unit tests need full engine)
+                   +-> [15]                (cancel/modify needs matching)
+                   +-> [16]                (TIF needs post-match logic)
+          [17] [18] (after 12-16)          (unit tests need full engine)
 
-Group 4: [18] [19] [20] [21]              (all parallel, depend on G1 only)
-          [22] (after 18-21)               (test runner needs all harness pieces)
+Group 4: [19] [20] [21] [22]              (all parallel, depend on G1 only)
+          [23] (after 19-22)               (test runner needs all harness pieces)
 
-Group 5: [23]-[29]                         (all parallel, depend on G3 + G4)
-          [30] (after 23-29)               (integration test needs all journals)
+Group 5: [24]-[30]                         (all parallel, depend on G3 + G4)
+          [31] (after 24-30)               (integration test needs all journals)
+
+Group 6: [32] (depends on G4: recorded_event)
+          [33] (depends on 32)
+          [34] (depends on 33 + G4: journal_parser)
+          [35] (depends on G1: spsc_ring_buffer)
+          [36] (depends on 35 + G1: listeners)
+          [37] (depends on 33 + 35)
 ```
