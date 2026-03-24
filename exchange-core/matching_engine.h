@@ -75,100 +75,46 @@ public:
     MatchingEngine(MatchingEngine&&) = delete;
     MatchingEngine& operator=(MatchingEngine&&) = delete;
 
-    // -----------------------------------------------------------------
     // new_order -- validate, accept, and route an incoming order
-    // -----------------------------------------------------------------
+
     void new_order(const OrderRequest& req) {
-        // 1. CRTP validation hook
-        if (!derived().on_validate_order(req)) {
-            order_listener_.on_order_rejected(OrderRejected{
-                req.client_order_id, req.timestamp,
-                RejectReason::ExchangeSpecific});
-            return;
-        }
+        auto reject = [&](RejectReason r) {
+            order_listener_.on_order_rejected(
+                OrderRejected{req.client_order_id, req.timestamp, r});
+        };
 
-        // 2. TIF validation hook
-        if (!derived().is_tif_valid(req.tif)) {
-            order_listener_.on_order_rejected(OrderRejected{
-                req.client_order_id, req.timestamp,
-                RejectReason::InvalidTif});
-            return;
-        }
+        if (!derived().on_validate_order(req))
+            { reject(RejectReason::ExchangeSpecific); return; }
+        if (!derived().is_tif_valid(req.tif))
+            { reject(RejectReason::InvalidTif); return; }
+        if (req.quantity <= 0)
+            { reject(RejectReason::InvalidQuantity); return; }
+        if (config_.lot_size > 0 && (req.quantity % config_.lot_size) != 0)
+            { reject(RejectReason::InvalidQuantity); return; }
 
-        // 3. Quantity must be positive
-        if (req.quantity <= 0) {
-            order_listener_.on_order_rejected(OrderRejected{
-                req.client_order_id, req.timestamp,
-                RejectReason::InvalidQuantity});
-            return;
-        }
-
-        // 4. Lot size check
-        if (config_.lot_size > 0 && (req.quantity % config_.lot_size) != 0) {
-            order_listener_.on_order_rejected(OrderRejected{
-                req.client_order_id, req.timestamp,
-                RejectReason::InvalidQuantity});
-            return;
-        }
-
-        // 5. Price validation for Limit and StopLimit orders
+        // Price validation for Limit and StopLimit
         if (req.type == OrderType::Limit || req.type == OrderType::StopLimit) {
-            if (req.price <= 0) {
-                order_listener_.on_order_rejected(OrderRejected{
-                    req.client_order_id, req.timestamp,
-                    RejectReason::InvalidPrice});
-                return;
-            }
-
-            // Tick size check
-            if (config_.tick_size > 0 && (req.price % config_.tick_size) != 0) {
-                order_listener_.on_order_rejected(OrderRejected{
-                    req.client_order_id, req.timestamp,
-                    RejectReason::InvalidPrice});
-                return;
-            }
-
-            // Price band check
-            if (config_.price_band_low > 0 && req.price < config_.price_band_low) {
-                order_listener_.on_order_rejected(OrderRejected{
-                    req.client_order_id, req.timestamp,
-                    RejectReason::PriceBandViolation});
-                return;
-            }
-            if (config_.price_band_high > 0 && req.price > config_.price_band_high) {
-                order_listener_.on_order_rejected(OrderRejected{
-                    req.client_order_id, req.timestamp,
-                    RejectReason::PriceBandViolation});
-                return;
-            }
+            if (req.price <= 0)
+                { reject(RejectReason::InvalidPrice); return; }
+            if (config_.tick_size > 0 && (req.price % config_.tick_size) != 0)
+                { reject(RejectReason::InvalidPrice); return; }
+            if (config_.price_band_low > 0 && req.price < config_.price_band_low)
+                { reject(RejectReason::PriceBandViolation); return; }
+            if (config_.price_band_high > 0 && req.price > config_.price_band_high)
+                { reject(RejectReason::PriceBandViolation); return; }
         }
 
-        // 6. Stop price validation for Stop/StopLimit
-        if (req.type == OrderType::Stop || req.type == OrderType::StopLimit) {
-            if (req.stop_price <= 0) {
-                order_listener_.on_order_rejected(OrderRejected{
-                    req.client_order_id, req.timestamp,
-                    RejectReason::InvalidPrice});
-                return;
-            }
-        }
+        // Stop price validation
+        if ((req.type == OrderType::Stop || req.type == OrderType::StopLimit)
+            && req.stop_price <= 0)
+            { reject(RejectReason::InvalidPrice); return; }
 
-        // 7. ID space check
-        if (next_order_id_ >= MaxOrderIds) {
-            order_listener_.on_order_rejected(OrderRejected{
-                req.client_order_id, req.timestamp,
-                RejectReason::PoolExhausted});
-            return;
-        }
+        if (next_order_id_ >= MaxOrderIds)
+            { reject(RejectReason::PoolExhausted); return; }
 
-        // 8. Pool check
         Order* order = order_pool_.allocate();
-        if (order == nullptr) {
-            order_listener_.on_order_rejected(OrderRejected{
-                req.client_order_id, req.timestamp,
-                RejectReason::PoolExhausted});
-            return;
-        }
+        if (order == nullptr)
+            { reject(RejectReason::PoolExhausted); return; }
 
         // 9. Initialize order and assign sequential ID
         order->id                 = next_order_id_++;
@@ -212,142 +158,45 @@ public:
         check_and_trigger_stops(req.timestamp);
     }
 
-    // -----------------------------------------------------------------
     // cancel_order -- remove order from book/stop book, fire callbacks
-    // -----------------------------------------------------------------
+
     void cancel_order(OrderId id, Timestamp ts) {
-        // Validate order ID range
         if (id == 0 || id >= MaxOrderIds || order_index_[id] == nullptr) {
             order_listener_.on_order_cancel_rejected(
                 OrderCancelRejected{id, 0, ts, RejectReason::UnknownOrder});
             return;
         }
-
-        Order* order = order_index_[id];
-        Price old_best_bid = book_.best_bid()
-                                 ? book_.best_bid()->price : 0;
-        Price old_best_ask = book_.best_ask()
-                                 ? book_.best_ask()->price : 0;
-
-        // Determine if order is in the stop book or the order book
-        bool in_stop_book = (order->type == OrderType::Stop ||
-                             order->type == OrderType::StopLimit);
-
-        if (in_stop_book) {
-            PriceLevel* freed = stop_book_.remove_stop(order);
-            order_index_[order->id] = nullptr;
-            order_listener_.on_order_cancelled(OrderCancelled{
-                order->id, ts, CancelReason::UserRequested});
-            if (freed) {
-                level_pool_.deallocate(freed);
-            }
-            order_pool_.deallocate(order);
-            return;
-        }
-
-        // Order is in the order book
-        Side order_side = order->side;
-        Price order_price = order->price;
-        Quantity order_remaining = order->remaining_quantity;
-        PriceLevel* freed = book_.remove_order(order);
-
-        order_index_[order->id] = nullptr;
-
-        // 1. OrderCancelled
-        order_listener_.on_order_cancelled(OrderCancelled{
-            id, ts, CancelReason::UserRequested});
-
-        // 2. L3: OrderBookAction (Cancel)
-        md_listener_.on_order_book_action(OrderBookAction{
-            id, order_side, order_price,
-            order_remaining, OrderBookAction::Cancel, ts});
-
-        // 3. L2: DepthUpdate
-        if (freed) {
-            md_listener_.on_depth_update(DepthUpdate{
-                order_side, order_price,
-                0, 0, DepthUpdate::Remove, ts});
-            level_pool_.deallocate(freed);
-        } else {
-            // Find the level (order->level is nullptr after remove_order)
-            // but the level still exists with remaining orders
-            PriceLevel* lv = find_level_by_price(order_side, order_price);
-            if (lv) {
-                md_listener_.on_depth_update(DepthUpdate{
-                    order_side, order_price,
-                    lv->total_quantity, lv->order_count,
-                    DepthUpdate::Update, ts});
-            }
-        }
-
-        // 4. L1: TopOfBook if changed
-        fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
-
-        order_pool_.deallocate(order);
+        cancel_active_order(order_index_[id], ts,
+                            CancelReason::UserRequested);
     }
 
-    // -----------------------------------------------------------------
     // modify_order -- cancel-replace or amend-down based on policy
-    // -----------------------------------------------------------------
+
     void modify_order(const ModifyRequest& req) {
-        // Validate order ID range
+        auto mod_reject = [&](RejectReason r) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp, r});
+        };
+
         if (req.order_id == 0 || req.order_id >= MaxOrderIds ||
-            order_index_[req.order_id] == nullptr) {
-            order_listener_.on_order_modify_rejected(
-                OrderModifyRejected{req.order_id, req.client_order_id,
-                                    req.timestamp,
-                                    RejectReason::UnknownOrder});
-            return;
-        }
+            order_index_[req.order_id] == nullptr)
+            { mod_reject(RejectReason::UnknownOrder); return; }
 
-        // Validate new quantity
-        if (req.new_quantity <= 0) {
-            order_listener_.on_order_modify_rejected(
-                OrderModifyRejected{req.order_id, req.client_order_id,
-                                    req.timestamp,
-                                    RejectReason::InvalidQuantity});
-            return;
-        }
-
-        // Validate new price
-        if (req.new_price <= 0) {
-            order_listener_.on_order_modify_rejected(
-                OrderModifyRejected{req.order_id, req.client_order_id,
-                                    req.timestamp,
-                                    RejectReason::InvalidPrice});
-            return;
-        }
-
-        // Tick size validation
-        if (config_.tick_size > 0 &&
-            (req.new_price % config_.tick_size) != 0) {
-            order_listener_.on_order_modify_rejected(
-                OrderModifyRejected{req.order_id, req.client_order_id,
-                                    req.timestamp,
-                                    RejectReason::InvalidPrice});
-            return;
-        }
-
-        // Lot size validation
-        if (config_.lot_size > 0 &&
-            (req.new_quantity % config_.lot_size) != 0) {
-            order_listener_.on_order_modify_rejected(
-                OrderModifyRejected{req.order_id, req.client_order_id,
-                                    req.timestamp,
-                                    RejectReason::InvalidQuantity});
-            return;
-        }
+        if (req.new_quantity <= 0)
+            { mod_reject(RejectReason::InvalidQuantity); return; }
+        if (req.new_price <= 0)
+            { mod_reject(RejectReason::InvalidPrice); return; }
+        if (config_.tick_size > 0 && (req.new_price % config_.tick_size) != 0)
+            { mod_reject(RejectReason::InvalidPrice); return; }
+        if (config_.lot_size > 0 && (req.new_quantity % config_.lot_size) != 0)
+            { mod_reject(RejectReason::InvalidQuantity); return; }
 
         Order* order = order_index_[req.order_id];
         ModifyPolicy policy = derived().get_modify_policy();
 
-        if (policy == ModifyPolicy::RejectModify) {
-            order_listener_.on_order_modify_rejected(
-                OrderModifyRejected{req.order_id, req.client_order_id,
-                                    req.timestamp,
-                                    RejectReason::ExchangeSpecific});
-            return;
-        }
+        if (policy == ModifyPolicy::RejectModify)
+            { mod_reject(RejectReason::ExchangeSpecific); return; }
 
         // Amend-down: reduce qty in-place if price unchanged and qty
         // is reducing (preserves time priority)
@@ -399,20 +248,8 @@ public:
             OrderBookAction::Cancel, req.timestamp});
 
         // Fire L2: DepthUpdate for old level
-        if (freed) {
-            md_listener_.on_depth_update(DepthUpdate{
-                order_side, old_price,
-                0, 0, DepthUpdate::Remove, req.timestamp});
-            level_pool_.deallocate(freed);
-        } else {
-            PriceLevel* lv = find_level_by_price(order_side, old_price);
-            if (lv) {
-                md_listener_.on_depth_update(DepthUpdate{
-                    order_side, old_price,
-                    lv->total_quantity, lv->order_count,
-                    DepthUpdate::Update, req.timestamp});
-            }
-        }
+        fire_depth_after_remove(freed, order_side, old_price,
+                                req.timestamp);
 
         // 3. Update order fields for the new order
         Quantity already_filled = order->filled_quantity;
@@ -436,10 +273,9 @@ public:
         check_and_trigger_stops(req.timestamp);
     }
 
-    // -----------------------------------------------------------------
     // trigger_expiry -- cancel DAY/GTD orders that have expired
     // O(n) linear scan of order_index_.
-    // -----------------------------------------------------------------
+
     void trigger_expiry(Timestamp now, TimeInForce tif) {
         for (size_t i = 1; i < next_order_id_; ++i) {
             Order* order = order_index_[i];
@@ -452,68 +288,14 @@ public:
             } else if (tif == TimeInForce::GTD) {
                 should_expire = (order->gtd_expiry <= now);
             }
-
             if (!should_expire) continue;
 
-            // Determine if order is in stop book or order book
-            bool in_stop_book = (order->type == OrderType::Stop ||
-                                 order->type == OrderType::StopLimit);
-
-            Price old_best_bid = book_.best_bid()
-                                     ? book_.best_bid()->price : 0;
-            Price old_best_ask = book_.best_ask()
-                                     ? book_.best_ask()->price : 0;
-
-            if (in_stop_book) {
-                PriceLevel* freed = stop_book_.remove_stop(order);
-                order_index_[order->id] = nullptr;
-                order_listener_.on_order_cancelled(OrderCancelled{
-                    order->id, now, CancelReason::Expired});
-                if (freed) {
-                    level_pool_.deallocate(freed);
-                }
-                order_pool_.deallocate(order);
-            } else {
-                Side order_side = order->side;
-                Price order_price = order->price;
-                Quantity order_remaining = order->remaining_quantity;
-                PriceLevel* freed = book_.remove_order(order);
-                order_index_[order->id] = nullptr;
-
-                order_listener_.on_order_cancelled(OrderCancelled{
-                    order->id, now, CancelReason::Expired});
-                md_listener_.on_order_book_action(OrderBookAction{
-                    static_cast<OrderId>(i), order_side,
-                    order_price, order_remaining,
-                    OrderBookAction::Cancel, now});
-
-                if (freed) {
-                    md_listener_.on_depth_update(DepthUpdate{
-                        order_side, order_price,
-                        0, 0, DepthUpdate::Remove, now});
-                    level_pool_.deallocate(freed);
-                } else {
-                    PriceLevel* lv = find_level_by_price(
-                        order_side, order_price);
-                    if (lv) {
-                        md_listener_.on_depth_update(DepthUpdate{
-                            order_side, order_price,
-                            lv->total_quantity, lv->order_count,
-                            DepthUpdate::Update, now});
-                    }
-                }
-
-                fire_top_of_book_if_changed(
-                    now, old_best_bid, old_best_ask);
-
-                order_pool_.deallocate(order);
-            }
+            cancel_active_order(order, now, CancelReason::Expired);
         }
     }
 
-    // -----------------------------------------------------------------
     // Status queries
-    // -----------------------------------------------------------------
+
     size_t active_order_count() const {
         return MaxOrders - order_pool_.available();
     }
@@ -526,9 +308,8 @@ public:
         return level_pool_.available();
     }
 
-    // -----------------------------------------------------------------
     // CRTP hook defaults
-    // -----------------------------------------------------------------
+
     bool on_validate_order(const OrderRequest&) { return true; }
     bool is_tif_valid(TimeInForce) { return true; }
     bool is_self_match(const Order&, const Order&) { return false; }
@@ -559,9 +340,66 @@ private:
         return static_cast<const Derived&>(*this);
     }
 
-    // -----------------------------------------------------------------
+    // cancel_active_order -- remove from book/stop-book and fire events
+    // Shared by cancel_order(), trigger_expiry().
+
+    void cancel_active_order(Order* order, Timestamp ts,
+                             CancelReason reason) {
+        Price old_best_bid = book_.best_bid()
+                                 ? book_.best_bid()->price : 0;
+        Price old_best_ask = book_.best_ask()
+                                 ? book_.best_ask()->price : 0;
+
+        bool in_stop_book = (order->type == OrderType::Stop ||
+                             order->type == OrderType::StopLimit);
+        OrderId oid = order->id;
+
+        if (in_stop_book) {
+            PriceLevel* freed = stop_book_.remove_stop(order);
+            order_index_[oid] = nullptr;
+            order_listener_.on_order_cancelled(
+                OrderCancelled{oid, ts, reason});
+            if (freed) level_pool_.deallocate(freed);
+            order_pool_.deallocate(order);
+            return;
+        }
+
+        Side order_side = order->side;
+        Price order_price = order->price;
+        Quantity order_remaining = order->remaining_quantity;
+        PriceLevel* freed = book_.remove_order(order);
+        order_index_[oid] = nullptr;
+
+        order_listener_.on_order_cancelled(
+            OrderCancelled{oid, ts, reason});
+        md_listener_.on_order_book_action(OrderBookAction{
+            oid, order_side, order_price, order_remaining,
+            OrderBookAction::Cancel, ts});
+        fire_depth_after_remove(freed, order_side, order_price, ts);
+        fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
+        order_pool_.deallocate(order);
+    }
+
+    // fire_depth_after_remove -- L2 event after book_.remove_order()
+
+    void fire_depth_after_remove(PriceLevel* freed, Side side,
+                                 Price price, Timestamp ts) {
+        if (freed) {
+            md_listener_.on_depth_update(DepthUpdate{
+                side, price, 0, 0, DepthUpdate::Remove, ts});
+            level_pool_.deallocate(freed);
+        } else {
+            PriceLevel* lv = find_level_by_price(side, price);
+            if (lv) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    side, price, lv->total_quantity,
+                    lv->order_count, DepthUpdate::Update, ts});
+            }
+        }
+    }
+
     // insert_into_stop_book -- add order to the stop book
-    // -----------------------------------------------------------------
+
     void insert_into_stop_book(Order* order) {
         PriceLevel* new_level = level_pool_.allocate();
         if (new_level == nullptr) {
@@ -580,9 +418,8 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------
     // match_order -- walk opposite side, match, then handle remainder
-    // -----------------------------------------------------------------
+
     void match_order(Order* order, Timestamp ts) {
         // Snapshot best bid/ask before matching for TopOfBook change detection
         Price old_best_bid = book_.best_bid() ? book_.best_bid()->price : 0;
@@ -710,9 +547,8 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------
     // undo_fills -- reverse MatchAlgo mutations for fills [from..count)
-    // -----------------------------------------------------------------
+
     void undo_fills(Order* aggressor, FillResult* results,
                     size_t from, size_t count) {
         for (size_t j = from; j < count; ++j) {
@@ -723,9 +559,8 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------
     // post_match -- handle order remainder after matching
-    // -----------------------------------------------------------------
+
     void post_match(Order* order, Timestamp ts,
                     Price old_best_bid, Price old_best_ask) {
         if (order->remaining_quantity == 0) {
@@ -777,9 +612,8 @@ private:
         fire_top_of_book(ts);
     }
 
-    // -----------------------------------------------------------------
     // insert_into_book -- insert a limit order into the order book
-    // -----------------------------------------------------------------
+
     void insert_into_book(Order* order, Timestamp ts) {
         PriceLevel* new_level = level_pool_.allocate();
         if (new_level == nullptr) {
@@ -810,12 +644,11 @@ private:
             is_new_level ? DepthUpdate::Add : DepthUpdate::Update, ts});
     }
 
-    // -----------------------------------------------------------------
     // check_and_trigger_stops -- iterative cascade (not recursive)
     // After a trade, triggered stops are converted and matched. Each
     // triggered stop may itself produce trades that trigger more stops.
     // The loop continues until no more stops are triggered.
-    // -----------------------------------------------------------------
+
     void check_and_trigger_stops(Timestamp ts) {
         while (last_trade_price_ > 0 &&
                stop_book_.has_triggered_stops(last_trade_price_)) {
@@ -843,9 +676,8 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------
     // apply_smp_action -- returns false if aggressor was cancelled
-    // -----------------------------------------------------------------
+
     bool apply_smp_action(Order* aggressor, Order* resting,
                           FillResult& fill, Timestamp ts) {
         SmpAction action = derived().get_smp_action();
@@ -932,9 +764,8 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------
     // fire_top_of_book_if_changed -- conditional TopOfBook emit
-    // -----------------------------------------------------------------
+
     void fire_top_of_book_if_changed(Timestamp ts,
                                      Price old_best_bid,
                                      Price old_best_ask) {
@@ -948,9 +779,8 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------
     // fire_top_of_book -- emit TopOfBook with current best bid/ask
-    // -----------------------------------------------------------------
+
     void fire_top_of_book(Timestamp ts) {
         Price best_bid = 0;
         Quantity bid_qty = 0;
@@ -970,10 +800,9 @@ private:
             best_bid, bid_qty, best_ask, ask_qty, ts});
     }
 
-    // -----------------------------------------------------------------
     // compute_matchable_qty -- total qty on opposite side at matchable
     // prices (for FOK pre-check)
-    // -----------------------------------------------------------------
+
     Quantity compute_matchable_qty(const Order* order) const {
         Side opposite = (order->side == Side::Buy)
                             ? Side::Sell : Side::Buy;
@@ -995,9 +824,8 @@ private:
         return total;
     }
 
-    // -----------------------------------------------------------------
     // find_level_by_price -- linear search for a price level on a side
-    // -----------------------------------------------------------------
+
     PriceLevel* find_level_by_price(Side side, Price price) const {
         PriceLevel* lv = (side == Side::Buy)
                              ? book_.best_bid() : book_.best_ask();
