@@ -1,0 +1,52 @@
+# L1 (TopOfBook) verification: confirm TOP_OF_BOOK fires after every action that
+# changes the best bid or ask. Covers: order add, second order at same level (no L1
+# change), order cancel exposing next level, and fill clearing the book.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Add buy at 1005000 — best bid changes from 0 to 1005000
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# Add second buy at same price — qty changes but best bid price unchanged, no TOP_OF_BOOK
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=20000 count=2 action=UPDATE ts=2000
+
+# Add buy at a lower price — does not change best bid, no TOP_OF_BOOK
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=BUY price=1000000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1000000 qty=10000 action=ADD ts=3000
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=10000 count=1 action=ADD ts=3000
+
+# Add sell at 1010000 — best ask changes from 0 to 1010000
+ACTION NEW_ORDER ts=4000 cl_ord_id=4 account_id=2 side=SELL price=1010000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=4 side=SELL price=1010000 qty=10000 action=ADD ts=4000
+EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=10000 count=1 action=ADD ts=4000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=20000 ask=1010000 ask_qty=10000 ts=4000
+
+# Cancel ord_id=1 at 1005000 — best bid qty drops but price unchanged, no TOP_OF_BOOK
+ACTION CANCEL ts=5000 ord_id=1
+EXPECT ORDER_CANCELLED ord_id=1 ts=5000 reason=USER_REQUESTED
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=CANCEL ts=5000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=UPDATE ts=5000
+
+# Cancel ord_id=2 — removes the last order at 1005000, best bid drops to 1000000
+ACTION CANCEL ts=6000 ord_id=2
+EXPECT ORDER_CANCELLED ord_id=2 ts=6000 reason=USER_REQUESTED
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=CANCEL ts=6000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=6000
+EXPECT TOP_OF_BOOK bid=1000000 bid_qty=10000 ask=1010000 ask_qty=10000 ts=6000
+
+# Aggressor sell fills the remaining buy at 1000000, clearing the bid side
+ACTION NEW_ORDER ts=7000 cl_ord_id=5 account_id=2 side=SELL price=1000000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=5 cl_ord_id=5 ts=7000
+EXPECT ORDER_FILLED aggressor=5 resting=3 price=1000000 qty=10000 ts=7000
+EXPECT TRADE price=1000000 qty=10000 aggressor=5 resting=3 aggressor_side=SELL ts=7000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1000000 qty=10000 action=FILL ts=7000
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=0 count=0 action=REMOVE ts=7000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1010000 ask_qty=10000 ts=7000
