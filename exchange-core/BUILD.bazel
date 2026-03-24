@@ -92,3 +92,19 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "composite_listener",
+    hdrs = ["composite_listener.h"],
+    deps = [":listeners"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "composite_listener_test",
+    srcs = ["composite_listener_test.cc"],
+    deps = [
+        ":composite_listener",
+        "@googletest//:gtest_main",
+    ],
+)
