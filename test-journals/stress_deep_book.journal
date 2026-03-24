@@ -1,0 +1,605 @@
+# stress_deep_book.journal
+# 50 buy orders across 50 bid levels and 50 sell orders across
+# 50 ask levels (no crossing). Creates a 100-level-deep book at
+# the FifoExchange limit. Tests maximum book depth.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1004900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=1000 cl_ord_id=1 ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=1000 action=ADD qty=10000 price=1004900 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=1000 action=ADD count=1 qty=10000 price=1004900 side=BUY
+EXPECT TOP_OF_BOOK ts=1000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1004800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=2000 cl_ord_id=2 ord_id=2
+EXPECT ORDER_BOOK_ACTION ts=2000 action=ADD qty=10000 price=1004800 side=BUY ord_id=2
+EXPECT DEPTH_UPDATE ts=2000 action=ADD count=1 qty=10000 price=1004800 side=BUY
+EXPECT TOP_OF_BOOK ts=2000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=BUY price=1004700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=3000 cl_ord_id=3 ord_id=3
+EXPECT ORDER_BOOK_ACTION ts=3000 action=ADD qty=10000 price=1004700 side=BUY ord_id=3
+EXPECT DEPTH_UPDATE ts=3000 action=ADD count=1 qty=10000 price=1004700 side=BUY
+EXPECT TOP_OF_BOOK ts=3000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=4000 cl_ord_id=4 account_id=1 side=BUY price=1004600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=4000 cl_ord_id=4 ord_id=4
+EXPECT ORDER_BOOK_ACTION ts=4000 action=ADD qty=10000 price=1004600 side=BUY ord_id=4
+EXPECT DEPTH_UPDATE ts=4000 action=ADD count=1 qty=10000 price=1004600 side=BUY
+EXPECT TOP_OF_BOOK ts=4000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=5000 cl_ord_id=5 account_id=1 side=BUY price=1004500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=5000 cl_ord_id=5 ord_id=5
+EXPECT ORDER_BOOK_ACTION ts=5000 action=ADD qty=10000 price=1004500 side=BUY ord_id=5
+EXPECT DEPTH_UPDATE ts=5000 action=ADD count=1 qty=10000 price=1004500 side=BUY
+EXPECT TOP_OF_BOOK ts=5000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=6000 cl_ord_id=6 account_id=1 side=BUY price=1004400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=6000 cl_ord_id=6 ord_id=6
+EXPECT ORDER_BOOK_ACTION ts=6000 action=ADD qty=10000 price=1004400 side=BUY ord_id=6
+EXPECT DEPTH_UPDATE ts=6000 action=ADD count=1 qty=10000 price=1004400 side=BUY
+EXPECT TOP_OF_BOOK ts=6000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=7000 cl_ord_id=7 account_id=1 side=BUY price=1004300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=7000 cl_ord_id=7 ord_id=7
+EXPECT ORDER_BOOK_ACTION ts=7000 action=ADD qty=10000 price=1004300 side=BUY ord_id=7
+EXPECT DEPTH_UPDATE ts=7000 action=ADD count=1 qty=10000 price=1004300 side=BUY
+EXPECT TOP_OF_BOOK ts=7000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=8000 cl_ord_id=8 account_id=1 side=BUY price=1004200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=8000 cl_ord_id=8 ord_id=8
+EXPECT ORDER_BOOK_ACTION ts=8000 action=ADD qty=10000 price=1004200 side=BUY ord_id=8
+EXPECT DEPTH_UPDATE ts=8000 action=ADD count=1 qty=10000 price=1004200 side=BUY
+EXPECT TOP_OF_BOOK ts=8000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=9000 cl_ord_id=9 account_id=1 side=BUY price=1004100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=9000 cl_ord_id=9 ord_id=9
+EXPECT ORDER_BOOK_ACTION ts=9000 action=ADD qty=10000 price=1004100 side=BUY ord_id=9
+EXPECT DEPTH_UPDATE ts=9000 action=ADD count=1 qty=10000 price=1004100 side=BUY
+EXPECT TOP_OF_BOOK ts=9000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=10000 cl_ord_id=10 account_id=1 side=BUY price=1004000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=10000 cl_ord_id=10 ord_id=10
+EXPECT ORDER_BOOK_ACTION ts=10000 action=ADD qty=10000 price=1004000 side=BUY ord_id=10
+EXPECT DEPTH_UPDATE ts=10000 action=ADD count=1 qty=10000 price=1004000 side=BUY
+EXPECT TOP_OF_BOOK ts=10000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=11000 cl_ord_id=11 account_id=1 side=BUY price=1003900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=11000 cl_ord_id=11 ord_id=11
+EXPECT ORDER_BOOK_ACTION ts=11000 action=ADD qty=10000 price=1003900 side=BUY ord_id=11
+EXPECT DEPTH_UPDATE ts=11000 action=ADD count=1 qty=10000 price=1003900 side=BUY
+EXPECT TOP_OF_BOOK ts=11000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=12000 cl_ord_id=12 account_id=1 side=BUY price=1003800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=12000 cl_ord_id=12 ord_id=12
+EXPECT ORDER_BOOK_ACTION ts=12000 action=ADD qty=10000 price=1003800 side=BUY ord_id=12
+EXPECT DEPTH_UPDATE ts=12000 action=ADD count=1 qty=10000 price=1003800 side=BUY
+EXPECT TOP_OF_BOOK ts=12000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=13000 cl_ord_id=13 account_id=1 side=BUY price=1003700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=13000 cl_ord_id=13 ord_id=13
+EXPECT ORDER_BOOK_ACTION ts=13000 action=ADD qty=10000 price=1003700 side=BUY ord_id=13
+EXPECT DEPTH_UPDATE ts=13000 action=ADD count=1 qty=10000 price=1003700 side=BUY
+EXPECT TOP_OF_BOOK ts=13000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=14000 cl_ord_id=14 account_id=1 side=BUY price=1003600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=14000 cl_ord_id=14 ord_id=14
+EXPECT ORDER_BOOK_ACTION ts=14000 action=ADD qty=10000 price=1003600 side=BUY ord_id=14
+EXPECT DEPTH_UPDATE ts=14000 action=ADD count=1 qty=10000 price=1003600 side=BUY
+EXPECT TOP_OF_BOOK ts=14000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=15000 cl_ord_id=15 account_id=1 side=BUY price=1003500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=15000 cl_ord_id=15 ord_id=15
+EXPECT ORDER_BOOK_ACTION ts=15000 action=ADD qty=10000 price=1003500 side=BUY ord_id=15
+EXPECT DEPTH_UPDATE ts=15000 action=ADD count=1 qty=10000 price=1003500 side=BUY
+EXPECT TOP_OF_BOOK ts=15000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=16000 cl_ord_id=16 account_id=1 side=BUY price=1003400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=16000 cl_ord_id=16 ord_id=16
+EXPECT ORDER_BOOK_ACTION ts=16000 action=ADD qty=10000 price=1003400 side=BUY ord_id=16
+EXPECT DEPTH_UPDATE ts=16000 action=ADD count=1 qty=10000 price=1003400 side=BUY
+EXPECT TOP_OF_BOOK ts=16000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=17000 cl_ord_id=17 account_id=1 side=BUY price=1003300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=17000 cl_ord_id=17 ord_id=17
+EXPECT ORDER_BOOK_ACTION ts=17000 action=ADD qty=10000 price=1003300 side=BUY ord_id=17
+EXPECT DEPTH_UPDATE ts=17000 action=ADD count=1 qty=10000 price=1003300 side=BUY
+EXPECT TOP_OF_BOOK ts=17000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=18000 cl_ord_id=18 account_id=1 side=BUY price=1003200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=18000 cl_ord_id=18 ord_id=18
+EXPECT ORDER_BOOK_ACTION ts=18000 action=ADD qty=10000 price=1003200 side=BUY ord_id=18
+EXPECT DEPTH_UPDATE ts=18000 action=ADD count=1 qty=10000 price=1003200 side=BUY
+EXPECT TOP_OF_BOOK ts=18000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=19000 cl_ord_id=19 account_id=1 side=BUY price=1003100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=19000 cl_ord_id=19 ord_id=19
+EXPECT ORDER_BOOK_ACTION ts=19000 action=ADD qty=10000 price=1003100 side=BUY ord_id=19
+EXPECT DEPTH_UPDATE ts=19000 action=ADD count=1 qty=10000 price=1003100 side=BUY
+EXPECT TOP_OF_BOOK ts=19000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=20000 cl_ord_id=20 account_id=1 side=BUY price=1003000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=20000 cl_ord_id=20 ord_id=20
+EXPECT ORDER_BOOK_ACTION ts=20000 action=ADD qty=10000 price=1003000 side=BUY ord_id=20
+EXPECT DEPTH_UPDATE ts=20000 action=ADD count=1 qty=10000 price=1003000 side=BUY
+EXPECT TOP_OF_BOOK ts=20000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=21000 cl_ord_id=21 account_id=1 side=BUY price=1002900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=21000 cl_ord_id=21 ord_id=21
+EXPECT ORDER_BOOK_ACTION ts=21000 action=ADD qty=10000 price=1002900 side=BUY ord_id=21
+EXPECT DEPTH_UPDATE ts=21000 action=ADD count=1 qty=10000 price=1002900 side=BUY
+EXPECT TOP_OF_BOOK ts=21000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=22000 cl_ord_id=22 account_id=1 side=BUY price=1002800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=22000 cl_ord_id=22 ord_id=22
+EXPECT ORDER_BOOK_ACTION ts=22000 action=ADD qty=10000 price=1002800 side=BUY ord_id=22
+EXPECT DEPTH_UPDATE ts=22000 action=ADD count=1 qty=10000 price=1002800 side=BUY
+EXPECT TOP_OF_BOOK ts=22000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=23000 cl_ord_id=23 account_id=1 side=BUY price=1002700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=23000 cl_ord_id=23 ord_id=23
+EXPECT ORDER_BOOK_ACTION ts=23000 action=ADD qty=10000 price=1002700 side=BUY ord_id=23
+EXPECT DEPTH_UPDATE ts=23000 action=ADD count=1 qty=10000 price=1002700 side=BUY
+EXPECT TOP_OF_BOOK ts=23000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=24000 cl_ord_id=24 account_id=1 side=BUY price=1002600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=24000 cl_ord_id=24 ord_id=24
+EXPECT ORDER_BOOK_ACTION ts=24000 action=ADD qty=10000 price=1002600 side=BUY ord_id=24
+EXPECT DEPTH_UPDATE ts=24000 action=ADD count=1 qty=10000 price=1002600 side=BUY
+EXPECT TOP_OF_BOOK ts=24000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=25000 cl_ord_id=25 account_id=1 side=BUY price=1002500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=25000 cl_ord_id=25 ord_id=25
+EXPECT ORDER_BOOK_ACTION ts=25000 action=ADD qty=10000 price=1002500 side=BUY ord_id=25
+EXPECT DEPTH_UPDATE ts=25000 action=ADD count=1 qty=10000 price=1002500 side=BUY
+EXPECT TOP_OF_BOOK ts=25000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=26000 cl_ord_id=26 account_id=1 side=BUY price=1002400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=26000 cl_ord_id=26 ord_id=26
+EXPECT ORDER_BOOK_ACTION ts=26000 action=ADD qty=10000 price=1002400 side=BUY ord_id=26
+EXPECT DEPTH_UPDATE ts=26000 action=ADD count=1 qty=10000 price=1002400 side=BUY
+EXPECT TOP_OF_BOOK ts=26000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=27000 cl_ord_id=27 account_id=1 side=BUY price=1002300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=27000 cl_ord_id=27 ord_id=27
+EXPECT ORDER_BOOK_ACTION ts=27000 action=ADD qty=10000 price=1002300 side=BUY ord_id=27
+EXPECT DEPTH_UPDATE ts=27000 action=ADD count=1 qty=10000 price=1002300 side=BUY
+EXPECT TOP_OF_BOOK ts=27000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=28000 cl_ord_id=28 account_id=1 side=BUY price=1002200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=28000 cl_ord_id=28 ord_id=28
+EXPECT ORDER_BOOK_ACTION ts=28000 action=ADD qty=10000 price=1002200 side=BUY ord_id=28
+EXPECT DEPTH_UPDATE ts=28000 action=ADD count=1 qty=10000 price=1002200 side=BUY
+EXPECT TOP_OF_BOOK ts=28000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=29000 cl_ord_id=29 account_id=1 side=BUY price=1002100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=29000 cl_ord_id=29 ord_id=29
+EXPECT ORDER_BOOK_ACTION ts=29000 action=ADD qty=10000 price=1002100 side=BUY ord_id=29
+EXPECT DEPTH_UPDATE ts=29000 action=ADD count=1 qty=10000 price=1002100 side=BUY
+EXPECT TOP_OF_BOOK ts=29000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=30000 cl_ord_id=30 account_id=1 side=BUY price=1002000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=30000 cl_ord_id=30 ord_id=30
+EXPECT ORDER_BOOK_ACTION ts=30000 action=ADD qty=10000 price=1002000 side=BUY ord_id=30
+EXPECT DEPTH_UPDATE ts=30000 action=ADD count=1 qty=10000 price=1002000 side=BUY
+EXPECT TOP_OF_BOOK ts=30000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=31000 cl_ord_id=31 account_id=1 side=BUY price=1001900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=31000 cl_ord_id=31 ord_id=31
+EXPECT ORDER_BOOK_ACTION ts=31000 action=ADD qty=10000 price=1001900 side=BUY ord_id=31
+EXPECT DEPTH_UPDATE ts=31000 action=ADD count=1 qty=10000 price=1001900 side=BUY
+EXPECT TOP_OF_BOOK ts=31000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=32000 cl_ord_id=32 account_id=1 side=BUY price=1001800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=32000 cl_ord_id=32 ord_id=32
+EXPECT ORDER_BOOK_ACTION ts=32000 action=ADD qty=10000 price=1001800 side=BUY ord_id=32
+EXPECT DEPTH_UPDATE ts=32000 action=ADD count=1 qty=10000 price=1001800 side=BUY
+EXPECT TOP_OF_BOOK ts=32000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=33000 cl_ord_id=33 account_id=1 side=BUY price=1001700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=33000 cl_ord_id=33 ord_id=33
+EXPECT ORDER_BOOK_ACTION ts=33000 action=ADD qty=10000 price=1001700 side=BUY ord_id=33
+EXPECT DEPTH_UPDATE ts=33000 action=ADD count=1 qty=10000 price=1001700 side=BUY
+EXPECT TOP_OF_BOOK ts=33000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=34000 cl_ord_id=34 account_id=1 side=BUY price=1001600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=34000 cl_ord_id=34 ord_id=34
+EXPECT ORDER_BOOK_ACTION ts=34000 action=ADD qty=10000 price=1001600 side=BUY ord_id=34
+EXPECT DEPTH_UPDATE ts=34000 action=ADD count=1 qty=10000 price=1001600 side=BUY
+EXPECT TOP_OF_BOOK ts=34000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=35000 cl_ord_id=35 account_id=1 side=BUY price=1001500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=35000 cl_ord_id=35 ord_id=35
+EXPECT ORDER_BOOK_ACTION ts=35000 action=ADD qty=10000 price=1001500 side=BUY ord_id=35
+EXPECT DEPTH_UPDATE ts=35000 action=ADD count=1 qty=10000 price=1001500 side=BUY
+EXPECT TOP_OF_BOOK ts=35000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=36000 cl_ord_id=36 account_id=1 side=BUY price=1001400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=36000 cl_ord_id=36 ord_id=36
+EXPECT ORDER_BOOK_ACTION ts=36000 action=ADD qty=10000 price=1001400 side=BUY ord_id=36
+EXPECT DEPTH_UPDATE ts=36000 action=ADD count=1 qty=10000 price=1001400 side=BUY
+EXPECT TOP_OF_BOOK ts=36000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=37000 cl_ord_id=37 account_id=1 side=BUY price=1001300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=37000 cl_ord_id=37 ord_id=37
+EXPECT ORDER_BOOK_ACTION ts=37000 action=ADD qty=10000 price=1001300 side=BUY ord_id=37
+EXPECT DEPTH_UPDATE ts=37000 action=ADD count=1 qty=10000 price=1001300 side=BUY
+EXPECT TOP_OF_BOOK ts=37000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=38000 cl_ord_id=38 account_id=1 side=BUY price=1001200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=38000 cl_ord_id=38 ord_id=38
+EXPECT ORDER_BOOK_ACTION ts=38000 action=ADD qty=10000 price=1001200 side=BUY ord_id=38
+EXPECT DEPTH_UPDATE ts=38000 action=ADD count=1 qty=10000 price=1001200 side=BUY
+EXPECT TOP_OF_BOOK ts=38000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=39000 cl_ord_id=39 account_id=1 side=BUY price=1001100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=39000 cl_ord_id=39 ord_id=39
+EXPECT ORDER_BOOK_ACTION ts=39000 action=ADD qty=10000 price=1001100 side=BUY ord_id=39
+EXPECT DEPTH_UPDATE ts=39000 action=ADD count=1 qty=10000 price=1001100 side=BUY
+EXPECT TOP_OF_BOOK ts=39000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=40000 cl_ord_id=40 account_id=1 side=BUY price=1001000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=40000 cl_ord_id=40 ord_id=40
+EXPECT ORDER_BOOK_ACTION ts=40000 action=ADD qty=10000 price=1001000 side=BUY ord_id=40
+EXPECT DEPTH_UPDATE ts=40000 action=ADD count=1 qty=10000 price=1001000 side=BUY
+EXPECT TOP_OF_BOOK ts=40000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=41000 cl_ord_id=41 account_id=1 side=BUY price=1000900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=41000 cl_ord_id=41 ord_id=41
+EXPECT ORDER_BOOK_ACTION ts=41000 action=ADD qty=10000 price=1000900 side=BUY ord_id=41
+EXPECT DEPTH_UPDATE ts=41000 action=ADD count=1 qty=10000 price=1000900 side=BUY
+EXPECT TOP_OF_BOOK ts=41000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=42000 cl_ord_id=42 account_id=1 side=BUY price=1000800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=42000 cl_ord_id=42 ord_id=42
+EXPECT ORDER_BOOK_ACTION ts=42000 action=ADD qty=10000 price=1000800 side=BUY ord_id=42
+EXPECT DEPTH_UPDATE ts=42000 action=ADD count=1 qty=10000 price=1000800 side=BUY
+EXPECT TOP_OF_BOOK ts=42000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=43000 cl_ord_id=43 account_id=1 side=BUY price=1000700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=43000 cl_ord_id=43 ord_id=43
+EXPECT ORDER_BOOK_ACTION ts=43000 action=ADD qty=10000 price=1000700 side=BUY ord_id=43
+EXPECT DEPTH_UPDATE ts=43000 action=ADD count=1 qty=10000 price=1000700 side=BUY
+EXPECT TOP_OF_BOOK ts=43000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=44000 cl_ord_id=44 account_id=1 side=BUY price=1000600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=44000 cl_ord_id=44 ord_id=44
+EXPECT ORDER_BOOK_ACTION ts=44000 action=ADD qty=10000 price=1000600 side=BUY ord_id=44
+EXPECT DEPTH_UPDATE ts=44000 action=ADD count=1 qty=10000 price=1000600 side=BUY
+EXPECT TOP_OF_BOOK ts=44000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=45000 cl_ord_id=45 account_id=1 side=BUY price=1000500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=45000 cl_ord_id=45 ord_id=45
+EXPECT ORDER_BOOK_ACTION ts=45000 action=ADD qty=10000 price=1000500 side=BUY ord_id=45
+EXPECT DEPTH_UPDATE ts=45000 action=ADD count=1 qty=10000 price=1000500 side=BUY
+EXPECT TOP_OF_BOOK ts=45000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=46000 cl_ord_id=46 account_id=1 side=BUY price=1000400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=46000 cl_ord_id=46 ord_id=46
+EXPECT ORDER_BOOK_ACTION ts=46000 action=ADD qty=10000 price=1000400 side=BUY ord_id=46
+EXPECT DEPTH_UPDATE ts=46000 action=ADD count=1 qty=10000 price=1000400 side=BUY
+EXPECT TOP_OF_BOOK ts=46000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=47000 cl_ord_id=47 account_id=1 side=BUY price=1000300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=47000 cl_ord_id=47 ord_id=47
+EXPECT ORDER_BOOK_ACTION ts=47000 action=ADD qty=10000 price=1000300 side=BUY ord_id=47
+EXPECT DEPTH_UPDATE ts=47000 action=ADD count=1 qty=10000 price=1000300 side=BUY
+EXPECT TOP_OF_BOOK ts=47000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=48000 cl_ord_id=48 account_id=1 side=BUY price=1000200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=48000 cl_ord_id=48 ord_id=48
+EXPECT ORDER_BOOK_ACTION ts=48000 action=ADD qty=10000 price=1000200 side=BUY ord_id=48
+EXPECT DEPTH_UPDATE ts=48000 action=ADD count=1 qty=10000 price=1000200 side=BUY
+EXPECT TOP_OF_BOOK ts=48000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=49000 cl_ord_id=49 account_id=1 side=BUY price=1000100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=49000 cl_ord_id=49 ord_id=49
+EXPECT ORDER_BOOK_ACTION ts=49000 action=ADD qty=10000 price=1000100 side=BUY ord_id=49
+EXPECT DEPTH_UPDATE ts=49000 action=ADD count=1 qty=10000 price=1000100 side=BUY
+EXPECT TOP_OF_BOOK ts=49000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=50000 cl_ord_id=50 account_id=1 side=BUY price=1000000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=50000 cl_ord_id=50 ord_id=50
+EXPECT ORDER_BOOK_ACTION ts=50000 action=ADD qty=10000 price=1000000 side=BUY ord_id=50
+EXPECT DEPTH_UPDATE ts=50000 action=ADD count=1 qty=10000 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=50000 ask_qty=0 ask=0 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=51000 cl_ord_id=51 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=51000 cl_ord_id=51 ord_id=51
+EXPECT ORDER_BOOK_ACTION ts=51000 action=ADD qty=10000 price=1005000 side=SELL ord_id=51
+EXPECT DEPTH_UPDATE ts=51000 action=ADD count=1 qty=10000 price=1005000 side=SELL
+EXPECT TOP_OF_BOOK ts=51000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=52000 cl_ord_id=52 account_id=1 side=SELL price=1005100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=52000 cl_ord_id=52 ord_id=52
+EXPECT ORDER_BOOK_ACTION ts=52000 action=ADD qty=10000 price=1005100 side=SELL ord_id=52
+EXPECT DEPTH_UPDATE ts=52000 action=ADD count=1 qty=10000 price=1005100 side=SELL
+EXPECT TOP_OF_BOOK ts=52000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=53000 cl_ord_id=53 account_id=1 side=SELL price=1005200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=53000 cl_ord_id=53 ord_id=53
+EXPECT ORDER_BOOK_ACTION ts=53000 action=ADD qty=10000 price=1005200 side=SELL ord_id=53
+EXPECT DEPTH_UPDATE ts=53000 action=ADD count=1 qty=10000 price=1005200 side=SELL
+EXPECT TOP_OF_BOOK ts=53000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=54000 cl_ord_id=54 account_id=1 side=SELL price=1005300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=54000 cl_ord_id=54 ord_id=54
+EXPECT ORDER_BOOK_ACTION ts=54000 action=ADD qty=10000 price=1005300 side=SELL ord_id=54
+EXPECT DEPTH_UPDATE ts=54000 action=ADD count=1 qty=10000 price=1005300 side=SELL
+EXPECT TOP_OF_BOOK ts=54000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=55000 cl_ord_id=55 account_id=1 side=SELL price=1005400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=55000 cl_ord_id=55 ord_id=55
+EXPECT ORDER_BOOK_ACTION ts=55000 action=ADD qty=10000 price=1005400 side=SELL ord_id=55
+EXPECT DEPTH_UPDATE ts=55000 action=ADD count=1 qty=10000 price=1005400 side=SELL
+EXPECT TOP_OF_BOOK ts=55000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=56000 cl_ord_id=56 account_id=1 side=SELL price=1005500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=56000 cl_ord_id=56 ord_id=56
+EXPECT ORDER_BOOK_ACTION ts=56000 action=ADD qty=10000 price=1005500 side=SELL ord_id=56
+EXPECT DEPTH_UPDATE ts=56000 action=ADD count=1 qty=10000 price=1005500 side=SELL
+EXPECT TOP_OF_BOOK ts=56000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=57000 cl_ord_id=57 account_id=1 side=SELL price=1005600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=57000 cl_ord_id=57 ord_id=57
+EXPECT ORDER_BOOK_ACTION ts=57000 action=ADD qty=10000 price=1005600 side=SELL ord_id=57
+EXPECT DEPTH_UPDATE ts=57000 action=ADD count=1 qty=10000 price=1005600 side=SELL
+EXPECT TOP_OF_BOOK ts=57000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=58000 cl_ord_id=58 account_id=1 side=SELL price=1005700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=58000 cl_ord_id=58 ord_id=58
+EXPECT ORDER_BOOK_ACTION ts=58000 action=ADD qty=10000 price=1005700 side=SELL ord_id=58
+EXPECT DEPTH_UPDATE ts=58000 action=ADD count=1 qty=10000 price=1005700 side=SELL
+EXPECT TOP_OF_BOOK ts=58000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=59000 cl_ord_id=59 account_id=1 side=SELL price=1005800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=59000 cl_ord_id=59 ord_id=59
+EXPECT ORDER_BOOK_ACTION ts=59000 action=ADD qty=10000 price=1005800 side=SELL ord_id=59
+EXPECT DEPTH_UPDATE ts=59000 action=ADD count=1 qty=10000 price=1005800 side=SELL
+EXPECT TOP_OF_BOOK ts=59000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=60000 cl_ord_id=60 account_id=1 side=SELL price=1005900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=60000 cl_ord_id=60 ord_id=60
+EXPECT ORDER_BOOK_ACTION ts=60000 action=ADD qty=10000 price=1005900 side=SELL ord_id=60
+EXPECT DEPTH_UPDATE ts=60000 action=ADD count=1 qty=10000 price=1005900 side=SELL
+EXPECT TOP_OF_BOOK ts=60000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=61000 cl_ord_id=61 account_id=1 side=SELL price=1006000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=61000 cl_ord_id=61 ord_id=61
+EXPECT ORDER_BOOK_ACTION ts=61000 action=ADD qty=10000 price=1006000 side=SELL ord_id=61
+EXPECT DEPTH_UPDATE ts=61000 action=ADD count=1 qty=10000 price=1006000 side=SELL
+EXPECT TOP_OF_BOOK ts=61000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=62000 cl_ord_id=62 account_id=1 side=SELL price=1006100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=62000 cl_ord_id=62 ord_id=62
+EXPECT ORDER_BOOK_ACTION ts=62000 action=ADD qty=10000 price=1006100 side=SELL ord_id=62
+EXPECT DEPTH_UPDATE ts=62000 action=ADD count=1 qty=10000 price=1006100 side=SELL
+EXPECT TOP_OF_BOOK ts=62000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=63000 cl_ord_id=63 account_id=1 side=SELL price=1006200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=63000 cl_ord_id=63 ord_id=63
+EXPECT ORDER_BOOK_ACTION ts=63000 action=ADD qty=10000 price=1006200 side=SELL ord_id=63
+EXPECT DEPTH_UPDATE ts=63000 action=ADD count=1 qty=10000 price=1006200 side=SELL
+EXPECT TOP_OF_BOOK ts=63000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=64000 cl_ord_id=64 account_id=1 side=SELL price=1006300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=64000 cl_ord_id=64 ord_id=64
+EXPECT ORDER_BOOK_ACTION ts=64000 action=ADD qty=10000 price=1006300 side=SELL ord_id=64
+EXPECT DEPTH_UPDATE ts=64000 action=ADD count=1 qty=10000 price=1006300 side=SELL
+EXPECT TOP_OF_BOOK ts=64000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=65000 cl_ord_id=65 account_id=1 side=SELL price=1006400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=65000 cl_ord_id=65 ord_id=65
+EXPECT ORDER_BOOK_ACTION ts=65000 action=ADD qty=10000 price=1006400 side=SELL ord_id=65
+EXPECT DEPTH_UPDATE ts=65000 action=ADD count=1 qty=10000 price=1006400 side=SELL
+EXPECT TOP_OF_BOOK ts=65000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=66000 cl_ord_id=66 account_id=1 side=SELL price=1006500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=66000 cl_ord_id=66 ord_id=66
+EXPECT ORDER_BOOK_ACTION ts=66000 action=ADD qty=10000 price=1006500 side=SELL ord_id=66
+EXPECT DEPTH_UPDATE ts=66000 action=ADD count=1 qty=10000 price=1006500 side=SELL
+EXPECT TOP_OF_BOOK ts=66000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=67000 cl_ord_id=67 account_id=1 side=SELL price=1006600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=67000 cl_ord_id=67 ord_id=67
+EXPECT ORDER_BOOK_ACTION ts=67000 action=ADD qty=10000 price=1006600 side=SELL ord_id=67
+EXPECT DEPTH_UPDATE ts=67000 action=ADD count=1 qty=10000 price=1006600 side=SELL
+EXPECT TOP_OF_BOOK ts=67000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=68000 cl_ord_id=68 account_id=1 side=SELL price=1006700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=68000 cl_ord_id=68 ord_id=68
+EXPECT ORDER_BOOK_ACTION ts=68000 action=ADD qty=10000 price=1006700 side=SELL ord_id=68
+EXPECT DEPTH_UPDATE ts=68000 action=ADD count=1 qty=10000 price=1006700 side=SELL
+EXPECT TOP_OF_BOOK ts=68000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=69000 cl_ord_id=69 account_id=1 side=SELL price=1006800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=69000 cl_ord_id=69 ord_id=69
+EXPECT ORDER_BOOK_ACTION ts=69000 action=ADD qty=10000 price=1006800 side=SELL ord_id=69
+EXPECT DEPTH_UPDATE ts=69000 action=ADD count=1 qty=10000 price=1006800 side=SELL
+EXPECT TOP_OF_BOOK ts=69000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=70000 cl_ord_id=70 account_id=1 side=SELL price=1006900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=70000 cl_ord_id=70 ord_id=70
+EXPECT ORDER_BOOK_ACTION ts=70000 action=ADD qty=10000 price=1006900 side=SELL ord_id=70
+EXPECT DEPTH_UPDATE ts=70000 action=ADD count=1 qty=10000 price=1006900 side=SELL
+EXPECT TOP_OF_BOOK ts=70000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=71000 cl_ord_id=71 account_id=1 side=SELL price=1007000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=71000 cl_ord_id=71 ord_id=71
+EXPECT ORDER_BOOK_ACTION ts=71000 action=ADD qty=10000 price=1007000 side=SELL ord_id=71
+EXPECT DEPTH_UPDATE ts=71000 action=ADD count=1 qty=10000 price=1007000 side=SELL
+EXPECT TOP_OF_BOOK ts=71000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=72000 cl_ord_id=72 account_id=1 side=SELL price=1007100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=72000 cl_ord_id=72 ord_id=72
+EXPECT ORDER_BOOK_ACTION ts=72000 action=ADD qty=10000 price=1007100 side=SELL ord_id=72
+EXPECT DEPTH_UPDATE ts=72000 action=ADD count=1 qty=10000 price=1007100 side=SELL
+EXPECT TOP_OF_BOOK ts=72000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=73000 cl_ord_id=73 account_id=1 side=SELL price=1007200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=73000 cl_ord_id=73 ord_id=73
+EXPECT ORDER_BOOK_ACTION ts=73000 action=ADD qty=10000 price=1007200 side=SELL ord_id=73
+EXPECT DEPTH_UPDATE ts=73000 action=ADD count=1 qty=10000 price=1007200 side=SELL
+EXPECT TOP_OF_BOOK ts=73000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=74000 cl_ord_id=74 account_id=1 side=SELL price=1007300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=74000 cl_ord_id=74 ord_id=74
+EXPECT ORDER_BOOK_ACTION ts=74000 action=ADD qty=10000 price=1007300 side=SELL ord_id=74
+EXPECT DEPTH_UPDATE ts=74000 action=ADD count=1 qty=10000 price=1007300 side=SELL
+EXPECT TOP_OF_BOOK ts=74000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=75000 cl_ord_id=75 account_id=1 side=SELL price=1007400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=75000 cl_ord_id=75 ord_id=75
+EXPECT ORDER_BOOK_ACTION ts=75000 action=ADD qty=10000 price=1007400 side=SELL ord_id=75
+EXPECT DEPTH_UPDATE ts=75000 action=ADD count=1 qty=10000 price=1007400 side=SELL
+EXPECT TOP_OF_BOOK ts=75000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=76000 cl_ord_id=76 account_id=1 side=SELL price=1007500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=76000 cl_ord_id=76 ord_id=76
+EXPECT ORDER_BOOK_ACTION ts=76000 action=ADD qty=10000 price=1007500 side=SELL ord_id=76
+EXPECT DEPTH_UPDATE ts=76000 action=ADD count=1 qty=10000 price=1007500 side=SELL
+EXPECT TOP_OF_BOOK ts=76000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=77000 cl_ord_id=77 account_id=1 side=SELL price=1007600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=77000 cl_ord_id=77 ord_id=77
+EXPECT ORDER_BOOK_ACTION ts=77000 action=ADD qty=10000 price=1007600 side=SELL ord_id=77
+EXPECT DEPTH_UPDATE ts=77000 action=ADD count=1 qty=10000 price=1007600 side=SELL
+EXPECT TOP_OF_BOOK ts=77000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=78000 cl_ord_id=78 account_id=1 side=SELL price=1007700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=78000 cl_ord_id=78 ord_id=78
+EXPECT ORDER_BOOK_ACTION ts=78000 action=ADD qty=10000 price=1007700 side=SELL ord_id=78
+EXPECT DEPTH_UPDATE ts=78000 action=ADD count=1 qty=10000 price=1007700 side=SELL
+EXPECT TOP_OF_BOOK ts=78000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=79000 cl_ord_id=79 account_id=1 side=SELL price=1007800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=79000 cl_ord_id=79 ord_id=79
+EXPECT ORDER_BOOK_ACTION ts=79000 action=ADD qty=10000 price=1007800 side=SELL ord_id=79
+EXPECT DEPTH_UPDATE ts=79000 action=ADD count=1 qty=10000 price=1007800 side=SELL
+EXPECT TOP_OF_BOOK ts=79000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=80000 cl_ord_id=80 account_id=1 side=SELL price=1007900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=80000 cl_ord_id=80 ord_id=80
+EXPECT ORDER_BOOK_ACTION ts=80000 action=ADD qty=10000 price=1007900 side=SELL ord_id=80
+EXPECT DEPTH_UPDATE ts=80000 action=ADD count=1 qty=10000 price=1007900 side=SELL
+EXPECT TOP_OF_BOOK ts=80000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=81000 cl_ord_id=81 account_id=1 side=SELL price=1008000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=81000 cl_ord_id=81 ord_id=81
+EXPECT ORDER_BOOK_ACTION ts=81000 action=ADD qty=10000 price=1008000 side=SELL ord_id=81
+EXPECT DEPTH_UPDATE ts=81000 action=ADD count=1 qty=10000 price=1008000 side=SELL
+EXPECT TOP_OF_BOOK ts=81000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=82000 cl_ord_id=82 account_id=1 side=SELL price=1008100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=82000 cl_ord_id=82 ord_id=82
+EXPECT ORDER_BOOK_ACTION ts=82000 action=ADD qty=10000 price=1008100 side=SELL ord_id=82
+EXPECT DEPTH_UPDATE ts=82000 action=ADD count=1 qty=10000 price=1008100 side=SELL
+EXPECT TOP_OF_BOOK ts=82000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=83000 cl_ord_id=83 account_id=1 side=SELL price=1008200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=83000 cl_ord_id=83 ord_id=83
+EXPECT ORDER_BOOK_ACTION ts=83000 action=ADD qty=10000 price=1008200 side=SELL ord_id=83
+EXPECT DEPTH_UPDATE ts=83000 action=ADD count=1 qty=10000 price=1008200 side=SELL
+EXPECT TOP_OF_BOOK ts=83000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=84000 cl_ord_id=84 account_id=1 side=SELL price=1008300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=84000 cl_ord_id=84 ord_id=84
+EXPECT ORDER_BOOK_ACTION ts=84000 action=ADD qty=10000 price=1008300 side=SELL ord_id=84
+EXPECT DEPTH_UPDATE ts=84000 action=ADD count=1 qty=10000 price=1008300 side=SELL
+EXPECT TOP_OF_BOOK ts=84000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=85000 cl_ord_id=85 account_id=1 side=SELL price=1008400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=85000 cl_ord_id=85 ord_id=85
+EXPECT ORDER_BOOK_ACTION ts=85000 action=ADD qty=10000 price=1008400 side=SELL ord_id=85
+EXPECT DEPTH_UPDATE ts=85000 action=ADD count=1 qty=10000 price=1008400 side=SELL
+EXPECT TOP_OF_BOOK ts=85000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=86000 cl_ord_id=86 account_id=1 side=SELL price=1008500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=86000 cl_ord_id=86 ord_id=86
+EXPECT ORDER_BOOK_ACTION ts=86000 action=ADD qty=10000 price=1008500 side=SELL ord_id=86
+EXPECT DEPTH_UPDATE ts=86000 action=ADD count=1 qty=10000 price=1008500 side=SELL
+EXPECT TOP_OF_BOOK ts=86000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=87000 cl_ord_id=87 account_id=1 side=SELL price=1008600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=87000 cl_ord_id=87 ord_id=87
+EXPECT ORDER_BOOK_ACTION ts=87000 action=ADD qty=10000 price=1008600 side=SELL ord_id=87
+EXPECT DEPTH_UPDATE ts=87000 action=ADD count=1 qty=10000 price=1008600 side=SELL
+EXPECT TOP_OF_BOOK ts=87000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=88000 cl_ord_id=88 account_id=1 side=SELL price=1008700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=88000 cl_ord_id=88 ord_id=88
+EXPECT ORDER_BOOK_ACTION ts=88000 action=ADD qty=10000 price=1008700 side=SELL ord_id=88
+EXPECT DEPTH_UPDATE ts=88000 action=ADD count=1 qty=10000 price=1008700 side=SELL
+EXPECT TOP_OF_BOOK ts=88000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=89000 cl_ord_id=89 account_id=1 side=SELL price=1008800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=89000 cl_ord_id=89 ord_id=89
+EXPECT ORDER_BOOK_ACTION ts=89000 action=ADD qty=10000 price=1008800 side=SELL ord_id=89
+EXPECT DEPTH_UPDATE ts=89000 action=ADD count=1 qty=10000 price=1008800 side=SELL
+EXPECT TOP_OF_BOOK ts=89000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=90000 cl_ord_id=90 account_id=1 side=SELL price=1008900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=90000 cl_ord_id=90 ord_id=90
+EXPECT ORDER_BOOK_ACTION ts=90000 action=ADD qty=10000 price=1008900 side=SELL ord_id=90
+EXPECT DEPTH_UPDATE ts=90000 action=ADD count=1 qty=10000 price=1008900 side=SELL
+EXPECT TOP_OF_BOOK ts=90000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=91000 cl_ord_id=91 account_id=1 side=SELL price=1009000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=91000 cl_ord_id=91 ord_id=91
+EXPECT ORDER_BOOK_ACTION ts=91000 action=ADD qty=10000 price=1009000 side=SELL ord_id=91
+EXPECT DEPTH_UPDATE ts=91000 action=ADD count=1 qty=10000 price=1009000 side=SELL
+EXPECT TOP_OF_BOOK ts=91000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=92000 cl_ord_id=92 account_id=1 side=SELL price=1009100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=92000 cl_ord_id=92 ord_id=92
+EXPECT ORDER_BOOK_ACTION ts=92000 action=ADD qty=10000 price=1009100 side=SELL ord_id=92
+EXPECT DEPTH_UPDATE ts=92000 action=ADD count=1 qty=10000 price=1009100 side=SELL
+EXPECT TOP_OF_BOOK ts=92000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=93000 cl_ord_id=93 account_id=1 side=SELL price=1009200 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=93000 cl_ord_id=93 ord_id=93
+EXPECT ORDER_BOOK_ACTION ts=93000 action=ADD qty=10000 price=1009200 side=SELL ord_id=93
+EXPECT DEPTH_UPDATE ts=93000 action=ADD count=1 qty=10000 price=1009200 side=SELL
+EXPECT TOP_OF_BOOK ts=93000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=94000 cl_ord_id=94 account_id=1 side=SELL price=1009300 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=94000 cl_ord_id=94 ord_id=94
+EXPECT ORDER_BOOK_ACTION ts=94000 action=ADD qty=10000 price=1009300 side=SELL ord_id=94
+EXPECT DEPTH_UPDATE ts=94000 action=ADD count=1 qty=10000 price=1009300 side=SELL
+EXPECT TOP_OF_BOOK ts=94000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=95000 cl_ord_id=95 account_id=1 side=SELL price=1009400 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=95000 cl_ord_id=95 ord_id=95
+EXPECT ORDER_BOOK_ACTION ts=95000 action=ADD qty=10000 price=1009400 side=SELL ord_id=95
+EXPECT DEPTH_UPDATE ts=95000 action=ADD count=1 qty=10000 price=1009400 side=SELL
+EXPECT TOP_OF_BOOK ts=95000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=96000 cl_ord_id=96 account_id=1 side=SELL price=1009500 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=96000 cl_ord_id=96 ord_id=96
+EXPECT ORDER_BOOK_ACTION ts=96000 action=ADD qty=10000 price=1009500 side=SELL ord_id=96
+EXPECT DEPTH_UPDATE ts=96000 action=ADD count=1 qty=10000 price=1009500 side=SELL
+EXPECT TOP_OF_BOOK ts=96000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=97000 cl_ord_id=97 account_id=1 side=SELL price=1009600 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=97000 cl_ord_id=97 ord_id=97
+EXPECT ORDER_BOOK_ACTION ts=97000 action=ADD qty=10000 price=1009600 side=SELL ord_id=97
+EXPECT DEPTH_UPDATE ts=97000 action=ADD count=1 qty=10000 price=1009600 side=SELL
+EXPECT TOP_OF_BOOK ts=97000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=98000 cl_ord_id=98 account_id=1 side=SELL price=1009700 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=98000 cl_ord_id=98 ord_id=98
+EXPECT ORDER_BOOK_ACTION ts=98000 action=ADD qty=10000 price=1009700 side=SELL ord_id=98
+EXPECT DEPTH_UPDATE ts=98000 action=ADD count=1 qty=10000 price=1009700 side=SELL
+EXPECT TOP_OF_BOOK ts=98000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=99000 cl_ord_id=99 account_id=1 side=SELL price=1009800 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=99000 cl_ord_id=99 ord_id=99
+EXPECT ORDER_BOOK_ACTION ts=99000 action=ADD qty=10000 price=1009800 side=SELL ord_id=99
+EXPECT DEPTH_UPDATE ts=99000 action=ADD count=1 qty=10000 price=1009800 side=SELL
+EXPECT TOP_OF_BOOK ts=99000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900
+
+ACTION NEW_ORDER ts=100000 cl_ord_id=100 account_id=1 side=SELL price=1009900 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=100000 cl_ord_id=100 ord_id=100
+EXPECT ORDER_BOOK_ACTION ts=100000 action=ADD qty=10000 price=1009900 side=SELL ord_id=100
+EXPECT DEPTH_UPDATE ts=100000 action=ADD count=1 qty=10000 price=1009900 side=SELL
+EXPECT TOP_OF_BOOK ts=100000 ask_qty=10000 ask=1005000 bid_qty=10000 bid=1004900

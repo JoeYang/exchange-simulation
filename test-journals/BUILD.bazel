@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 cc_test(
@@ -8,5 +9,17 @@ cc_test(
         "//test-harness:test_runner",
         "//test-harness:journal_parser",
         "@googletest//:gtest_main",
+    ],
+)
+
+cc_binary(
+    name = "generate_stress_journals",
+    srcs = ["generate_stress_journals.cc"],
+    deps = [
+        "//exchange-core:matching_engine",
+        "//exchange-core:match_algo",
+        "//test-harness:recording_listener",
+        "//test-harness:journal_parser",
+        "//test-harness:journal_writer",
     ],
 )
