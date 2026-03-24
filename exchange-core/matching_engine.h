@@ -213,17 +213,227 @@ public:
     }
 
     // -----------------------------------------------------------------
-    // cancel_order -- stub (Task 15)
+    // cancel_order -- remove order from book/stop book, fire callbacks
     // -----------------------------------------------------------------
-    void cancel_order(OrderId /*id*/, Timestamp /*ts*/) {
-        // TODO: Task 15 -- cancel order implementation
+    void cancel_order(OrderId id, Timestamp ts) {
+        // Validate order ID range
+        if (id == 0 || id >= MaxOrderIds || order_index_[id] == nullptr) {
+            order_listener_.on_order_cancel_rejected(
+                OrderCancelRejected{id, 0, ts, RejectReason::UnknownOrder});
+            return;
+        }
+
+        Order* order = order_index_[id];
+        Price old_best_bid = book_.best_bid()
+                                 ? book_.best_bid()->price : 0;
+        Price old_best_ask = book_.best_ask()
+                                 ? book_.best_ask()->price : 0;
+
+        // Determine if order is in the stop book or the order book
+        bool in_stop_book = (order->type == OrderType::Stop ||
+                             order->type == OrderType::StopLimit);
+
+        if (in_stop_book) {
+            PriceLevel* freed = stop_book_.remove_stop(order);
+            order_index_[order->id] = nullptr;
+            order_listener_.on_order_cancelled(OrderCancelled{
+                order->id, ts, CancelReason::UserRequested});
+            if (freed) {
+                level_pool_.deallocate(freed);
+            }
+            order_pool_.deallocate(order);
+            return;
+        }
+
+        // Order is in the order book
+        Side order_side = order->side;
+        Price order_price = order->price;
+        Quantity order_remaining = order->remaining_quantity;
+        PriceLevel* freed = book_.remove_order(order);
+
+        order_index_[order->id] = nullptr;
+
+        // 1. OrderCancelled
+        order_listener_.on_order_cancelled(OrderCancelled{
+            id, ts, CancelReason::UserRequested});
+
+        // 2. L3: OrderBookAction (Cancel)
+        md_listener_.on_order_book_action(OrderBookAction{
+            id, order_side, order_price,
+            order_remaining, OrderBookAction::Cancel, ts});
+
+        // 3. L2: DepthUpdate
+        if (freed) {
+            md_listener_.on_depth_update(DepthUpdate{
+                order_side, order_price,
+                0, 0, DepthUpdate::Remove, ts});
+            level_pool_.deallocate(freed);
+        } else {
+            // Find the level (order->level is nullptr after remove_order)
+            // but the level still exists with remaining orders
+            PriceLevel* lv = find_level_by_price(order_side, order_price);
+            if (lv) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    order_side, order_price,
+                    lv->total_quantity, lv->order_count,
+                    DepthUpdate::Update, ts});
+            }
+        }
+
+        // 4. L1: TopOfBook if changed
+        fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
+
+        order_pool_.deallocate(order);
     }
 
     // -----------------------------------------------------------------
-    // modify_order -- stub (Task 15)
+    // modify_order -- cancel-replace or amend-down based on policy
     // -----------------------------------------------------------------
-    void modify_order(const ModifyRequest& /*req*/) {
-        // TODO: Task 15 -- modify order implementation
+    void modify_order(const ModifyRequest& req) {
+        // Validate order ID range
+        if (req.order_id == 0 || req.order_id >= MaxOrderIds ||
+            order_index_[req.order_id] == nullptr) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp,
+                                    RejectReason::UnknownOrder});
+            return;
+        }
+
+        // Validate new quantity
+        if (req.new_quantity <= 0) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp,
+                                    RejectReason::InvalidQuantity});
+            return;
+        }
+
+        // Validate new price
+        if (req.new_price <= 0) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp,
+                                    RejectReason::InvalidPrice});
+            return;
+        }
+
+        // Tick size validation
+        if (config_.tick_size > 0 &&
+            (req.new_price % config_.tick_size) != 0) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp,
+                                    RejectReason::InvalidPrice});
+            return;
+        }
+
+        // Lot size validation
+        if (config_.lot_size > 0 &&
+            (req.new_quantity % config_.lot_size) != 0) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp,
+                                    RejectReason::InvalidQuantity});
+            return;
+        }
+
+        Order* order = order_index_[req.order_id];
+        ModifyPolicy policy = derived().get_modify_policy();
+
+        if (policy == ModifyPolicy::RejectModify) {
+            order_listener_.on_order_modify_rejected(
+                OrderModifyRejected{req.order_id, req.client_order_id,
+                                    req.timestamp,
+                                    RejectReason::ExchangeSpecific});
+            return;
+        }
+
+        // Amend-down: reduce qty in-place if price unchanged and qty
+        // is reducing (preserves time priority)
+        if (policy == ModifyPolicy::AmendDown &&
+            req.new_price == order->price &&
+            req.new_quantity < order->quantity &&
+            req.new_quantity > order->filled_quantity) {
+            Quantity old_remaining = order->remaining_quantity;
+            Quantity new_remaining = req.new_quantity - order->filled_quantity;
+            order->quantity = req.new_quantity;
+            order->remaining_quantity = new_remaining;
+
+            // Update level total
+            if (order->level) {
+                order->level->total_quantity -= (old_remaining - new_remaining);
+            }
+
+            order_listener_.on_order_modified(OrderModified{
+                order->id, req.client_order_id,
+                req.new_price, req.new_quantity, req.timestamp});
+
+            // L2/L1 updates
+            if (order->level) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    order->side, order->level->price,
+                    order->level->total_quantity,
+                    order->level->order_count,
+                    DepthUpdate::Update, req.timestamp});
+            }
+            return;
+        }
+
+        // Cancel-replace: remove old order, re-enter as new
+        Price old_best_bid = book_.best_bid()
+                                 ? book_.best_bid()->price : 0;
+        Price old_best_ask = book_.best_ask()
+                                 ? book_.best_ask()->price : 0;
+
+        Side order_side = order->side;
+        Price old_price = order->price;
+
+        // 1. Remove old order from book
+        PriceLevel* freed = book_.remove_order(order);
+
+        // Fire L3: OrderBookAction (Cancel old)
+        md_listener_.on_order_book_action(OrderBookAction{
+            order->id, order_side, old_price,
+            order->remaining_quantity,
+            OrderBookAction::Cancel, req.timestamp});
+
+        // Fire L2: DepthUpdate for old level
+        if (freed) {
+            md_listener_.on_depth_update(DepthUpdate{
+                order_side, old_price,
+                0, 0, DepthUpdate::Remove, req.timestamp});
+            level_pool_.deallocate(freed);
+        } else {
+            PriceLevel* lv = find_level_by_price(order_side, old_price);
+            if (lv) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    order_side, old_price,
+                    lv->total_quantity, lv->order_count,
+                    DepthUpdate::Update, req.timestamp});
+            }
+        }
+
+        // 3. Update order fields for the new order
+        Quantity already_filled = order->filled_quantity;
+        order->price = req.new_price;
+        order->quantity = req.new_quantity;
+        order->remaining_quantity = req.new_quantity - already_filled;
+        order->timestamp = req.timestamp;
+        order->prev = nullptr;
+        order->next = nullptr;
+        order->level = nullptr;
+
+        // Fire OrderModified
+        order_listener_.on_order_modified(OrderModified{
+            order->id, req.client_order_id,
+            req.new_price, req.new_quantity, req.timestamp});
+
+        // 4. Match the modified order (may trigger fills)
+        match_order(order, req.timestamp);
+
+        // Trigger stop cascade after any fills
+        check_and_trigger_stops(req.timestamp);
     }
 
     // -----------------------------------------------------------------
@@ -644,6 +854,19 @@ private:
 
         md_listener_.on_top_of_book(TopOfBook{
             best_bid, bid_qty, best_ask, ask_qty, ts});
+    }
+
+    // -----------------------------------------------------------------
+    // find_level_by_price -- linear search for a price level on a side
+    // -----------------------------------------------------------------
+    PriceLevel* find_level_by_price(Side side, Price price) const {
+        PriceLevel* lv = (side == Side::Buy)
+                             ? book_.best_bid() : book_.best_ask();
+        while (lv != nullptr) {
+            if (lv->price == price) return lv;
+            lv = lv->next;
+        }
+        return nullptr;
     }
 };
 
