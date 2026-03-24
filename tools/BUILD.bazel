@@ -17,3 +17,22 @@ cc_test(
     srcs = ["orderbook_state_test.cc"],
     deps = [":orderbook_state", "@googletest//:gtest_main"],
 )
+
+cc_library(
+    name = "shm_transport",
+    hdrs = ["shm_transport.h"],
+    srcs = ["shm_transport.cc"],
+    deps = [
+        "//exchange-core:spsc_ring_buffer",
+        "//test-harness:recorded_event",
+    ],
+    linkopts = ["-lrt"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "shm_transport_test",
+    srcs = ["shm_transport_test.cc"],
+    deps = [":shm_transport", "@googletest//:gtest_main"],
+    linkopts = ["-lrt"],
+)
