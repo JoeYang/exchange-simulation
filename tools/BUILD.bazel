@@ -66,3 +66,34 @@ cc_binary(
     linkopts = ["-lrt"],
     visibility = ["//visibility:public"],
 )
+
+# --- Task 33: TUI Renderer ---
+cc_library(
+    name = "tui_renderer",
+    hdrs = ["tui_renderer.h"],
+    srcs = ["tui_renderer.cc"],
+    deps = [
+        ":orderbook_state",
+        "@ftxui//:dom",
+        "@ftxui//:screen",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# --- Task 34: Offline journal visualizer ---
+cc_binary(
+    name = "exchange-viz-replay",
+    srcs = ["viz_replay.cc"],
+    deps = [
+        ":tui_renderer",
+        ":orderbook_state",
+        "//test-harness:journal_parser",
+        "//test-harness:test_runner",
+        "//test-harness:recording_listener",
+        "//exchange-core:matching_engine",
+        "@ftxui//:component",
+        "@ftxui//:dom",
+        "@ftxui//:screen",
+    ],
+    visibility = ["//visibility:public"],
+)
