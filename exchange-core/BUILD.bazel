@@ -1,0 +1,18 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "exchange-core",
+    srcs = ["exchange_core.cc"],
+    hdrs = ["exchange_core.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "exchange_core_test",
+    srcs = ["exchange_core_test.cc"],
+    deps = [
+        ":exchange-core",
+        "@googletest//:gtest_main",
+    ],
+)

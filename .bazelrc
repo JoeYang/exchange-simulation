@@ -1,0 +1,8 @@
+build --incompatible_autoload_externally=+@rules_cc
+build --cxxopt=-std=c++20
+build --host_cxxopt=-std=c++20
+build --copt=-Wall
+build --copt=-Wextra
+build --copt=-Werror
+
+test --test_output=errors
