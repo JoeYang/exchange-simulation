@@ -39,23 +39,17 @@ PriceLevel* OrderBook::insert_order(Order* order, PriceLevel* new_level_if_neede
 PriceLevel* OrderBook::remove_order(Order* order) {
     PriceLevel* lv = order->level;
 
+    list_remove(lv->head, lv->tail, order);
     lv->total_quantity -= order->remaining_quantity;
     --lv->order_count;
 
-    list_remove(lv->head, lv->tail, order);
-
     if (lv->order_count == 0) {
-        // Determine the side by scanning the bid list for lv.
-        // If found → bid; otherwise it must be on the ask side.
-        // Price levels are typically O(10s), so this scan is acceptable.
-        Side side = Side::Sell;
-        for (const PriceLevel* p = best_bid_; p != nullptr; p = p->next) {
-            if (p == lv) { side = Side::Buy; break; }
-        }
-        unlink_level(side, lv);
+        unlink_level(order->side, lv);
+        order->level = nullptr;
         return lv;
     }
 
+    order->level = nullptr;
     return nullptr;
 }
 
@@ -63,10 +57,10 @@ PriceLevel* OrderBook::remove_order(Order* order) {
 // find_level
 // ---------------------------------------------------------------------------
 
-PriceLevel* OrderBook::find_level(Side side, Price price) const noexcept {
-    const PriceLevel* head = (side == Side::Buy) ? best_bid_ : best_ask_;
-    for (const PriceLevel* lv = head; lv != nullptr; lv = lv->next) {
-        if (lv->price == price) return const_cast<PriceLevel*>(lv);
+PriceLevel* OrderBook::find_level(Side side, Price price) noexcept {
+    PriceLevel* head = (side == Side::Buy) ? best_bid_ : best_ask_;
+    for (PriceLevel* lv = head; lv != nullptr; lv = lv->next) {
+        if (lv->price == price) return lv;
     }
     return nullptr;
 }

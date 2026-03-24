@@ -249,6 +249,7 @@ TEST(OrderbookTest, RemoveLastOrderFromLevelReturnsLevel) {
     EXPECT_EQ(emptied, lv);    // caller must deallocate this
     EXPECT_EQ(book.best_bid(), nullptr);
     EXPECT_TRUE(book.empty());
+    EXPECT_EQ(o1.level, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +472,7 @@ TEST(OrderbookTest, RemoveOrderClearsOrderPointers) {
 
     EXPECT_EQ(o1.prev, nullptr);
     EXPECT_EQ(o1.next, nullptr);
+    EXPECT_EQ(o1.level, nullptr);
 }
 
 }  // namespace

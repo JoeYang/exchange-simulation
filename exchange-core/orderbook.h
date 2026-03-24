@@ -55,7 +55,7 @@ public:
 
 private:
     // Find an existing PriceLevel for the given side and price.
-    PriceLevel* find_level(Side side, Price price) const noexcept;
+    PriceLevel* find_level(Side side, Price price) noexcept;
 
     // Link a new, initialised PriceLevel into the correct sorted position.
     // Side determines which list (bid/ask) and sort direction.
