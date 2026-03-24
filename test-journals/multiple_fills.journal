@@ -1,0 +1,52 @@
+# multiple_fills.journal
+# One sell aggressor fills 3 resting buy orders at the same price level.
+# 3 buys at 1005000 (10000 each) rest. Then sell 30000 fills all 3.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Action 0: first buy rests (new level)
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=0 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# Action 1: second buy at same level (level updates, TOP_OF_BOOK fires for qty change)
+ACTION NEW_ORDER ts=1001 cl_ord_id=2 account_id=0 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=1001
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=ADD ts=1001
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=20000 count=2 action=UPDATE ts=1001
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=20000 ask=0 ask_qty=0 ts=1001
+
+# Action 2: third buy at same level (level updates, TOP_OF_BOOK fires for qty change)
+ACTION NEW_ORDER ts=1002 cl_ord_id=3 account_id=0 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=1002
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=10000 action=ADD ts=1002
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=30000 count=3 action=UPDATE ts=1002
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=30000 ask=0 ask_qty=0 ts=1002
+
+# Action 3: sell 30000 fills all 3 resting buys in FIFO order
+# Fill 1: ord1 fully filled (10000) -- aggressor remaining = 20000 -> PARTIALLY_FILLED
+# Fill 2: ord2 fully filled (10000) -- aggressor remaining = 10000 -> PARTIALLY_FILLED
+# Fill 3: ord3 fully filled (10000) -- aggressor remaining = 0 -> FILLED
+# After fill 1: level has 20000, count=2 -> DEPTH_UPDATE(UPDATE)
+# After fill 2: level has 10000, count=1 -> DEPTH_UPDATE(UPDATE)
+# After fill 3: level empty -> DEPTH_UPDATE(REMOVE)
+# TOP_OF_BOOK fires at the end (bid was 1005000, now 0)
+ACTION NEW_ORDER ts=2000 cl_ord_id=4 account_id=0 side=SELL price=1005000 qty=30000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=2000
+EXPECT ORDER_FILLED aggressor=4 resting=1 price=1005000 qty=10000 ts=2000
+EXPECT ORDER_FILLED aggressor=4 resting=2 price=1005000 qty=10000 ts=2000
+EXPECT ORDER_FILLED aggressor=4 resting=3 price=1005000 qty=10000 ts=2000
+# When a resting order is fully filled, the engine always fires DEPTH_UPDATE(REMOVE, 0, 0)
+# regardless of whether other orders remain at the same level (engine behavior).
+# After all 3 fills the bid level is gone; TOP_OF_BOOK fires at end.
+EXPECT TRADE price=1005000 qty=10000 aggressor=4 resting=1 aggressor_side=SELL ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TRADE price=1005000 qty=10000 aggressor=4 resting=2 aggressor_side=SELL ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TRADE price=1005000 qty=10000 aggressor=4 resting=3 aggressor_side=SELL ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000

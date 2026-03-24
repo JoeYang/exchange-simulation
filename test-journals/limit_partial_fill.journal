@@ -1,0 +1,36 @@
+# limit_partial_fill.journal
+# Buy 10 lots rests, sell 5 lots fills partially.
+# After the fill: resting buy has 5 lots remaining, sell is fully consumed.
+# The sell aggressor fires ORDER_FILLED (sell qty == fill qty).
+# The resting buy fires ORDER_PARTIALLY_FILLED (resting_rem=10000-5000... wait:
+#   buy qty=10000, sell qty=10000 fills 10000 -> but we want partial:
+#   buy 10 lots = 100000 qty, sell 5 lots = 50000 qty).
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Action 0: buy 10 lots rests
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=0 side=BUY price=1005000 qty=100000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=100000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=100000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=100000 ask=0 ask_qty=0 ts=1000
+
+# Action 1: sell 5 lots -- fully fills (sell is aggressor, qty=50000 <= resting 100000)
+# Sell is fully consumed => ORDER_FILLED for the sell aggressor.
+# Resting buy partial: ORDER_PARTIALLY_FILLED fires for the buy? No:
+#   The engine fires ORDER_FILLED/ORDER_PARTIALLY_FILLED for the AGGRESSOR only.
+#   The resting order is not notified; it stays in the book with reduced qty.
+# So: ORDER_ACCEPTED(sell), ORDER_FILLED(aggressor=sell, resting=buy, qty=50000)
+# MD: TRADE, ORDER_BOOK_ACTION(FILL resting buy), DEPTH_UPDATE(UPDATE bid level),
+#     no TOP_OF_BOOK change (bid still at 1005000, just lower qty)
+#
+# Wait: fire_top_of_book_if_changed checks old vs new best. Best bid price stays
+# the same (1005000), so TOP_OF_BOOK does NOT fire.
+# But post_match for the fully-filled aggressor calls fire_top_of_book_if_changed
+# with old_best_bid=1005000. After the fill, best_bid is still 1005000 (buy has
+# 50000 remaining). So no TOP_OF_BOOK.
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=0 side=SELL price=1005000 qty=50000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_FILLED aggressor=2 resting=1 price=1005000 qty=50000 ts=2000
+EXPECT TRADE price=1005000 qty=50000 aggressor=2 resting=1 aggressor_side=SELL ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=50000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=50000 count=1 action=UPDATE ts=2000

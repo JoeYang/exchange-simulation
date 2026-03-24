@@ -1,0 +1,9 @@
+# market_order_no_liquidity.journal
+# Market buy on an empty book -- no liquidity, order is cancelled.
+# From matching_engine.h: post_match() cancels market remainder with IOCRemainder.
+# No MD events fire since nothing changed in the book.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=0 side=BUY price=0 qty=10000 type=MARKET tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_CANCELLED ord_id=1 ts=1000 reason=IOC_REMAINDER
