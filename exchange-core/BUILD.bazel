@@ -161,3 +161,19 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "matching_engine",
+    hdrs = ["matching_engine.h"],
+    deps = [
+        ":types",
+        ":events",
+        ":listeners",
+        ":object_pool",
+        ":intrusive_list",
+        ":orderbook",
+        ":stop_book",
+        ":match_algo",
+    ],
+    visibility = ["//visibility:public"],
+)
