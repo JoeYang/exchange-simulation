@@ -15,3 +15,20 @@ cc_test(
     srcs = ["recorded_event_test.cc"],
     deps = [":recorded_event", "@googletest//:gtest_main"],
 )
+
+# --- Task 20 ---
+cc_library(
+    name = "recording_listener",
+    hdrs = ["recording_listener.h"],
+    deps = [
+        "//exchange-core:listeners",
+        ":recorded_event",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "recording_listener_test",
+    srcs = ["recording_listener_test.cc"],
+    deps = [":recording_listener", "@googletest//:gtest_main"],
+)
