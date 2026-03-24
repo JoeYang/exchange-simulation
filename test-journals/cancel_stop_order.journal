@@ -1,0 +1,17 @@
+# cancel_stop_order.journal
+# Cancel a stop order before it triggers.
+#
+# cancel_active_order() for a stop order (in_stop_book=true):
+#   - Removes from stop book
+#   - Fires ORDER_CANCELLED
+#   - No MD events (stop was never in the main order book)
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Action 0: place a sell stop at 1005000
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=0 side=SELL price=0 qty=10000 type=STOP tif=GTC stop_price=1005000
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+
+# Action 1: cancel the stop before any fill triggers it
+# Only ORDER_CANCELLED fires; no MD events (stop book cancels produce no MD).
+ACTION CANCEL ts=2000 ord_id=1
+EXPECT ORDER_CANCELLED ord_id=1 ts=2000 reason=USER_REQUESTED

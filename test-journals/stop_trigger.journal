@@ -1,0 +1,52 @@
+# stop_trigger.journal
+# A limit fill triggers a buy stop order.
+#
+# Setup:
+#   ord1: limit sell at 1005000 (rests)
+#   ord2: buy stop at stop_price=1005000 (rests in stop book, no MD events)
+#   ord3: limit buy resting at 1004000 (for the triggered stop to fill against)
+#
+# Trigger action:
+#   ord4: limit buy at 1005000 fills ord1 -> trade at 1005000
+#   last_trade_price=1005000 >= buy_stop_price=1005000 -> stop triggers
+#   ord2 becomes a market buy, tries to fill. No ask side left -> IOC_REMAINDER.
+#
+# Event ordering for the trigger action (all order events, then all MD events):
+# Order events: ORDER_ACCEPTED(ord4), ORDER_FILLED(ord4 vs ord1)
+#               [stop triggers] ORDER_CANCELLED(ord2, IOC_REMAINDER)
+# MD events:   TRADE(ord4 vs ord1), OBA(FILL,ord1), DU(REMOVE,ask),
+#              TOP_OF_BOOK(ask gone)
+#
+# Note: the triggered stop (ord2) becomes a market order and finds no liquidity
+# on the ask side (ord1 was just consumed), so it gets IOC_REMAINDER.
+# The stop cancellation fires as an order event during the cascade, but since
+# stop orders don't add to/remove from the main book, no MD events fire for it.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Action 0: limit sell rests at 1005000
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=0 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=1000
+
+# Action 1: buy stop at stop_price=1005000 (triggers when last_trade >= 1005000)
+# Stop orders go into the stop book -- only ORDER_ACCEPTED fires, no MD events.
+ACTION NEW_ORDER ts=1001 cl_ord_id=2 account_id=0 side=BUY price=0 qty=10000 type=STOP tif=GTC stop_price=1005000
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=1001
+
+# Action 2: limit buy at 1005000 fills the resting sell -> triggers the stop
+# Order events: ORDER_ACCEPTED(ord3), ORDER_FILLED(ord3 vs ord1),
+#               then stop cascade: ORDER_CANCELLED(ord2, IOC_REMAINDER)
+# MD events:   TRADE(1005000), OBA(FILL,ord1), DU(REMOVE,1005000 ask),
+#              TOP_OF_BOOK(ask=0)
+# Note: triggered stop (market buy) finds empty ask -> IOC_REMAINDER cancel.
+# No MD events for the stop cancel itself (nothing was in the main book).
+ACTION NEW_ORDER ts=2000 cl_ord_id=3 account_id=0 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=2000
+EXPECT ORDER_FILLED aggressor=3 resting=1 price=1005000 qty=10000 ts=2000
+EXPECT ORDER_CANCELLED ord_id=2 ts=2000 reason=IOC_REMAINDER
+EXPECT TRADE price=1005000 qty=10000 aggressor=3 resting=1 aggressor_side=BUY ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000

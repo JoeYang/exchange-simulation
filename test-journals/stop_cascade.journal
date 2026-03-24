@@ -1,0 +1,70 @@
+# stop_cascade.journal
+# A stop triggers, fills, which triggers another stop (cascade).
+#
+# Setup:
+#   ord1: limit sell at 1005000 (rests) -- for initial fill
+#   ord2: sell stop at stop_price=1005000 (triggers when last_trade<=1005000)
+#         becomes market sell, will fill against resting buy
+#   ord3: limit buy at 1004000 (rests) -- for triggered stop to fill against
+#   ord4: sell stop at stop_price=1004000 (triggers when last_trade<=1004000)
+#         becomes market sell on empty buy side -> IOC_REMAINDER
+#
+# Trigger action:
+#   ord5: limit buy at 1005000 fills ord1 -> last_trade=1005000
+#   -> sell stop ord2 triggers (1005000 <= 1005000): becomes market sell
+#      market sell fills ord3 (buy at 1004000) -> last_trade=1004000
+#   -> sell stop ord4 triggers (1004000 <= 1004000): becomes market sell
+#      market sell finds no bids -> IOC_REMAINDER cancel
+#
+# All events happen in action that submits ord5.
+# Order events (all first): ORDER_ACCEPTED(ord5), ORDER_FILLED(ord5 vs ord1),
+#   [cascade1] ORDER_FILLED(ord2 vs ord3),  <- triggered stop ord2 fills ord3
+#   [cascade2] ORDER_CANCELLED(ord4, IOC_REMAINDER)
+# MD events: TRADE(ord5 vs ord1), OBA(FILL,ord1), DU(REMOVE,1005000 ask), TOB(ask=0),
+#   [cascade1 match] TRADE(ord2 vs ord3), OBA(FILL,ord3), DU(REMOVE,1004000 bid), TOB(bid=0)
+#
+# Note: ord2 (stop sell) order id = 2, ord3 (buy limit) order id = 3, ord4 (stop sell) id=4
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Action 0: limit sell at 1005000 rests
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=0 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=1000
+
+# Action 1: sell stop at 1005000 (triggers when last_trade <= 1005000)
+ACTION NEW_ORDER ts=1001 cl_ord_id=2 account_id=0 side=SELL price=0 qty=10000 type=STOP tif=GTC stop_price=1005000
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=1001
+
+# Action 2: limit buy at 1004000 rests (for cascade stop to fill against)
+ACTION NEW_ORDER ts=1002 cl_ord_id=3 account_id=0 side=BUY price=1004000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=1002
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1004000 qty=10000 action=ADD ts=1002
+EXPECT DEPTH_UPDATE side=BUY price=1004000 qty=10000 count=1 action=ADD ts=1002
+EXPECT TOP_OF_BOOK bid=1004000 bid_qty=10000 ask=1005000 ask_qty=10000 ts=1002
+
+# Action 3: second sell stop at 1004000 (triggers when last_trade <= 1004000)
+ACTION NEW_ORDER ts=1003 cl_ord_id=4 account_id=0 side=SELL price=0 qty=10000 type=STOP tif=GTC stop_price=1004000
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=1003
+
+# Action 4: limit buy at 1005000 fills ord1, triggering the cascade
+# Order events: ORDER_ACCEPTED(ord5=id5), ORDER_FILLED(ord5 vs ord1),
+#   ORDER_FILLED(ord2 vs ord3),  <- triggered stop2 (market sell) fills resting buy ord3
+#   ORDER_CANCELLED(ord4, IOC_REMAINDER)  <- triggered stop4 finds empty book
+# MD events:
+#   TRADE(ord5 vs ord1, 1005000), OBA(FILL,ord1), DU(REMOVE,ask 1005000), TOB(bid=1004000,ask=0),
+#   TRADE(ord2 vs ord3, 1004000), OBA(FILL,ord3), DU(REMOVE,bid 1004000), TOB(bid=0,ask=0)
+ACTION NEW_ORDER ts=2000 cl_ord_id=5 account_id=0 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=5 cl_ord_id=5 ts=2000
+EXPECT ORDER_FILLED aggressor=5 resting=1 price=1005000 qty=10000 ts=2000
+EXPECT ORDER_FILLED aggressor=2 resting=3 price=1004000 qty=10000 ts=2000
+EXPECT ORDER_CANCELLED ord_id=4 ts=2000 reason=IOC_REMAINDER
+EXPECT TRADE price=1005000 qty=10000 aggressor=5 resting=1 aggressor_side=BUY ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=1004000 bid_qty=10000 ask=0 ask_qty=0 ts=2000
+EXPECT TRADE price=1004000 qty=10000 aggressor=2 resting=3 aggressor_side=SELL ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1004000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1004000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000
