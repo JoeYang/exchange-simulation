@@ -63,6 +63,22 @@ cc_test(
 )
 
 cc_library(
+    name = "listeners",
+    hdrs = ["listeners.h"],
+    deps = [":events"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "listeners_test",
+    srcs = ["listeners_test.cc"],
+    deps = [
+        ":listeners",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "intrusive_list",
     hdrs = ["intrusive_list.h"],
     visibility = ["//visibility:public"],
