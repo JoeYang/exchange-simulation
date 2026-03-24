@@ -1,0 +1,10 @@
+# cancel_unknown.journal
+# A cancel request is sent for an order ID that does not exist in the engine.
+# The engine must reject the cancel with reason=UNKNOWN_ORDER.
+# No market-data events should fire.
+
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# --- action 0: cancel an order that was never placed ---
+ACTION CANCEL ts=1000 ord_id=99
+EXPECT ORDER_CANCEL_REJECTED ord_id=99 cl_ord_id=0 ts=1000 reason=UNKNOWN_ORDER

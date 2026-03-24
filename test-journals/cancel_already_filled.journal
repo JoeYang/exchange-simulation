@@ -1,0 +1,27 @@
+# cancel_already_filled.journal
+# An order that was already fully filled is cancelled. Because the order no
+# longer exists in the active order set, the engine rejects the cancel with
+# reason=UNKNOWN_ORDER (the order ID was consumed on fill).
+
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# --- action 0: place a resting sell ---
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=1000
+
+# --- action 1: matching buy fully fills the resting sell ---
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=2 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_FILLED aggressor=2 resting=1 price=1005000 qty=10000 ts=2000
+EXPECT TRADE price=1005000 qty=10000 aggressor=2 resting=1 aggressor_side=BUY ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000
+
+# --- action 2: attempt to cancel the already-filled order ---
+# ord_id=1 is no longer active; the engine returns UNKNOWN_ORDER.
+ACTION CANCEL ts=3000 ord_id=1
+EXPECT ORDER_CANCEL_REJECTED ord_id=1 cl_ord_id=0 ts=3000 reason=UNKNOWN_ORDER

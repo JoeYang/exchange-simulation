@@ -1,0 +1,10 @@
+# modify_unknown.journal
+# A modify request is sent for an order ID that does not exist in the engine.
+# The engine must reject the modify with reason=UNKNOWN_ORDER.
+# No market-data events should fire.
+
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# --- action 0: modify an order that was never placed ---
+ACTION MODIFY ts=1000 ord_id=99 cl_ord_id=1 new_price=1005000 new_qty=10000
+EXPECT ORDER_MODIFY_REJECTED ord_id=99 cl_ord_id=1 ts=1000 reason=UNKNOWN_ORDER

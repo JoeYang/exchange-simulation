@@ -1,0 +1,20 @@
+# cancel_resting.journal
+# A resting limit order is placed and then explicitly cancelled by the user.
+# Verifies that ORDER_CANCELLED fires with reason=USER_REQUESTED and that
+# the correct market-data events (L3 CANCEL, L2 REMOVE, L1 TOP_OF_BOOK) follow.
+
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# --- action 0: place a resting buy ---
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# --- action 1: cancel the resting order ---
+ACTION CANCEL ts=2000 ord_id=1
+EXPECT ORDER_CANCELLED ord_id=1 ts=2000 reason=USER_REQUESTED
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=CANCEL ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000
