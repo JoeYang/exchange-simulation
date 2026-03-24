@@ -28,3 +28,15 @@ cc_test(
     srcs = ["spsc_ring_buffer_test.cc"],
     deps = [":spsc_ring_buffer", "@googletest//:gtest_main"],
 )
+
+cc_library(
+    name = "object_pool",
+    hdrs = ["object_pool.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "object_pool_test",
+    srcs = ["object_pool_test.cc"],
+    deps = [":object_pool", "@googletest//:gtest_main"],
+)
