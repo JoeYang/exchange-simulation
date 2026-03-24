@@ -6,8 +6,8 @@ namespace exchange {
 // Free function templates for intrusive doubly-linked list operations.
 //
 // Requirements on T:
-//   - T* prev  — pointer to predecessor node (nullptr if head)
-//   - T* next  — pointer to successor node   (nullptr if tail)
+//   - T* prev  -- pointer to predecessor node (nullptr if head)
+//   - T* next  -- pointer to successor node   (nullptr if tail)
 //
 // All operations are O(1) except list_size which is O(n).
 

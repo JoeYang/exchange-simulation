@@ -1,11 +1,12 @@
 #include "exchange-core/intrusive_list.h"
 
 #include <gtest/gtest.h>
+#include <vector>
 
 namespace exchange {
 namespace {
 
-// Minimal node type for testing — does NOT depend on types.h.
+// Minimal node type for testing -- does NOT depend on types.h.
 struct Node {
     int value;
     Node* prev{nullptr};
@@ -193,6 +194,39 @@ TEST(IntrusiveListTest, InsertAfterTail) {
     EXPECT_EQ(tail, &x);
     EXPECT_EQ((std::vector<int>{1, 2, 3}), to_vec(head));
     EXPECT_EQ(x.prev, &b);
+    EXPECT_EQ(x.next, nullptr);
+}
+
+TEST(IntrusiveListTest, InsertBeforeSingleNodeUpdatesHead) {
+    Node a(2);
+    Node* head = nullptr;
+    Node* tail = nullptr;
+    list_push_back(head, tail, &a);
+
+    Node x(1);
+    list_insert_before(head, tail, &a, &x);
+
+    EXPECT_EQ(head, &x);
+    EXPECT_EQ(tail, &a);
+    EXPECT_EQ(x.prev, nullptr);
+    EXPECT_EQ(x.next, &a);
+    EXPECT_EQ(a.prev, &x);
+    EXPECT_EQ(a.next, nullptr);
+}
+
+TEST(IntrusiveListTest, InsertAfterSingleNodeUpdatesTail) {
+    Node a(1);
+    Node* head = nullptr;
+    Node* tail = nullptr;
+    list_push_back(head, tail, &a);
+
+    Node x(2);
+    list_insert_after(head, tail, &a, &x);
+
+    EXPECT_EQ(head, &a);
+    EXPECT_EQ(tail, &x);
+    EXPECT_EQ(a.next, &x);
+    EXPECT_EQ(x.prev, &a);
     EXPECT_EQ(x.next, nullptr);
 }
 
