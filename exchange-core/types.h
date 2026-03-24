@@ -1,0 +1,87 @@
+#pragma once
+
+#include <cstdint>
+
+namespace exchange {
+
+// --- Type aliases ---
+using Price     = int64_t;   // fixed-point, 4 decimal places (100.5000 = 1005000)
+using Quantity  = int64_t;   // fixed-point, 4 decimal places (1.0000 = 10000)
+using OrderId   = uint64_t;  // engine-assigned, sequential starting at 1
+using Timestamp = int64_t;   // epoch nanoseconds
+
+constexpr int64_t PRICE_SCALE = 10000;
+
+// --- Enumerations ---
+enum class Side : uint8_t { Buy, Sell };
+
+enum class OrderType : uint8_t { Limit, Market, Stop, StopLimit };
+
+enum class TimeInForce : uint8_t { DAY, GTC, IOC, FOK, GTD };
+
+enum class MatchAlgo : uint8_t { FIFO, ProRata };
+
+enum class SmpAction : uint8_t {
+    CancelNewest, CancelOldest, CancelBoth, Decrement, None
+};
+
+enum class ModifyPolicy : uint8_t {
+    CancelReplace, AmendDown, RejectModify
+};
+
+enum class RejectReason : uint8_t {
+    PoolExhausted, InvalidPrice, InvalidQuantity, InvalidTif, InvalidSide,
+    UnknownOrder, PriceBandViolation, LevelPoolExhausted, ExchangeSpecific
+};
+
+enum class CancelReason : uint8_t {
+    UserRequested, IOCRemainder, FOKFailed, Expired,
+    SelfMatchPrevention, LevelPoolExhausted
+};
+
+// --- Core structs ---
+struct PriceLevel;  // forward declaration
+
+struct Order {
+    OrderId id{0};
+    uint64_t client_order_id{0};
+    uint64_t account_id{0};
+    Price price{0};
+    Quantity quantity{0};
+    Quantity filled_quantity{0};
+    Quantity remaining_quantity{0};
+    Side side{Side::Buy};
+    OrderType type{OrderType::Limit};
+    TimeInForce tif{TimeInForce::GTC};
+    Timestamp timestamp{0};
+    Timestamp gtd_expiry{0};
+
+    // Intrusive doubly-linked list hooks (within a price level)
+    Order* prev{nullptr};
+    Order* next{nullptr};
+
+    // Back-pointer to owning price level
+    PriceLevel* level{nullptr};
+};
+
+struct PriceLevel {
+    Price price{0};
+    Quantity total_quantity{0};
+    uint32_t order_count{0};
+
+    Order* head{nullptr};
+    Order* tail{nullptr};
+
+    // Intrusive doubly-linked list hooks (within bid/ask side)
+    PriceLevel* prev{nullptr};
+    PriceLevel* next{nullptr};
+};
+
+struct FillResult {
+    Order* resting_order{nullptr};
+    Price price{0};
+    Quantity quantity{0};
+    Quantity resting_remaining{0};
+};
+
+}  // namespace exchange
