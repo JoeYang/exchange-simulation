@@ -437,10 +437,78 @@ public:
     }
 
     // -----------------------------------------------------------------
-    // trigger_expiry -- stub (Task 16)
+    // trigger_expiry -- cancel DAY/GTD orders that have expired
+    // O(n) linear scan of order_index_.
     // -----------------------------------------------------------------
-    void trigger_expiry(Timestamp /*now*/, TimeInForce /*tif*/) {
-        // TODO: Task 16 -- trigger expiry implementation
+    void trigger_expiry(Timestamp now, TimeInForce tif) {
+        for (size_t i = 1; i < next_order_id_; ++i) {
+            Order* order = order_index_[i];
+            if (order == nullptr) continue;
+            if (order->tif != tif) continue;
+
+            bool should_expire = false;
+            if (tif == TimeInForce::DAY) {
+                should_expire = true;
+            } else if (tif == TimeInForce::GTD) {
+                should_expire = (order->gtd_expiry <= now);
+            }
+
+            if (!should_expire) continue;
+
+            // Determine if order is in stop book or order book
+            bool in_stop_book = (order->type == OrderType::Stop ||
+                                 order->type == OrderType::StopLimit);
+
+            Price old_best_bid = book_.best_bid()
+                                     ? book_.best_bid()->price : 0;
+            Price old_best_ask = book_.best_ask()
+                                     ? book_.best_ask()->price : 0;
+
+            if (in_stop_book) {
+                PriceLevel* freed = stop_book_.remove_stop(order);
+                order_index_[order->id] = nullptr;
+                order_listener_.on_order_cancelled(OrderCancelled{
+                    order->id, now, CancelReason::Expired});
+                if (freed) {
+                    level_pool_.deallocate(freed);
+                }
+                order_pool_.deallocate(order);
+            } else {
+                Side order_side = order->side;
+                Price order_price = order->price;
+                Quantity order_remaining = order->remaining_quantity;
+                PriceLevel* freed = book_.remove_order(order);
+                order_index_[order->id] = nullptr;
+
+                order_listener_.on_order_cancelled(OrderCancelled{
+                    order->id, now, CancelReason::Expired});
+                md_listener_.on_order_book_action(OrderBookAction{
+                    static_cast<OrderId>(i), order_side,
+                    order_price, order_remaining,
+                    OrderBookAction::Cancel, now});
+
+                if (freed) {
+                    md_listener_.on_depth_update(DepthUpdate{
+                        order_side, order_price,
+                        0, 0, DepthUpdate::Remove, now});
+                    level_pool_.deallocate(freed);
+                } else {
+                    PriceLevel* lv = find_level_by_price(
+                        order_side, order_price);
+                    if (lv) {
+                        md_listener_.on_depth_update(DepthUpdate{
+                            order_side, order_price,
+                            lv->total_quantity, lv->order_count,
+                            DepthUpdate::Update, now});
+                    }
+                }
+
+                fire_top_of_book_if_changed(
+                    now, old_best_bid, old_best_ask);
+
+                order_pool_.deallocate(order);
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -498,11 +566,12 @@ private:
         PriceLevel* new_level = level_pool_.allocate();
         if (new_level == nullptr) {
             // Cancel the order -- no level available
-            order_index_[order->id] = nullptr;
-            order_pool_.deallocate(order);
+            OrderId oid = order->id;
+            Timestamp ots = order->timestamp;
+            order_index_[oid] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                order->id, order->timestamp,
-                CancelReason::LevelPoolExhausted});
+                oid, ots, CancelReason::LevelPoolExhausted});
+            order_pool_.deallocate(order);
             return;
         }
         PriceLevel* used = stop_book_.insert_stop(order, new_level);
@@ -522,6 +591,21 @@ private:
 
         // Determine the opposite side to match against
         Side opposite = (order->side == Side::Buy) ? Side::Sell : Side::Buy;
+
+        // FOK pre-check: verify total available qty before matching
+        if (order->tif == TimeInForce::FOK) {
+            Quantity available = compute_matchable_qty(order);
+            if (available < order->remaining_quantity) {
+                OrderId oid = order->id;
+                order_index_[oid] = nullptr;
+                order_listener_.on_order_cancelled(OrderCancelled{
+                    oid, ts, CancelReason::FOKFailed});
+                order_pool_.deallocate(order);
+                fire_top_of_book_if_changed(
+                    ts, old_best_bid, old_best_ask);
+                return;
+            }
+        }
 
         // Walk matchable price levels on the opposite side
         while (aggressor_alive && order->remaining_quantity > 0) {
@@ -654,10 +738,34 @@ private:
 
         if (order->type == OrderType::Market) {
             // Market orders cannot rest -- cancel remainder
-            order_index_[order->id] = nullptr;
-            order_pool_.deallocate(order);
+            OrderId oid = order->id;
+            order_index_[oid] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                order->id, ts, CancelReason::IOCRemainder});
+                oid, ts, CancelReason::IOCRemainder});
+            order_pool_.deallocate(order);
+            fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
+            return;
+        }
+
+        // IOC: cancel any remaining quantity
+        if (order->tif == TimeInForce::IOC) {
+            OrderId oid = order->id;
+            order_index_[oid] = nullptr;
+            order_listener_.on_order_cancelled(OrderCancelled{
+                oid, ts, CancelReason::IOCRemainder});
+            order_pool_.deallocate(order);
+            fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
+            return;
+        }
+
+        // FOK orders that reach here have a remaining qty -- this
+        // should not happen (FOK is checked pre-match), but guard anyway.
+        if (order->tif == TimeInForce::FOK) {
+            OrderId oid = order->id;
+            order_index_[oid] = nullptr;
+            order_listener_.on_order_cancelled(OrderCancelled{
+                oid, ts, CancelReason::FOKFailed});
+            order_pool_.deallocate(order);
             fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
             return;
         }
@@ -675,10 +783,11 @@ private:
     void insert_into_book(Order* order, Timestamp ts) {
         PriceLevel* new_level = level_pool_.allocate();
         if (new_level == nullptr) {
-            order_index_[order->id] = nullptr;
-            order_pool_.deallocate(order);
+            OrderId oid = order->id;
+            order_index_[oid] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                order->id, ts, CancelReason::LevelPoolExhausted});
+                oid, ts, CancelReason::LevelPoolExhausted});
+            order_pool_.deallocate(order);
             return;
         }
         PriceLevel* used = book_.insert_order(order, new_level);
@@ -742,26 +851,29 @@ private:
         SmpAction action = derived().get_smp_action();
 
         switch (action) {
-        case SmpAction::CancelNewest:
-            order_index_[aggressor->id] = nullptr;
-            order_pool_.deallocate(aggressor);
+        case SmpAction::CancelNewest: {
+            OrderId agg_id = aggressor->id;
+            order_index_[agg_id] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                aggressor->id, ts,
+                agg_id, ts,
                 CancelReason::SelfMatchPrevention});
+            order_pool_.deallocate(aggressor);
             return false;
+        }
 
         case SmpAction::CancelOldest: {
             Price resting_price = fill.price;
             Side resting_side = resting->side;
             Quantity resting_qty = resting->remaining_quantity;
+            OrderId rest_id = resting->id;
             PriceLevel* owning_level = resting->level;
             PriceLevel* freed = book_.remove_order(resting);
-            order_index_[resting->id] = nullptr;
+            order_index_[rest_id] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                resting->id, ts,
+                rest_id, ts,
                 CancelReason::SelfMatchPrevention});
             md_listener_.on_order_book_action(OrderBookAction{
-                resting->id, resting_side, resting_price,
+                rest_id, resting_side, resting_price,
                 resting_qty, OrderBookAction::Cancel, ts});
             if (freed) {
                 md_listener_.on_depth_update(DepthUpdate{
@@ -783,13 +895,15 @@ private:
             Price resting_price = fill.price;
             Side resting_side = resting->side;
             Quantity resting_qty = resting->remaining_quantity;
+            OrderId rest_id = resting->id;
+            OrderId agg_id = aggressor->id;
             PriceLevel* freed = book_.remove_order(resting);
-            order_index_[resting->id] = nullptr;
+            order_index_[rest_id] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                resting->id, ts,
+                rest_id, ts,
                 CancelReason::SelfMatchPrevention});
             md_listener_.on_order_book_action(OrderBookAction{
-                resting->id, resting_side, resting_price,
+                rest_id, resting_side, resting_price,
                 resting_qty, OrderBookAction::Cancel, ts});
             if (freed) {
                 md_listener_.on_depth_update(DepthUpdate{
@@ -799,11 +913,11 @@ private:
             }
             order_pool_.deallocate(resting);
 
-            order_index_[aggressor->id] = nullptr;
-            order_pool_.deallocate(aggressor);
+            order_index_[agg_id] = nullptr;
             order_listener_.on_order_cancelled(OrderCancelled{
-                aggressor->id, ts,
+                agg_id, ts,
                 CancelReason::SelfMatchPrevention});
+            order_pool_.deallocate(aggressor);
             return false;
         }
 
@@ -854,6 +968,31 @@ private:
 
         md_listener_.on_top_of_book(TopOfBook{
             best_bid, bid_qty, best_ask, ask_qty, ts});
+    }
+
+    // -----------------------------------------------------------------
+    // compute_matchable_qty -- total qty on opposite side at matchable
+    // prices (for FOK pre-check)
+    // -----------------------------------------------------------------
+    Quantity compute_matchable_qty(const Order* order) const {
+        Side opposite = (order->side == Side::Buy)
+                            ? Side::Sell : Side::Buy;
+        PriceLevel* level = (opposite == Side::Buy)
+                                ? book_.best_bid() : book_.best_ask();
+        Quantity total = 0;
+        while (level != nullptr) {
+            if (order->type == OrderType::Limit) {
+                if (order->side == Side::Buy &&
+                    level->price > order->price)
+                    break;
+                if (order->side == Side::Sell &&
+                    level->price < order->price)
+                    break;
+            }
+            total += level->total_quantity;
+            level = level->next;
+        }
+        return total;
     }
 
     // -----------------------------------------------------------------
