@@ -1,0 +1,17 @@
+# GTD order expires when trigger_expiry is called with ts >= gtd_expiry.
+# Place a GTD buy with gtd_expiry=5000000000. Trigger expiry with ts=5000000000.
+# The order is cancelled with CancelReason::Expired.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTD gtd_expiry=5000000000
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# Trigger GTD expiry at ts=5000000000 which equals gtd_expiry — order must expire
+ACTION TRIGGER_EXPIRY ts=5000000000 tif=GTD
+EXPECT ORDER_CANCELLED ord_id=1 ts=5000000000 reason=EXPIRED
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=CANCEL ts=5000000000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=5000000000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=5000000000

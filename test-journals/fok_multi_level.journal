@@ -1,0 +1,21 @@
+# FOK all-or-nothing check across multiple price levels.
+# Two resting sells at different prices: 10000 @ 1005000 and 10000 @ 1010000.
+# Total available = 20000. FOK buy for 30000 — not enough even across both levels.
+# The FOK fails with reason FOKFailed, NO trades fired, book unchanged.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=1000
+
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=SELL price=1010000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=SELL price=1010000 qty=10000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=10000 count=1 action=ADD ts=2000
+
+# FOK buy for 30000 — only 20000 total available across two levels — FOK fails
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=2 side=BUY price=1010000 qty=30000 type=LIMIT tif=FOK
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_CANCELLED ord_id=3 ts=3000 reason=FOK_FAILED

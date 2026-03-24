@@ -1,0 +1,16 @@
+# FOK order cannot fill entirely — insufficient liquidity, entire order cancelled.
+# Resting sell of 10000 qty. FOK buy of 20000 qty: only 10000 available, FOK fails.
+# The engine cancels the FOK order with reason FOKFailed. NO trades should fire.
+# The resting sell remains intact on the book.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=1000
+
+# FOK buy for 20000 — only 10000 available — FOK fails with no trades
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=2 side=BUY price=1005000 qty=20000 type=LIMIT tif=FOK
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_CANCELLED ord_id=2 ts=2000 reason=FOK_FAILED

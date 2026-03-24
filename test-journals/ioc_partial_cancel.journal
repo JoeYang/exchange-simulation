@@ -1,0 +1,20 @@
+# IOC order partially fills, remainder cancelled with reason IOCRemainder.
+# Resting sell of 10000 qty. IOC buy of 30000 qty: fills 10000, cancels 20000 remainder.
+# After the fill the resting sell is fully consumed (FILL), aggressor has 20000 remaining.
+# Then the IOC remainder is cancelled (IOCRemainder) — no book entry for the remainder.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=1000
+
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=2 side=BUY price=1005000 qty=30000 type=LIMIT tif=IOC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_PARTIALLY_FILLED aggressor=2 resting=1 price=1005000 qty=10000 aggressor_rem=20000 resting_rem=0 ts=2000
+EXPECT TRADE price=1005000 qty=10000 aggressor=2 resting=1 aggressor_side=BUY ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=10000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT ORDER_CANCELLED ord_id=2 ts=2000 reason=IOC_REMAINDER
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000
