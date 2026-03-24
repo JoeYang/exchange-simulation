@@ -1,0 +1,6 @@
+# Zero quantity rejection: qty=0 is always invalid regardless of order type.
+# Rejected with reason InvalidQuantity. No market data events fire.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=0 type=LIMIT tif=GTC
+EXPECT ORDER_REJECTED cl_ord_id=1 ts=1000 reason=INVALID_QUANTITY

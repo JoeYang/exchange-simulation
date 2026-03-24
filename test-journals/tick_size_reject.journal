@@ -1,0 +1,15 @@
+# Tick size rejection: price must be a multiple of tick_size=100.
+# price=1005050 is not divisible by 100 — rejected with InvalidPrice.
+# price=1005000 is divisible by 100 — accepted.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Price not aligned to tick_size=100
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005050 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_REJECTED cl_ord_id=1 ts=1000 reason=INVALID_PRICE
+
+# Price aligned to tick_size=100 — accepted
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=2000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=2000

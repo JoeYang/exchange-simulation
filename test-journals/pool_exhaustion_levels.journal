@@ -1,0 +1,35 @@
+# Price level pool exhaustion: max_levels=2 allows only 2 distinct price levels.
+# An aggressor that partially fills and needs to rest at a new price level fails
+# if the level pool is exhausted — the remainder is cancelled with LevelPoolExhausted.
+#
+# Setup: fill max_levels=2 with two buy levels. A sell aggressor partially fills
+# one level, then tries to rest its remainder at a new price level — but the pool
+# has no free level slots, so the remainder is cancelled.
+#
+# Using max_orders=10 to not exhaust the order pool in this test.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=10 max_levels=2 max_order_ids=100
+
+# Level 1: BUY @ 1005000
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# Level 2: BUY @ 1000000 (second level, pool now full)
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1000000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1000000 qty=10000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=10000 count=1 action=ADD ts=2000
+
+# SELL aggressor that fully fills level 1 and has 10000 qty remainder.
+# It would need to rest at 1005000 on the ask side — which requires a new level slot.
+# Both slots are in use by the two buy levels. Remainder cancelled: LevelPoolExhausted.
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=2 side=SELL price=1005000 qty=20000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_PARTIALLY_FILLED aggressor=3 resting=1 price=1005000 qty=10000 aggressor_rem=10000 resting_rem=0 ts=3000
+EXPECT TRADE price=1005000 qty=10000 aggressor=3 resting=1 aggressor_side=SELL ts=3000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=FILL ts=3000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=3000
+EXPECT ORDER_CANCELLED ord_id=3 ts=3000 reason=LEVEL_POOL_EXHAUSTED
+EXPECT TOP_OF_BOOK bid=1000000 bid_qty=10000 ask=0 ask_qty=0 ts=3000

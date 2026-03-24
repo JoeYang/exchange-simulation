@@ -1,0 +1,7 @@
+# Negative price rejection: price=-100 is invalid for any order type.
+# Price is represented as int64_t but must be positive for limit orders.
+# Rejected with reason InvalidPrice. No market data events fire.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=-100 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_REJECTED cl_ord_id=1 ts=1000 reason=INVALID_PRICE

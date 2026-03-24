@@ -1,0 +1,7 @@
+# Cancel on empty book: cancel request for an ord_id that does not exist.
+# The book is empty — no orders have been placed. Cancel must be rejected
+# with reason UnknownOrder. No market data events fire.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+ACTION CANCEL ts=1000 ord_id=42
+EXPECT ORDER_CANCEL_REJECTED ord_id=42 cl_ord_id=0 ts=1000 reason=UNKNOWN_ORDER

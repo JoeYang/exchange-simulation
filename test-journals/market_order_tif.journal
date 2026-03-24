@@ -1,0 +1,27 @@
+# Market order TIF behaviour: market orders always behave like IOC regardless of TIF.
+# A market order with no liquidity is accepted and then immediately cancelled
+# with reason IOCRemainder — there is no resting market order concept.
+# This test verifies the behaviour for a GTC market order (still acts as IOC).
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Market buy on empty book — accepted, then immediately cancelled (IOC-like)
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=0 qty=10000 type=MARKET tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_CANCELLED ord_id=1 ts=1000 reason=IOC_REMAINDER
+
+# Place a resting sell so the next market order fills partially and then is cancelled
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=SELL price=1005000 qty=10000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=10000 count=1 action=ADD ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=2000
+
+# Market buy for 20000 — fills 10000 against the resting sell, cancels 10000 remainder
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=2 side=BUY price=0 qty=20000 type=MARKET tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_PARTIALLY_FILLED aggressor=3 resting=2 price=1005000 qty=10000 aggressor_rem=10000 resting_rem=0 ts=3000
+EXPECT TRADE price=1005000 qty=10000 aggressor=3 resting=2 aggressor_side=BUY ts=3000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=SELL price=1005000 qty=10000 action=FILL ts=3000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=3000
+EXPECT ORDER_CANCELLED ord_id=3 ts=3000 reason=IOC_REMAINDER
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=3000
