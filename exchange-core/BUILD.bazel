@@ -16,3 +16,19 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "events",
+    hdrs = ["events.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "events_test",
+    srcs = ["events_test.cc"],
+    deps = [
+        ":events",
+        "@googletest//:gtest_main",
+    ],
+)
+
