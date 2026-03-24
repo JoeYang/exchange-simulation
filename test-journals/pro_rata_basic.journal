@@ -1,0 +1,64 @@
+# pro_rata_basic.journal
+# Three orders at the same price with different sizes. An aggressor triggers a
+# proportional (pro-rata) fill. Each resting order receives a share proportional
+# to its size relative to the total resting quantity at that level.
+#
+# Setup:
+#   o1 (cl_ord_id=1, buy 30000) rests at price=1005000
+#   o2 (cl_ord_id=2, buy 20000) rests at price=1005000
+#   o3 (cl_ord_id=3, buy 50000) rests at price=1005000
+#   Total resting = 100000
+#
+# Aggressor: sell 40000.
+# Allocation (floor):
+#   o1: floor(30000 * 40000 / 100000) = 12000
+#   o2: floor(20000 * 40000 / 100000) =  8000
+#   o3: floor(50000 * 40000 / 100000) = 20000
+#   Total = 40000 (no remainder)
+#
+# All three resting orders are partially filled.
+# Aggressor remaining: 40000->28000->20000->0. Last fill: ORDER_FILLED.
+# Bid price stays at 1005000 after fills (orders still remain).
+# fire_top_of_book_if_changed: old_bid=1005000, new_bid=1005000 -> NO TOP_OF_BOOK.
+# Level totals after each fill: 100000-12000=88000, -8000=80000, -20000=60000.
+
+CONFIG match_algo=PRO_RATA tick_size=100 lot_size=10000
+
+# --- action 0: place first resting buy ---
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=30000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=30000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=30000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=30000 ask=0 ask_qty=0 ts=1000
+
+# --- action 1: place second resting buy ---
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1005000 qty=20000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=20000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=50000 count=2 action=UPDATE ts=2000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=50000 ask=0 ask_qty=0 ts=2000
+
+# --- action 2: place third resting buy ---
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=BUY price=1005000 qty=50000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=50000 action=ADD ts=3000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=100000 count=3 action=UPDATE ts=3000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=100000 ask=0 ask_qty=0 ts=3000
+
+# --- action 3: aggressor sell triggers proportional fills ---
+# Order events: ACCEPTED, FILLED(o1), FILLED(o2), FILLED(o3) [aggressor rem=0 for all after batch]
+# MD events: per fill: TRADE, OBA(FILL), DU(UPDATE) -- no TOP_OF_BOOK since bid price unchanged
+ACTION NEW_ORDER ts=4000 cl_ord_id=4 account_id=2 side=SELL price=1005000 qty=40000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=1 price=1005000 qty=12000 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=2 price=1005000 qty=8000 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=3 price=1005000 qty=20000 ts=4000
+EXPECT TRADE price=1005000 qty=12000 aggressor=4 resting=1 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=12000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=88000 count=3 action=UPDATE ts=4000
+EXPECT TRADE price=1005000 qty=8000 aggressor=4 resting=2 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=8000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=80000 count=3 action=UPDATE ts=4000
+EXPECT TRADE price=1005000 qty=20000 aggressor=4 resting=3 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=20000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=60000 count=3 action=UPDATE ts=4000

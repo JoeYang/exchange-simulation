@@ -1,0 +1,62 @@
+# pro_rata_remainder.journal
+# Three orders at the same price. The pro-rata base allocation does not
+# consume the full aggressor quantity due to floor() truncation. The
+# remainder (1 unit) is distributed in FIFO order, going to o1.
+#
+# Setup:
+#   o1 (cl_ord_id=1, buy 10000) -- oldest, first in FIFO order
+#   o2 (cl_ord_id=2, buy 20000)
+#   o3 (cl_ord_id=3, buy 30000)
+#   Total resting = 60000
+#
+# Aggressor: sell 10000.
+# Base allocation (floor):
+#   o1: floor(10000 * 10000 / 60000) = floor(1666.67) = 1666
+#   o2: floor(20000 * 10000 / 60000) = floor(3333.33) = 3333
+#   o3: floor(30000 * 10000 / 60000) = floor(5000.00) = 5000
+#   Base total = 9999, remainder = 1
+# Remainder distribution (FIFO): o1 gets +1 => o1 final = 1667.
+#
+# Aggressor remaining: 10000->8333->5000->0. Last fill = FILLED.
+# Bid price stays at 1005000 after fills -> NO TOP_OF_BOOK for action 3.
+# Level totals: 60000-1667=58333, -3333=55000, -5000=50000.
+
+CONFIG match_algo=PRO_RATA tick_size=100 lot_size=10000
+
+# --- action 0: place first resting buy (oldest) ---
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# --- action 1: place second resting buy ---
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1005000 qty=20000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=20000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=30000 count=2 action=UPDATE ts=2000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=30000 ask=0 ask_qty=0 ts=2000
+
+# --- action 2: place third resting buy ---
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=BUY price=1005000 qty=30000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=30000 action=ADD ts=3000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=60000 count=3 action=UPDATE ts=3000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=60000 ask=0 ask_qty=0 ts=3000
+
+# --- action 3: aggressor sell triggers pro-rata with remainder going to o1 ---
+# No TOP_OF_BOOK: bid price unchanged after fills (1005000 remains best bid).
+ACTION NEW_ORDER ts=4000 cl_ord_id=4 account_id=2 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=1 price=1005000 qty=1667 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=2 price=1005000 qty=3333 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=3 price=1005000 qty=5000 ts=4000
+EXPECT TRADE price=1005000 qty=1667 aggressor=4 resting=1 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=1667 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=58333 count=3 action=UPDATE ts=4000
+EXPECT TRADE price=1005000 qty=3333 aggressor=4 resting=2 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=3333 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=55000 count=3 action=UPDATE ts=4000
+EXPECT TRADE price=1005000 qty=5000 aggressor=4 resting=3 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=5000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=50000 count=3 action=UPDATE ts=4000

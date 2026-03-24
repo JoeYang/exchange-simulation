@@ -1,0 +1,22 @@
+# pro_rata_single_order.journal
+# A single order sits at a price level. A matching aggressor arrives.
+# With only one resting order at the level, pro-rata degenerates to a
+# simple full fill — the single order receives 100% of the aggressor qty.
+
+CONFIG match_algo=PRO_RATA tick_size=100 lot_size=10000
+
+# --- action 0: place resting sell ---
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=SELL price=1005000 qty=20000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=20000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=20000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=20000 ts=1000
+
+# --- action 1: aggressor buy fully fills the single resting order ---
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=2 side=BUY price=1005000 qty=20000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_FILLED aggressor=2 resting=1 price=1005000 qty=20000 ts=2000
+EXPECT TRADE price=1005000 qty=20000 aggressor=2 resting=1 aggressor_side=BUY ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=SELL price=1005000 qty=20000 action=FILL ts=2000
+EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=2000

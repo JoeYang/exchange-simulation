@@ -1,0 +1,62 @@
+# fifo_priority.journal
+# Three orders resting at the same price. An aggressor fills them in FIFO
+# (time-priority) order: the earliest order fills first, then the next.
+#
+# Setup:
+#   o1 (cl_ord_id=1, buy 10000) rests at price=1005000  -- oldest
+#   o2 (cl_ord_id=2, buy 10000) rests at price=1005000  -- second
+#   o3 (cl_ord_id=3, buy 10000) rests at price=1005000  -- newest
+#
+# Aggressor: sell 30000 at price=1005000.
+# Expected fill order: o1 fully filled, o2 fully filled, o3 fully filled.
+#
+# TOP_OF_BOOK fires for every resting order (fire_top_of_book, unconditional).
+# For action 3: bid level fully consumed, bid price changes 1005000->0,
+# so fire_top_of_book_if_changed fires too.
+
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# --- action 0: place first resting buy ---
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=ADD ts=1000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=10000 count=1 action=ADD ts=1000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=10000 ask=0 ask_qty=0 ts=1000
+
+# --- action 1: place second resting buy ---
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=ADD ts=2000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=20000 count=2 action=UPDATE ts=2000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=20000 ask=0 ask_qty=0 ts=2000
+
+# --- action 2: place third resting buy ---
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=10000 action=ADD ts=3000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=30000 count=3 action=UPDATE ts=3000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=30000 ask=0 ask_qty=0 ts=3000
+
+# --- action 3: aggressor sell fills all three in FIFO order ---
+# Order events (all order listener events first):
+#   ACCEPTED, PF(vs o1, aggr_rem=20000, rest_rem=0), PF(vs o2, aggr_rem=10000, rest_rem=0), FILLED(vs o3)
+# MD events (all md listener events, per-fill then TOP_OF_BOOK):
+#   fill 1: TRADE, OBA(FILL o1), DU(UPDATE qty=20000 count=2)
+#   fill 2: TRADE, OBA(FILL o2), DU(UPDATE qty=10000 count=1)
+#   fill 3: TRADE, OBA(FILL o3), DU(REMOVE qty=0 count=0)
+#   post_match: bid price 1005000->0, fire_top_of_book_if_changed fires TOP_OF_BOOK
+ACTION NEW_ORDER ts=4000 cl_ord_id=4 account_id=2 side=SELL price=1005000 qty=30000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=1 price=1005000 qty=10000 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=2 price=1005000 qty=10000 ts=4000
+EXPECT ORDER_FILLED aggressor=4 resting=3 price=1005000 qty=10000 ts=4000
+EXPECT TRADE price=1005000 qty=10000 aggressor=4 resting=1 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1005000 qty=10000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=4000
+EXPECT TRADE price=1005000 qty=10000 aggressor=4 resting=2 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=4000
+EXPECT TRADE price=1005000 qty=10000 aggressor=4 resting=3 aggressor_side=SELL ts=4000
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=10000 action=FILL ts=4000
+EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=0 count=0 action=REMOVE ts=4000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=4000
