@@ -108,3 +108,20 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "match_algo",
+    hdrs = ["match_algo.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "match_algo_test",
+    srcs = ["match_algo_test.cc"],
+    deps = [
+        ":match_algo",
+        ":intrusive_list",
+        "@googletest//:gtest_main",
+    ],
+)

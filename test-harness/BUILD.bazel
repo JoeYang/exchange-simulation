@@ -1,0 +1,17 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# --- Task 19 ---
+cc_library(
+    name = "recorded_event",
+    hdrs = ["recorded_event.h"],
+    srcs = ["recorded_event.cc"],
+    deps = ["//exchange-core:events"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "recorded_event_test",
+    srcs = ["recorded_event_test.cc"],
+    deps = [":recorded_event", "@googletest//:gtest_main"],
+)
