@@ -32,3 +32,17 @@ cc_test(
     srcs = ["recording_listener_test.cc"],
     deps = [":recording_listener", "@googletest//:gtest_main"],
 )
+
+cc_library(
+    name = "journal_parser",
+    hdrs = ["journal_parser.h"],
+    srcs = ["journal_parser.cc"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "journal_parser_test",
+    srcs = ["journal_parser_test.cc"],
+    deps = [":journal_parser", "@googletest//:gtest_main"],
+)
