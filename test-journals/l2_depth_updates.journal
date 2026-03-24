@@ -17,12 +17,14 @@ ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=1005000 qty=100
 EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
 EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=10000 action=ADD ts=2000
 EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=20000 count=2 action=UPDATE ts=2000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=20000 ask=0 ask_qty=0 ts=2000
 
 # Third buy at same price — DepthUpdate UPDATE (qty=30000, count=3)
 ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
 EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3000
 EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1005000 qty=10000 action=ADD ts=3000
 EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=30000 count=3 action=UPDATE ts=3000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=30000 ask=0 ask_qty=0 ts=3000
 
 # Cancel middle order — level still has 2 orders: DepthUpdate UPDATE (qty=20000, count=2)
 ACTION CANCEL ts=4000 ord_id=2

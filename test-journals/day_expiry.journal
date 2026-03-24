@@ -15,6 +15,7 @@ ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=2 side=BUY price=1005000 qty=200
 EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
 EXPECT ORDER_BOOK_ACTION ord_id=2 side=BUY price=1005000 qty=20000 action=ADD ts=2000
 EXPECT DEPTH_UPDATE side=BUY price=1005000 qty=30000 count=2 action=UPDATE ts=2000
+EXPECT TOP_OF_BOOK bid=1005000 bid_qty=30000 ask=0 ask_qty=0 ts=2000
 
 # Trigger DAY expiry — only the DAY order (ord_id=2) is cancelled; GTC (ord_id=1) survives
 ACTION TRIGGER_EXPIRY ts=86400000000000 tif=DAY

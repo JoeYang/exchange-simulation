@@ -14,6 +14,7 @@ ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=SELL price=1010000 qty=10
 EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2000
 EXPECT ORDER_BOOK_ACTION ord_id=2 side=SELL price=1010000 qty=10000 action=ADD ts=2000
 EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=10000 count=1 action=ADD ts=2000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=2000
 
 # Full fill: buy 10000 @ 1005000 — one TRADE event
 ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=2 side=BUY price=1005000 qty=10000 type=LIMIT tif=GTC
@@ -29,6 +30,7 @@ ACTION NEW_ORDER ts=4000 cl_ord_id=4 account_id=1 side=SELL price=1010000 qty=10
 EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=4000
 EXPECT ORDER_BOOK_ACTION ord_id=4 side=SELL price=1010000 qty=10000 action=ADD ts=4000
 EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=20000 count=2 action=UPDATE ts=4000
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1010000 ask_qty=20000 ts=4000
 
 # Partial fill: buy 10000 against first of two 10000 sells at 1010000 — one TRADE
 ACTION NEW_ORDER ts=5000 cl_ord_id=5 account_id=2 side=BUY price=1010000 qty=10000 type=LIMIT tif=GTC
@@ -36,8 +38,7 @@ EXPECT ORDER_ACCEPTED ord_id=5 cl_ord_id=5 ts=5000
 EXPECT ORDER_FILLED aggressor=5 resting=2 price=1010000 qty=10000 ts=5000
 EXPECT TRADE price=1010000 qty=10000 aggressor=5 resting=2 aggressor_side=BUY ts=5000
 EXPECT ORDER_BOOK_ACTION ord_id=2 side=SELL price=1010000 qty=10000 action=FILL ts=5000
-EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=10000 count=1 action=UPDATE ts=5000
-EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1010000 ask_qty=10000 ts=5000
+EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=0 count=0 action=REMOVE ts=5000
 
 # Sweep: add resting sells at two levels again to test a single aggressor sweeping both
 ACTION NEW_ORDER ts=6000 cl_ord_id=6 account_id=1 side=SELL price=1005000 qty=10000 type=LIMIT tif=GTC
@@ -50,10 +51,10 @@ EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=1005000 ask_qty=10000 ts=6000
 ACTION NEW_ORDER ts=7000 cl_ord_id=7 account_id=2 side=BUY price=1010000 qty=20000 type=LIMIT tif=GTC
 EXPECT ORDER_ACCEPTED ord_id=7 cl_ord_id=7 ts=7000
 EXPECT ORDER_PARTIALLY_FILLED aggressor=7 resting=6 price=1005000 qty=10000 aggressor_rem=10000 resting_rem=0 ts=7000
+EXPECT ORDER_FILLED aggressor=7 resting=4 price=1010000 qty=10000 ts=7000
 EXPECT TRADE price=1005000 qty=10000 aggressor=7 resting=6 aggressor_side=BUY ts=7000
 EXPECT ORDER_BOOK_ACTION ord_id=6 side=SELL price=1005000 qty=10000 action=FILL ts=7000
 EXPECT DEPTH_UPDATE side=SELL price=1005000 qty=0 count=0 action=REMOVE ts=7000
-EXPECT ORDER_FILLED aggressor=7 resting=4 price=1010000 qty=10000 ts=7000
 EXPECT TRADE price=1010000 qty=10000 aggressor=7 resting=4 aggressor_side=BUY ts=7000
 EXPECT ORDER_BOOK_ACTION ord_id=4 side=SELL price=1010000 qty=10000 action=FILL ts=7000
 EXPECT DEPTH_UPDATE side=SELL price=1010000 qty=0 count=0 action=REMOVE ts=7000
