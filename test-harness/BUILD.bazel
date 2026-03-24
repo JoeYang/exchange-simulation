@@ -61,3 +61,23 @@ cc_test(
     srcs = ["journal_writer_test.cc"],
     deps = [":journal_writer", ":journal_parser", "@googletest//:gtest_main"],
 )
+
+# --- Task 23 ---
+cc_library(
+    name = "test_runner",
+    hdrs = ["test_runner.h"],
+    srcs = ["test_runner.cc"],
+    deps = [
+        ":journal_parser",
+        ":recorded_event",
+        ":recording_listener",
+        "//exchange-core:matching_engine",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "test_runner_test",
+    srcs = ["test_runner_test.cc"],
+    deps = [":test_runner", ":journal_parser", "@googletest//:gtest_main"],
+)
