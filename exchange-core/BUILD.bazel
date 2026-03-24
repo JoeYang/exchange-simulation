@@ -177,3 +177,13 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
 )
+
+cc_test(
+    name = "matching_engine_test",
+    srcs = ["matching_engine_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)

@@ -230,11 +230,6 @@ public:
         }
 
         // Cancel-replace: remove old order, re-enter as new
-        Price old_best_bid = book_.best_bid()
-                                 ? book_.best_bid()->price : 0;
-        Price old_best_ask = book_.best_ask()
-                                 ? book_.best_ask()->price : 0;
-
         Side order_side = order->side;
         Price old_price = order->price;
 
