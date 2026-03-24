@@ -301,22 +301,167 @@ private:
     }
 
     // -----------------------------------------------------------------
-    // match_order -- stub for Task 12, implemented in Task 13
+    // match_order -- walk opposite side, match, then handle remainder
     // -----------------------------------------------------------------
     void match_order(Order* order, Timestamp ts) {
-        // Task 13 will implement full matching logic.
-        // For now, limit orders rest on the book; market orders are
-        // cancelled since there is nothing to match against yet.
+        // Snapshot best bid/ask before matching for TopOfBook change detection
+        Price old_best_bid = book_.best_bid() ? book_.best_bid()->price : 0;
+        Price old_best_ask = book_.best_ask() ? book_.best_ask()->price : 0;
+        bool aggressor_alive = true;
+
+        // Determine the opposite side to match against
+        Side opposite = (order->side == Side::Buy) ? Side::Sell : Side::Buy;
+
+        // Walk matchable price levels on the opposite side
+        while (aggressor_alive && order->remaining_quantity > 0) {
+            PriceLevel* level = (opposite == Side::Buy)
+                                    ? book_.best_bid() : book_.best_ask();
+            if (level == nullptr) break;
+
+            // Price check: is this level matchable?
+            if (order->type == OrderType::Limit) {
+                if (order->side == Side::Buy &&
+                    level->price > order->price)
+                    break;
+                if (order->side == Side::Sell &&
+                    level->price < order->price)
+                    break;
+            }
+
+            // Match against this level
+            static constexpr size_t kMaxFills = 256;
+            FillResult results[kMaxFills];
+            size_t fill_count = 0;
+            MatchAlgoT::match(*level, order->remaining_quantity,
+                              results, fill_count);
+
+            // Process each fill
+            for (size_t i = 0; i < fill_count; ++i) {
+                FillResult& fill = results[i];
+                Order* resting = fill.resting_order;
+
+                // SMP check -- undo fill and remaining fills if triggered
+                if (derived().is_self_match(*order, *resting)) {
+                    undo_fills(order, results, i, fill_count);
+                    aggressor_alive = apply_smp_action(
+                        order, resting, fill, ts);
+                    break;
+                }
+
+                // Update aggressor filled_quantity
+                // (remaining_quantity already decremented by MatchAlgoT)
+                order->filled_quantity += fill.quantity;
+                last_trade_price_ = fill.price;
+
+                // Update level total_quantity to reflect the fill
+                // (MatchAlgoT adjusts order state but not level totals)
+                resting->level->total_quantity -= fill.quantity;
+
+                // Determine fill type for callbacks
+                bool resting_fully_filled =
+                    (fill.resting_remaining == 0);
+
+                // Fire OrderFilled or OrderPartiallyFilled
+                if (order->remaining_quantity == 0) {
+                    order_listener_.on_order_filled(OrderFilled{
+                        order->id, resting->id,
+                        fill.price, fill.quantity, ts});
+                } else {
+                    order_listener_.on_order_partially_filled(
+                        OrderPartiallyFilled{
+                            order->id, resting->id,
+                            fill.price, fill.quantity,
+                            order->remaining_quantity,
+                            fill.resting_remaining, ts});
+                }
+
+                // Fire Trade
+                md_listener_.on_trade(Trade{
+                    fill.price, fill.quantity,
+                    order->id, resting->id,
+                    order->side, ts});
+
+                // Fire L3: OrderBookAction for resting order fill
+                md_listener_.on_order_book_action(OrderBookAction{
+                    resting->id, resting->side, fill.price,
+                    fill.quantity, OrderBookAction::Fill, ts});
+
+                // Handle resting order removal/update + L2
+                if (resting_fully_filled) {
+                    PriceLevel* freed = book_.remove_order(resting);
+                    md_listener_.on_depth_update(DepthUpdate{
+                        resting->side, fill.price,
+                        0, 0, DepthUpdate::Remove, ts});
+                    if (freed) {
+                        level_pool_.deallocate(freed);
+                    }
+                    order_index_[resting->id] = nullptr;
+                    order_pool_.deallocate(resting);
+                } else {
+                    PriceLevel* lv = resting->level;
+                    md_listener_.on_depth_update(DepthUpdate{
+                        resting->side, lv->price,
+                        lv->total_quantity, lv->order_count,
+                        DepthUpdate::Update, ts});
+                }
+            }
+        }
+
+        // Post-match: handle remainder based on order type
+        if (aggressor_alive) {
+            post_match(order, ts, old_best_bid, old_best_ask);
+        } else {
+            fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // undo_fills -- reverse MatchAlgo mutations for fills [from..count)
+    // -----------------------------------------------------------------
+    void undo_fills(Order* aggressor, FillResult* results,
+                    size_t from, size_t count) {
+        for (size_t j = from; j < count; ++j) {
+            FillResult& f = results[j];
+            f.resting_order->filled_quantity -= f.quantity;
+            f.resting_order->remaining_quantity += f.quantity;
+            aggressor->remaining_quantity += f.quantity;
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // post_match -- handle order remainder after matching
+    // -----------------------------------------------------------------
+    void post_match(Order* order, Timestamp ts,
+                    Price old_best_bid, Price old_best_ask) {
+        if (order->remaining_quantity == 0) {
+            // Fully filled -- clean up
+            order_index_[order->id] = nullptr;
+            order_pool_.deallocate(order);
+            fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
+            return;
+        }
+
         if (order->type == OrderType::Market) {
             // Market orders cannot rest -- cancel remainder
             order_index_[order->id] = nullptr;
             order_pool_.deallocate(order);
             order_listener_.on_order_cancelled(OrderCancelled{
                 order->id, ts, CancelReason::IOCRemainder});
+            fire_top_of_book_if_changed(ts, old_best_bid, old_best_ask);
             return;
         }
 
-        // Limit order: insert into book
+        // Limit order with remaining quantity -- insert into book
+        insert_into_book(order, ts);
+
+        // Always fire TopOfBook since the book changed
+        fire_top_of_book(ts);
+    }
+
+    // -----------------------------------------------------------------
+    // insert_into_book -- insert a limit order into the order book
+    // -----------------------------------------------------------------
+    void insert_into_book(Order* order, Timestamp ts) {
         PriceLevel* new_level = level_pool_.allocate();
         if (new_level == nullptr) {
             order_index_[order->id] = nullptr;
@@ -326,7 +471,8 @@ private:
             return;
         }
         PriceLevel* used = book_.insert_order(order, new_level);
-        if (used != new_level) {
+        bool is_new_level = (used == new_level);
+        if (!is_new_level) {
             level_pool_.deallocate(new_level);
         }
 
@@ -340,10 +486,108 @@ private:
         PriceLevel* lv = order->level;
         md_listener_.on_depth_update(DepthUpdate{
             order->side, lv->price, lv->total_quantity,
-            lv->order_count, DepthUpdate::Add, ts});
+            lv->order_count,
+            is_new_level ? DepthUpdate::Add : DepthUpdate::Update, ts});
+    }
 
-        // Fire L1: TopOfBook
-        fire_top_of_book(ts);
+    // -----------------------------------------------------------------
+    // apply_smp_action -- returns false if aggressor was cancelled
+    // -----------------------------------------------------------------
+    bool apply_smp_action(Order* aggressor, Order* resting,
+                          FillResult& fill, Timestamp ts) {
+        SmpAction action = derived().get_smp_action();
+
+        switch (action) {
+        case SmpAction::CancelNewest:
+            order_index_[aggressor->id] = nullptr;
+            order_pool_.deallocate(aggressor);
+            order_listener_.on_order_cancelled(OrderCancelled{
+                aggressor->id, ts,
+                CancelReason::SelfMatchPrevention});
+            return false;
+
+        case SmpAction::CancelOldest: {
+            Price resting_price = fill.price;
+            Side resting_side = resting->side;
+            Quantity resting_qty = resting->remaining_quantity;
+            PriceLevel* owning_level = resting->level;
+            PriceLevel* freed = book_.remove_order(resting);
+            order_index_[resting->id] = nullptr;
+            order_listener_.on_order_cancelled(OrderCancelled{
+                resting->id, ts,
+                CancelReason::SelfMatchPrevention});
+            md_listener_.on_order_book_action(OrderBookAction{
+                resting->id, resting_side, resting_price,
+                resting_qty, OrderBookAction::Cancel, ts});
+            if (freed) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    resting_side, resting_price,
+                    0, 0, DepthUpdate::Remove, ts});
+                level_pool_.deallocate(freed);
+            } else {
+                md_listener_.on_depth_update(DepthUpdate{
+                    resting_side, resting_price,
+                    owning_level->total_quantity,
+                    owning_level->order_count,
+                    DepthUpdate::Update, ts});
+            }
+            order_pool_.deallocate(resting);
+            return true;  // aggressor lives
+        }
+
+        case SmpAction::CancelBoth: {
+            Price resting_price = fill.price;
+            Side resting_side = resting->side;
+            Quantity resting_qty = resting->remaining_quantity;
+            PriceLevel* freed = book_.remove_order(resting);
+            order_index_[resting->id] = nullptr;
+            order_listener_.on_order_cancelled(OrderCancelled{
+                resting->id, ts,
+                CancelReason::SelfMatchPrevention});
+            md_listener_.on_order_book_action(OrderBookAction{
+                resting->id, resting_side, resting_price,
+                resting_qty, OrderBookAction::Cancel, ts});
+            if (freed) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    resting_side, resting_price,
+                    0, 0, DepthUpdate::Remove, ts});
+                level_pool_.deallocate(freed);
+            }
+            order_pool_.deallocate(resting);
+
+            order_index_[aggressor->id] = nullptr;
+            order_pool_.deallocate(aggressor);
+            order_listener_.on_order_cancelled(OrderCancelled{
+                aggressor->id, ts,
+                CancelReason::SelfMatchPrevention});
+            return false;
+        }
+
+        case SmpAction::Decrement:
+            // Both lose the fill qty but no actual trade
+            // Already undone by undo_fills; both continue
+            return true;
+
+        case SmpAction::None:
+        default:
+            return true;
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // fire_top_of_book_if_changed -- conditional TopOfBook emit
+    // -----------------------------------------------------------------
+    void fire_top_of_book_if_changed(Timestamp ts,
+                                     Price old_best_bid,
+                                     Price old_best_ask) {
+        Price new_best_bid = book_.best_bid()
+                                 ? book_.best_bid()->price : 0;
+        Price new_best_ask = book_.best_ask()
+                                 ? book_.best_ask()->price : 0;
+        if (new_best_bid != old_best_bid ||
+            new_best_ask != old_best_ask) {
+            fire_top_of_book(ts);
+        }
     }
 
     // -----------------------------------------------------------------
