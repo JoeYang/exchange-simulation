@@ -16,3 +16,15 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "spsc_ring_buffer",
+    hdrs = ["spsc_ring_buffer.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "spsc_ring_buffer_test",
+    srcs = ["spsc_ring_buffer_test.cc"],
+    deps = [":spsc_ring_buffer", "@googletest//:gtest_main"],
+)
