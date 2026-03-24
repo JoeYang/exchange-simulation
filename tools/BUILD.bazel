@@ -36,3 +36,20 @@ cc_test(
     deps = [":shm_transport", "@googletest//:gtest_main"],
     linkopts = ["-lrt"],
 )
+
+cc_library(
+    name = "shm_listener",
+    hdrs = ["shm_listener.h"],
+    deps = [
+        "//exchange-core:listeners",
+        ":shm_transport",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "shm_listener_test",
+    srcs = ["shm_listener_test.cc"],
+    deps = [":shm_listener", "@googletest//:gtest_main"],
+    linkopts = ["-lrt"],
+)
