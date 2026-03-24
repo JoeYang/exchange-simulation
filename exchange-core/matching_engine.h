@@ -207,8 +207,9 @@ public:
             return;
         }
 
-        // 12. Match the order
+        // 12. Match the order and trigger stop cascade
         match_order(order, req.timestamp);
+        check_and_trigger_stops(req.timestamp);
     }
 
     // -----------------------------------------------------------------
@@ -488,6 +489,39 @@ private:
             order->side, lv->price, lv->total_quantity,
             lv->order_count,
             is_new_level ? DepthUpdate::Add : DepthUpdate::Update, ts});
+    }
+
+    // -----------------------------------------------------------------
+    // check_and_trigger_stops -- iterative cascade (not recursive)
+    // After a trade, triggered stops are converted and matched. Each
+    // triggered stop may itself produce trades that trigger more stops.
+    // The loop continues until no more stops are triggered.
+    // -----------------------------------------------------------------
+    void check_and_trigger_stops(Timestamp ts) {
+        while (last_trade_price_ > 0 &&
+               stop_book_.has_triggered_stops(last_trade_price_)) {
+            Order* stop = stop_book_.next_triggered_stop(
+                last_trade_price_);
+            if (stop == nullptr) break;
+
+            // Remove from stop book
+            PriceLevel* freed = stop_book_.remove_stop(stop);
+            if (freed) {
+                level_pool_.deallocate(freed);
+            }
+
+            // Convert triggered stop to Market or Limit
+            if (stop->type == OrderType::Stop) {
+                stop->type = OrderType::Market;
+                stop->price = 0;
+            } else {
+                // StopLimit: type becomes Limit, price is the limit price
+                stop->type = OrderType::Limit;
+            }
+
+            // Match the triggered order (may update last_trade_price_)
+            match_order(stop, ts);
+        }
     }
 
     // -----------------------------------------------------------------
