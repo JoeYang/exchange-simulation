@@ -3,7 +3,6 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <new>
 #include <type_traits>
 
 namespace exchange {
@@ -25,8 +24,10 @@ namespace exchange {
 template <typename T, std::size_t Capacity>
 class ObjectPool {
     static_assert(Capacity > 0, "ObjectPool: Capacity must be > 0");
-    static_assert(sizeof(T) >= sizeof(T*),
-                  "ObjectPool: sizeof(T) must be >= sizeof(T*) to thread the free list");
+    static_assert(sizeof(T) >= sizeof(void*),
+                  "ObjectPool: sizeof(T) must be >= sizeof(void*) to thread the free list");
+    static_assert(std::is_trivially_destructible_v<T>,
+        "ObjectPool: T must be trivially destructible; reset() cannot run destructors.");
 
 public:
     ObjectPool() noexcept {
@@ -61,7 +62,7 @@ public:
     void deallocate(T* p) noexcept {
         void* old_head = free_head_;
         std::memcpy(static_cast<void*>(p), &old_head, sizeof(void*));
-        free_head_ = reinterpret_cast<unsigned char*>(p);
+        free_head_ = static_cast<unsigned char*>(static_cast<void*>(p));
         --allocated_;
     }
 
@@ -99,8 +100,9 @@ private:
         return static_cast<void*>(&storage_[idx * slot_size_]);
     }
 
-    static constexpr std::size_t slot_size_ =
-        (sizeof(T) + alignof(T) - 1) & ~(alignof(T) - 1);  // sizeof(T) rounded up to alignof(T)
+    // sizeof(T) is always a multiple of alignof(T) per C++ standard [basic.align],
+    // so sizeof(T) is the correct stride between slots.
+    static constexpr std::size_t slot_size_ = sizeof(T);
 
     alignas(T) std::array<unsigned char, Capacity * slot_size_> storage_;
     unsigned char* free_head_{nullptr};

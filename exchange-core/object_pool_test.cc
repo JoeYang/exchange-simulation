@@ -101,7 +101,7 @@ TEST(ObjectPoolTest, RecyclingAfterExhaustion) {
 // ---------------------------------------------------------------------------
 TEST(ObjectPoolTest, ResetReturnsAllSlots) {
     exchange::ObjectPool<Slot, 16> pool;
-    auto ptrs = drain(pool);
+    drain(pool);
     EXPECT_EQ(pool.available(), 0u);
 
     pool.reset();
@@ -163,7 +163,7 @@ TEST(ObjectPoolTest, MultipleResetCycles) {
 
     for (int cycle = 0; cycle < 3; ++cycle) {
         EXPECT_EQ(pool.available(), 4u) << "cycle " << cycle;
-        auto ptrs = drain(pool);
+        drain(pool);
         EXPECT_EQ(pool.available(), 0u) << "cycle " << cycle;
         EXPECT_EQ(pool.allocate(), nullptr) << "cycle " << cycle;
         pool.reset();
