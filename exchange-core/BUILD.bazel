@@ -128,6 +128,24 @@ cc_test(
 )
 
 cc_library(
+    name = "stop_book",
+    srcs = ["stop_book.cc"],
+    hdrs = ["stop_book.h"],
+    deps = [":types", ":intrusive_list"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "stop_book_test",
+    srcs = ["stop_book_test.cc"],
+    deps = [
+        ":stop_book",
+        ":object_pool",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "match_algo",
     hdrs = ["match_algo.h"],
     deps = [":types"],
