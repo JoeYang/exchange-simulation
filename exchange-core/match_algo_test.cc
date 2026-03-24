@@ -365,5 +365,313 @@ TEST(FifoMatchTest, AccumulatedCountAcrossMultipleCalls) {
     EXPECT_EQ(results[1].price, 900000);
 }
 
+// ===========================================================================
+// ProRataMatch tests
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Single order at level gets full fill
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, SingleOrderGetsFullFill) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 10000);
+    Order* orders[] = {&o1};
+    build_level(level, orders, 1);
+
+    Quantity remaining = 10000;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    ASSERT_EQ(count, 1u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].price, 1000000);
+    EXPECT_EQ(results[0].quantity, 10000);
+    EXPECT_EQ(results[0].resting_remaining, 0);
+    EXPECT_EQ(o1.filled_quantity, 10000);
+    EXPECT_EQ(o1.remaining_quantity, 0);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Three orders, proportional split with no remainder
+// Orders: 60, 40. Aggressor: 50. Expected: floor(60*50/100)=30, floor(40*50/100)=20.
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, ProportionalAllocationNoRemainder) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 60000);  // 60% of level
+    Order o2 = make_order(2, 40000);  // 40% of level
+    Order* orders[] = {&o1, &o2};
+    build_level(level, orders, 2);
+    // total_quantity = 100000
+
+    Quantity remaining = 50000;  // aggressor wants 50%
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    // floor(60000 * 50000 / 100000) = 30000
+    // floor(40000 * 50000 / 100000) = 20000
+    // total allocated = 50000, no remainder
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].quantity, 30000);
+    EXPECT_EQ(results[0].resting_remaining, 30000);  // 60000 - 30000
+
+    EXPECT_EQ(results[1].resting_order, &o2);
+    EXPECT_EQ(results[1].quantity, 20000);
+    EXPECT_EQ(results[1].resting_remaining, 20000);  // 40000 - 20000
+
+    EXPECT_EQ(o1.filled_quantity, 30000);
+    EXPECT_EQ(o1.remaining_quantity, 30000);
+    EXPECT_EQ(o2.filled_quantity, 20000);
+    EXPECT_EQ(o2.remaining_quantity, 20000);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Remainder distributed in FIFO order.
+// Orders: 33, 33, 34 (total 100). Aggressor: 10.
+// floor(33*10/100)=3, floor(33*10/100)=3, floor(34*10/100)=3. Total=9, remainder=1.
+// Remainder goes to o1 (FIFO).
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, RemainderDistributedByFifo) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 33000);
+    Order o2 = make_order(2, 33000);
+    Order o3 = make_order(3, 34000);
+    Order* orders[] = {&o1, &o2, &o3};
+    build_level(level, orders, 3);
+    // total_quantity = 100000
+
+    Quantity remaining = 10000;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    // floor(33000*10000/100000) = 3300
+    // floor(33000*10000/100000) = 3300
+    // floor(34000*10000/100000) = 3400
+    // total = 10000, no remainder
+    ASSERT_EQ(count, 3u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].quantity, 3300);
+    EXPECT_EQ(results[1].resting_order, &o2);
+    EXPECT_EQ(results[1].quantity, 3300);
+    EXPECT_EQ(results[2].resting_order, &o3);
+    EXPECT_EQ(results[2].quantity, 3400);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Remainder with actual rounding residual.
+// Orders: 33, 33, 34 (total 100 units in raw qty). Aggressor: 7.
+// floor(33*7/100)=2, floor(33*7/100)=2, floor(34*7/100)=2. Total=6, remainder=1.
+// Remainder (1) goes to o1 first (FIFO). o1 gets 3, o2 gets 2, o3 gets 2.
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, RemainderGoesToFirstOrderFifo) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 330);
+    Order o2 = make_order(2, 330);
+    Order o3 = make_order(3, 340);
+    Order* orders[] = {&o1, &o2, &o3};
+    build_level(level, orders, 3);
+    // total_quantity = 1000
+
+    Quantity remaining = 7;  // aggressor wants 7
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    // floor(330*7/1000) = floor(2.31) = 2
+    // floor(330*7/1000) = 2
+    // floor(340*7/1000) = floor(2.38) = 2
+    // total = 6, remainder = 1
+    // remainder goes to o1 (FIFO)
+    ASSERT_EQ(count, 3u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].quantity, 3);  // 2 + 1 remainder
+    EXPECT_EQ(results[0].resting_remaining, 327);
+
+    EXPECT_EQ(results[1].resting_order, &o2);
+    EXPECT_EQ(results[1].quantity, 2);
+    EXPECT_EQ(results[1].resting_remaining, 328);
+
+    EXPECT_EQ(results[2].resting_order, &o3);
+    EXPECT_EQ(results[2].quantity, 2);
+    EXPECT_EQ(results[2].resting_remaining, 338);
+
+    EXPECT_EQ(o1.filled_quantity, 3);
+    EXPECT_EQ(o1.remaining_quantity, 327);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Equal-sized orders degenerate to equal split + FIFO remainder.
+// 4 orders of 25 each (total 100). Aggressor: 10.
+// floor(25*10/100) = 2 each. Total allocated = 8. Remainder = 2.
+// Remainder distributed: o1 gets +1, o2 gets +1.
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, EqualSizesEqualSplitFifoRemainder) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 25);
+    Order o2 = make_order(2, 25);
+    Order o3 = make_order(3, 25);
+    Order o4 = make_order(4, 25);
+    Order* orders[] = {&o1, &o2, &o3, &o4};
+    build_level(level, orders, 4);
+    // total_quantity = 100
+
+    Quantity remaining = 10;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    // floor(25*10/100) = 2 each → total 8, remainder 2
+    // o1 gets +1, o2 gets +1 (FIFO)
+    ASSERT_EQ(count, 4u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].quantity, 3);  // 2 + 1 remainder
+    EXPECT_EQ(results[1].resting_order, &o2);
+    EXPECT_EQ(results[1].quantity, 3);  // 2 + 1 remainder
+    EXPECT_EQ(results[2].resting_order, &o3);
+    EXPECT_EQ(results[2].quantity, 2);
+    EXPECT_EQ(results[3].resting_order, &o4);
+    EXPECT_EQ(results[3].quantity, 2);
+
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Small aggressor: all orders get 0 base allocation, remainder goes FIFO.
+// 3 orders of 100 each (total 300). Aggressor: 2.
+// floor(100*2/300) = 0 for each. Total allocated = 0. Remainder = 2.
+// o1 gets 1, o2 gets 1 (FIFO, zero-allocation orders are eligible for remainder).
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, SmallAggressorAllZeroBaseRemainderFifo) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 100);
+    Order o2 = make_order(2, 100);
+    Order o3 = make_order(3, 100);
+    Order* orders[] = {&o1, &o2, &o3};
+    build_level(level, orders, 3);
+    // total_quantity = 300
+
+    Quantity remaining = 2;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    // floor(100*2/300) = 0 for all → no base fills
+    // remainder = 2, distributed FIFO: o1 gets 1, o2 gets 1
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].quantity, 1);
+    EXPECT_EQ(results[0].resting_remaining, 99);
+
+    EXPECT_EQ(results[1].resting_order, &o2);
+    EXPECT_EQ(results[1].quantity, 1);
+    EXPECT_EQ(results[1].resting_remaining, 99);
+
+    EXPECT_EQ(o1.filled_quantity, 1);
+    EXPECT_EQ(o1.remaining_quantity, 99);
+    EXPECT_EQ(o2.filled_quantity, 1);
+    EXPECT_EQ(o2.remaining_quantity, 99);
+    EXPECT_EQ(o3.filled_quantity, 0);
+    EXPECT_EQ(o3.remaining_quantity, 100);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Aggressor exactly equals level total — full sweep.
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, AggressorEqualsLevelTotal) {
+    PriceLevel level{};
+    level.price = 500000;
+
+    Order o1 = make_order(1, 60000);
+    Order o2 = make_order(2, 40000);
+    Order* orders[] = {&o1, &o2};
+    build_level(level, orders, 2);
+    // total_quantity = 100000
+
+    Quantity remaining = 100000;  // exactly the level total
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(results[0].quantity, 60000);
+    EXPECT_EQ(results[0].resting_remaining, 0);
+    EXPECT_EQ(results[1].quantity, 40000);
+    EXPECT_EQ(results[1].resting_remaining, 0);
+
+    EXPECT_EQ(o1.remaining_quantity, 0);
+    EXPECT_EQ(o2.remaining_quantity, 0);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Empty level — match is a no-op
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, EmptyLevelNoFills) {
+    PriceLevel level{};
+    level.price = 1000000;
+    level.head = nullptr;
+    level.tail = nullptr;
+    level.order_count = 0;
+    level.total_quantity = 0;
+
+    Quantity remaining = 10000;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    EXPECT_EQ(count, 0u);
+    EXPECT_EQ(remaining, 10000);
+}
+
+// ---------------------------------------------------------------------------
+// Zero remaining aggressor — match is a no-op even if level has orders
+// ---------------------------------------------------------------------------
+TEST(ProRataMatchTest, ZeroRemainingAggressorNoFills) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    Order o1 = make_order(1, 10000);
+    Order* orders[] = {&o1};
+    build_level(level, orders, 1);
+
+    Quantity remaining = 0;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    ProRataMatch::match(level, remaining, results, count);
+
+    EXPECT_EQ(count, 0u);
+    EXPECT_EQ(o1.filled_quantity, 0);
+    EXPECT_EQ(o1.remaining_quantity, 10000);
+}
+
 }  // namespace
 }  // namespace exchange
