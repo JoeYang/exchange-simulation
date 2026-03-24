@@ -61,3 +61,18 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "intrusive_list",
+    hdrs = ["intrusive_list.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "intrusive_list_test",
+    srcs = ["intrusive_list_test.cc"],
+    deps = [
+        ":intrusive_list",
+        "@googletest//:gtest_main",
+    ],
+)
