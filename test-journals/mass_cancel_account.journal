@@ -1,0 +1,33 @@
+# mass_cancel_account.journal
+# Two orders from account 1, one from account 2.
+# MASS_CANCEL account 1 cancels exactly the two account-1 orders.
+# The account-2 order survives.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1000000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=1000 cl_ord_id=1 ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=1000 action=ADD qty=10000 price=1000000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=1000 action=ADD count=1 qty=10000 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=1000 ask_qty=0 ask=0 bid_qty=10000 bid=1000000
+
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=BUY price=990000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=2000 cl_ord_id=2 ord_id=2
+EXPECT ORDER_BOOK_ACTION ts=2000 action=ADD qty=10000 price=990000 side=BUY ord_id=2
+EXPECT DEPTH_UPDATE ts=2000 action=ADD count=1 qty=10000 price=990000 side=BUY
+EXPECT TOP_OF_BOOK ts=2000 ask_qty=0 ask=0 bid_qty=10000 bid=1000000
+
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=2 side=BUY price=980000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=3000 cl_ord_id=3 ord_id=3
+EXPECT ORDER_BOOK_ACTION ts=3000 action=ADD qty=10000 price=980000 side=BUY ord_id=3
+EXPECT DEPTH_UPDATE ts=3000 action=ADD count=1 qty=10000 price=980000 side=BUY
+EXPECT TOP_OF_BOOK ts=3000 ask_qty=0 ask=0 bid_qty=10000 bid=1000000
+
+ACTION MASS_CANCEL ts=4000 account_id=1
+EXPECT ORDER_CANCELLED reason=MASS_CANCELLED ts=4000 ord_id=1
+EXPECT ORDER_CANCELLED reason=MASS_CANCELLED ts=4000 ord_id=2
+EXPECT ORDER_BOOK_ACTION ts=4000 action=CANCEL qty=10000 price=1000000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=4000 action=REMOVE count=0 qty=0 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=4000 ask_qty=0 ask=0 bid_qty=10000 bid=990000
+EXPECT ORDER_BOOK_ACTION ts=4000 action=CANCEL qty=10000 price=990000 side=BUY ord_id=2
+EXPECT DEPTH_UPDATE ts=4000 action=REMOVE count=0 qty=0 price=990000 side=BUY
+EXPECT TOP_OF_BOOK ts=4000 ask_qty=0 ask=0 bid_qty=10000 bid=980000

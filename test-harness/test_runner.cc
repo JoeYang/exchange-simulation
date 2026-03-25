@@ -238,6 +238,19 @@ void JournalTestRunner::execute_action(EngineT& engine,
         break;
     }
 
+    case ParsedAction::MassCancel: {
+        auto account_id = static_cast<uint64_t>(action.get_int("account_id"));
+        Timestamp ts    = static_cast<Timestamp>(action.get_int("ts"));
+        engine.mass_cancel(account_id, ts);
+        break;
+    }
+
+    case ParsedAction::MassCancelAll: {
+        Timestamp ts = static_cast<Timestamp>(action.get_int("ts"));
+        engine.mass_cancel_all(ts);
+        break;
+    }
+
     }  // switch
 }
 
@@ -246,6 +259,8 @@ template void JournalTestRunner::execute_action<FifoExchange>(
     FifoExchange&, const ParsedAction&);
 template void JournalTestRunner::execute_action<ProRataExchange>(
     ProRataExchange&, const ParsedAction&);
+template void JournalTestRunner::execute_action<SmpFifoExchange>(
+    SmpFifoExchange&, const ParsedAction&);
 
 // ---------------------------------------------------------------------------
 // expectation_to_event
@@ -506,6 +521,9 @@ template TestResult JournalTestRunner::run_impl<FifoExchange>(
 template TestResult JournalTestRunner::run_impl<ProRataExchange>(
     ProRataExchange&, RecordingOrderListener&, RecordingMdListener&,
     const Journal&);
+template TestResult JournalTestRunner::run_impl<SmpFifoExchange>(
+    SmpFifoExchange&, RecordingOrderListener&, RecordingMdListener&,
+    const Journal&);
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -538,6 +556,21 @@ TestResult JournalTestRunner::run_pro_rata(const Journal& journal) {
     };
 
     ProRataExchange engine(cfg, order_listener, md_listener);
+    return run_impl(engine, order_listener, md_listener, journal);
+}
+
+TestResult JournalTestRunner::run_smp_fifo(const Journal& journal) {
+    RecordingOrderListener order_listener;
+    RecordingMdListener    md_listener;
+
+    EngineConfig cfg{
+        journal.config.tick_size,
+        journal.config.lot_size,
+        journal.config.price_band_low,
+        journal.config.price_band_high
+    };
+
+    SmpFifoExchange engine(cfg, order_listener, md_listener);
     return run_impl(engine, order_listener, md_listener, journal);
 }
 

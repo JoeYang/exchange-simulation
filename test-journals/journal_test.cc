@@ -17,6 +17,8 @@ TEST_P(JournalTest, RunJournal) {
     TestResult result;
     if (journal.config.match_algo == "PRO_RATA") {
         result = runner.run_pro_rata(journal);
+    } else if (journal.config.match_algo == "FIFO_SMP") {
+        result = runner.run_smp_fifo(journal);
     } else {
         result = runner.run_fifo(journal);
     }

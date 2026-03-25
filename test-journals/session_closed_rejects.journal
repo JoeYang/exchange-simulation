@@ -1,0 +1,19 @@
+# session_closed_rejects.journal
+# Transition Continuous -> Closed, then verify that new_order,
+# cancel_order, and modify_order are all rejected with
+# EXCHANGE_SPECIFIC reason while session is Closed.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION SET_SESSION_STATE ts=1000 state=CONTINUOUS
+
+ACTION SET_SESSION_STATE ts=2000 state=CLOSED
+EXPECT MARKET_STATUS ts=2000 state=CLOSED
+
+ACTION NEW_ORDER ts=3000 cl_ord_id=1 account_id=1 side=BUY price=1000000 qty=10000 type=LIMIT tif=GTC
+EXPECT ORDER_REJECTED reason=EXCHANGE_SPECIFIC ts=3000 cl_ord_id=1
+
+ACTION CANCEL ts=4000 ord_id=999
+EXPECT ORDER_CANCEL_REJECTED reason=EXCHANGE_SPECIFIC ts=4000 cl_ord_id=0 ord_id=999
+
+ACTION MODIFY ts=5000 ord_id=999 cl_ord_id=2 new_price=1010000 new_qty=10000
+EXPECT ORDER_MODIFY_REJECTED reason=EXCHANGE_SPECIFIC ts=5000 cl_ord_id=2 ord_id=999

@@ -5,6 +5,7 @@
 #include "test-harness/recording_listener.h"
 #include "exchange-core/matching_engine.h"
 #include "exchange-core/match_algo.h"
+#include "exchange-core/types.h"
 
 #include <string>
 #include <vector>
@@ -69,6 +70,31 @@ public:
     using Base::Base;
 };
 
+// SmpFifoExchange: FIFO matching with self-match prevention enabled.
+// is_self_match() returns true when both orders belong to the same account.
+// get_smp_action() returns CancelNewest (cancel the aggressor on self-match).
+class SmpFifoExchange
+    : public MatchingEngine<SmpFifoExchange,
+                            RecordingOrderListener,
+                            RecordingMdListener,
+                            FifoMatch,
+                            /*MaxOrders=*/1000,
+                            /*MaxPriceLevels=*/100,
+                            /*MaxOrderIds=*/10000> {
+public:
+    using Base = MatchingEngine<SmpFifoExchange,
+                                RecordingOrderListener,
+                                RecordingMdListener,
+                                FifoMatch,
+                                1000, 100, 10000>;
+    using Base::Base;
+
+    bool is_self_match(const Order& a, const Order& b) {
+        return a.account_id == b.account_id;
+    }
+    SmpAction get_smp_action() { return SmpAction::CancelNewest; }
+};
+
 // ---------------------------------------------------------------------------
 // JournalTestRunner
 // ---------------------------------------------------------------------------
@@ -79,6 +105,10 @@ public:
 
     // Run a journal against a Pro-Rata matching engine.
     TestResult run_pro_rata(const Journal& journal);
+
+    // Run a journal against a FIFO engine with self-match prevention enabled
+    // (CancelNewest: the aggressor is cancelled on a self-match).
+    TestResult run_smp_fifo(const Journal& journal);
 
 private:
     // Shared replay + compare implementation.

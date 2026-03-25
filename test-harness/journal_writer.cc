@@ -118,6 +118,8 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::SetSessionState:   os << "SET_SESSION_STATE";  break;
         case ParsedAction::ExecuteAuction:    os << "EXECUTE_AUCTION";    break;
         case ParsedAction::PublishIndicative: os << "PUBLISH_INDICATIVE"; break;
+        case ParsedAction::MassCancel:        os << "MASS_CANCEL";        break;
+        case ParsedAction::MassCancelAll:     os << "MASS_CANCEL_ALL";    break;
     }
 
     // Emit fields in a deterministic order based on action type, then any
@@ -176,6 +178,15 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
             emit("ts");
             emit("reference_price");
             break;
+
+        case ParsedAction::MassCancel:
+            emit("ts");
+            emit("account_id");
+            break;
+
+        case ParsedAction::MassCancelAll:
+            emit("ts");
+            break;
     }
 
     // Emit any extra fields not in the canonical order (preserves unknown fields).
@@ -194,6 +205,10 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "reference_price"};
     static const std::vector<std::string> known_publish_indicative =
         {"ts", "reference_price"};
+    static const std::vector<std::string> known_mass_cancel =
+        {"ts", "account_id"};
+    static const std::vector<std::string> known_mass_cancel_all =
+        {"ts"};
 
     const std::vector<std::string>* known = nullptr;
     switch (action.type) {
@@ -204,6 +219,8 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::SetSessionState:   known = &known_set_session_state;  break;
         case ParsedAction::ExecuteAuction:    known = &known_execute_auction;    break;
         case ParsedAction::PublishIndicative: known = &known_publish_indicative; break;
+        case ParsedAction::MassCancel:        known = &known_mass_cancel;        break;
+        case ParsedAction::MassCancelAll:     known = &known_mass_cancel_all;    break;
     }
 
     for (const auto& kv_pair : action.fields) {

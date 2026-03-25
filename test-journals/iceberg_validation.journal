@@ -1,0 +1,18 @@
+# iceberg_validation.journal
+# Tests three iceberg validation edge cases:
+#   1. display_qty > total_qty          -> INVALID_QUANTITY reject
+#   2. display_qty not lot-aligned       -> INVALID_QUANTITY reject
+#   3. display_qty == total_qty (degen.) -> accepted
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=SELL price=1000000 qty=10000 type=LIMIT tif=GTC display_qty=20000
+EXPECT ORDER_REJECTED reason=INVALID_QUANTITY ts=1000 cl_ord_id=1
+
+ACTION NEW_ORDER ts=2000 cl_ord_id=2 account_id=1 side=SELL price=1000000 qty=30000 type=LIMIT tif=GTC display_qty=5000
+EXPECT ORDER_REJECTED reason=INVALID_QUANTITY ts=2000 cl_ord_id=2
+
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=1 side=SELL price=1000000 qty=10000 type=LIMIT tif=GTC display_qty=10000
+EXPECT ORDER_ACCEPTED ts=3000 cl_ord_id=3 ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=3000 action=ADD qty=10000 price=1000000 side=SELL ord_id=1
+EXPECT DEPTH_UPDATE ts=3000 action=ADD count=1 qty=10000 price=1000000 side=SELL
+EXPECT TOP_OF_BOOK ts=3000 ask_qty=10000 ask=1000000 bid_qty=0 bid=0

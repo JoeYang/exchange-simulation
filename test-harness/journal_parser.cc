@@ -144,6 +144,10 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::ExecuteAuction;
             } else if (type_str == "PUBLISH_INDICATIVE") {
                 atype = ParsedAction::PublishIndicative;
+            } else if (type_str == "MASS_CANCEL") {
+                atype = ParsedAction::MassCancel;
+            } else if (type_str == "MASS_CANCEL_ALL") {
+                atype = ParsedAction::MassCancelAll;
             } else {
                 throw std::runtime_error(
                     source_name + ":" + std::to_string(line_number) +

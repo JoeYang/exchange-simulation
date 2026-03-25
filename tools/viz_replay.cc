@@ -165,6 +165,19 @@ void dispatch_action(EngineT& engine, const ParsedAction& action) {
         break;
     }
 
+    case ParsedAction::MassCancel: {
+        auto account_id = static_cast<uint64_t>(action.get_int("account_id"));
+        Timestamp ts    = static_cast<Timestamp>(action.get_int("ts"));
+        engine.mass_cancel(account_id, ts);
+        break;
+    }
+
+    case ParsedAction::MassCancelAll: {
+        Timestamp ts = static_cast<Timestamp>(action.get_int("ts"));
+        engine.mass_cancel_all(ts);
+        break;
+    }
+
     }  // switch
 }
 

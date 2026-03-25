@@ -29,7 +29,8 @@ struct ParsedConfig {
 // ---------------------------------------------------------------------------
 struct ParsedAction {
     enum Type { NewOrder, Cancel, Modify, TriggerExpiry,
-                SetSessionState, ExecuteAuction, PublishIndicative };
+                SetSessionState, ExecuteAuction, PublishIndicative,
+                MassCancel, MassCancelAll };
 
     Type type;
     std::unordered_map<std::string, std::string> fields;
