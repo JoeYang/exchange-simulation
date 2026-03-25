@@ -9,3 +9,10 @@ cc_binary(
     ],
     copts = ["-O3", "-DNDEBUG", "-march=native"],
 )
+
+cc_binary(
+    name = "throughput_boundary",
+    srcs = ["throughput_boundary.cc"],
+    deps = ["//exchange-core:matching_engine"],
+    copts = ["-O3", "-DNDEBUG", "-march=native"],
+)
