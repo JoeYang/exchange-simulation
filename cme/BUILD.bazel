@@ -67,3 +67,51 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "ilink3_report_publisher",
+    hdrs = ["ilink3_report_publisher.h"],
+    deps = [
+        "//cme/codec:ilink3_encoder",
+        "//exchange-core:listeners",
+        "//exchange-core:types",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ilink3_report_publisher_test",
+    srcs = ["ilink3_report_publisher_test.cc"],
+    deps = [
+        ":ilink3_report_publisher",
+        ":cme_simulator",
+        "//cme/codec:ilink3_messages",
+        "//cme/codec:sbe_header",
+        "//exchange-core:composite_listener",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "mdp3_feed_publisher",
+    hdrs = ["mdp3_feed_publisher.h"],
+    deps = [
+        "//cme/codec:mdp3_encoder",
+        "//exchange-core:listeners",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "mdp3_feed_publisher_test",
+    srcs = ["mdp3_feed_publisher_test.cc"],
+    deps = [
+        ":mdp3_feed_publisher",
+        ":cme_simulator",
+        "//cme/codec:mdp3_messages",
+        "//cme/codec:sbe_header",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
