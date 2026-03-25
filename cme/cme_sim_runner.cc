@@ -5,6 +5,7 @@
 //   - TCP server for iLink3 order entry (length-prefixed SBE frames)
 //   - UDP multicast publisher for MDP3 market data
 //   - ILink3Gateway to decode incoming SBE and route to the simulator
+//   - (optional) SHM transport for dashboard visualization
 //
 // Event loop:
 //   1. Poll TCP for incoming iLink3 messages
@@ -20,6 +21,9 @@
 #include "cme/ilink3_report_publisher.h"
 #include "cme/mdp3_feed_publisher.h"
 #include "cme/sim_config.h"
+#include "exchange-core/composite_listener.h"
+#include "tools/shm_listener.h"
+#include "tools/shm_transport.h"
 #include "tools/tcp_server.h"
 #include "tools/udp_multicast.h"
 
@@ -53,61 +57,28 @@ std::vector<exchange::cme::CmeProductConfig> filter_products(
     return result;
 }
 
-}  // namespace
+auto make_clock() {
+    return []() -> exchange::Timestamp {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        return static_cast<exchange::Timestamp>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec;
+    };
+}
 
-int main(int argc, char* argv[]) {
+// run_sim -- shared event loop for both SHM and non-SHM modes.
+//
+// Templated on the simulator type so the gateway and engine dispatch are
+// resolved at compile time regardless of which listener combination is used.
+template <typename SimulatorT>
+int run_sim(SimulatorT& sim,
+            exchange::cme::ILink3ReportPublisher& report_pub,
+            exchange::cme::Mdp3FeedPublisher& md_pub,
+            const exchange::cme::SimConfig& cfg)
+{
     using namespace exchange;
     using namespace exchange::cme;
 
-    // -- Parse config --
-    SimConfig cfg;
-    if (!SimConfig::parse(argc, argv, cfg)) {
-        SimConfig::print_usage(argv[0]);
-        return 1;
-    }
-
-    // -- Install signal handlers for clean shutdown --
-    std::signal(SIGINT,  signal_handler);
-    std::signal(SIGTERM, signal_handler);
-
-    // -- Load products --
-    auto all_products = get_cme_products();
-    auto products = filter_products(all_products, cfg.products);
-    if (products.empty()) {
-        std::fprintf(stderr, "Error: no matching products found.\n");
-        return 1;
-    }
-
-    std::fprintf(stderr, "Loading %zu product(s):", products.size());
-    for (const auto& p : products) {
-        std::fprintf(stderr, " %s", p.symbol.c_str());
-    }
-    std::fprintf(stderr, "\n");
-
-    // -- Create listeners --
-    // Use the first product's instrument_id as the iLink3 encode context's
-    // security_id. Individual fill reports override this per-order.
-    sbe::ilink3::EncodeContext ilink_ctx{};
-    ilink_ctx.uuid = 1;
-    ilink_ctx.seq_num = 1;
-    ilink_ctx.security_id = static_cast<int32_t>(products[0].instrument_id);
-    std::memcpy(ilink_ctx.sender_id, "CME-SIM", 7);
-    std::memcpy(ilink_ctx.location, "US,IL", sizeof(ilink_ctx.location));
-    ilink_ctx.party_details_list_req_id = 1;
-
-    ILink3ReportPublisher report_pub(ilink_ctx);
-    Mdp3FeedPublisher md_pub;
-
-    // -- Create simulator + load products --
-    CmeSimulator<ILink3ReportPublisher, Mdp3FeedPublisher> sim(report_pub, md_pub);
-    sim.load_products(products);
-
-    // -- Start trading session --
-    auto now = []() -> Timestamp {
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        return static_cast<Timestamp>(ts.tv_sec) * 1'000'000'000LL + ts.tv_nsec;
-    };
+    auto now = make_clock();
 
     sim.start_trading_day(now());
     sim.open_market(now());
@@ -222,4 +193,76 @@ int main(int argc, char* argv[]) {
     std::fprintf(stderr, "Simulator stopped.\n");
 
     return 0;
+}
+
+}  // namespace
+
+int main(int argc, char* argv[]) {
+    using namespace exchange;
+    using namespace exchange::cme;
+
+    // -- Parse config --
+    SimConfig cfg;
+    if (!SimConfig::parse(argc, argv, cfg)) {
+        SimConfig::print_usage(argv[0]);
+        return 1;
+    }
+
+    // -- Install signal handlers for clean shutdown --
+    std::signal(SIGINT,  signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
+    // -- Load products --
+    auto all_products = get_cme_products();
+    auto products = filter_products(all_products, cfg.products);
+    if (products.empty()) {
+        std::fprintf(stderr, "Error: no matching products found.\n");
+        return 1;
+    }
+
+    std::fprintf(stderr, "Loading %zu product(s):", products.size());
+    for (const auto& p : products) {
+        std::fprintf(stderr, " %s", p.symbol.c_str());
+    }
+    std::fprintf(stderr, "\n");
+
+    // -- Create iLink3 encode context --
+    sbe::ilink3::EncodeContext ilink_ctx{};
+    ilink_ctx.uuid = 1;
+    ilink_ctx.seq_num = 1;
+    ilink_ctx.security_id = static_cast<int32_t>(products[0].instrument_id);
+    std::memcpy(ilink_ctx.sender_id, "CME-SIM", 7);
+    std::memcpy(ilink_ctx.location, "US,IL", sizeof(ilink_ctx.location));
+    ilink_ctx.party_details_list_req_id = 1;
+
+    ILink3ReportPublisher report_pub(ilink_ctx);
+    Mdp3FeedPublisher md_pub;
+
+    if (!cfg.shm_path.empty()) {
+        // -- SHM mode: composite listeners fan out to protocol publishers + SHM --
+        std::fprintf(stderr, "SHM transport: %s\n", cfg.shm_path.c_str());
+
+        ShmProducer shm_producer(cfg.shm_path);
+        SharedMemoryOrderListener shm_order_listener(shm_producer);
+        SharedMemoryMdListener shm_md_listener(shm_producer);
+
+        using CompositeOL = CompositeOrderListener<ILink3ReportPublisher,
+                                                   SharedMemoryOrderListener>;
+        using CompositeML = CompositeMdListener<Mdp3FeedPublisher,
+                                                SharedMemoryMdListener>;
+
+        CompositeOL composite_ol(&report_pub, &shm_order_listener);
+        CompositeML composite_ml(&md_pub, &shm_md_listener);
+
+        CmeSimulator<CompositeOL, CompositeML> sim(composite_ol, composite_ml);
+        sim.load_products(products);
+
+        return run_sim(sim, report_pub, md_pub, cfg);
+    }
+
+    // -- Standard mode: direct listeners, no SHM --
+    CmeSimulator<ILink3ReportPublisher, Mdp3FeedPublisher> sim(report_pub, md_pub);
+    sim.load_products(products);
+
+    return run_sim(sim, report_pub, md_pub, cfg);
 }

@@ -159,9 +159,13 @@ cc_binary(
         ":mdp3_feed_publisher",
         ":sim_config",
         "//cme/codec:ilink3_decoder",
+        "//exchange-core:composite_listener",
+        "//tools:shm_listener",
+        "//tools:shm_transport",
         "//tools:tcp_server",
         "//tools:udp_multicast",
     ],
+    linkopts = ["-lrt"],
     visibility = ["//visibility:public"],
 )
 
