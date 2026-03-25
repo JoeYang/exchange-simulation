@@ -109,7 +109,126 @@ Legend: **S** = Supported, **R** = Required by this exchange, **-** = Not applic
 
 ---
 
-## 3. Gap Analysis by Category
+## 3. Core vs Exchange Layer Classification
+
+The exchange-core must remain generic — it provides **mechanisms**, not **policies**. Each feature gap is classified into one of three layers:
+
+| Layer | Description | Ownership |
+|-------|-------------|-----------|
+| **Core** | Generic mechanism needed by 7+ exchanges with uniform implementation | exchange-core library |
+| **Core (extensible)** | Framework/hooks in core, venue-specific behavior via CRTP or config | Core provides hooks, exchange configures |
+| **Exchange layer** | Venue-specific, varies significantly, or needed by < 5 exchanges | Per-exchange CRTP class or wrapper |
+
+### 3.1 Core Layer — Generic Mechanisms to Add
+
+These belong in exchange-core because they are universal and have a single correct implementation.
+
+| Feature | Why Core | Notes |
+|---------|----------|-------|
+| **Session state machine framework** | All 10 exchanges need phases | Core provides: `SessionState` enum, `transition(old, new)` method, TIF validation per phase. Exchange provides: the schedule and transition rules via CRTP. |
+| **Auction uncrossing algorithm** | All 10 exchanges need opening/closing auctions | Standard equilibrium price calculation (maximize volume, minimize imbalance, reference price tiebreak). The algorithm itself is universal — what varies is WHEN it runs (exchange layer). |
+| **Iceberg/hidden quantity support** | 9/10 exchanges | Core adds `display_qty` field to Order, reveals next tranche after fill. Exchange sets minimum display qty via CRTP `get_min_display_qty()`. |
+| **Mass cancel API** | All 10 exchanges, regulatory requirement | `mass_cancel(account_id)`, `mass_cancel_all()`. Pure engine operation. |
+| **Max order size validation** | All 10 exchanges | Add `max_order_size` to EngineConfig. Core rejects orders exceeding it. |
+| **OHLCV statistics accumulator** | All 10 exchanges | Core tracks open/high/low/close/volume/vwap per session. Reset on session transition. |
+| **Market status callback** | All 10 exchanges | New callback: `on_market_status(SessionState, Timestamp)`. |
+| **Trade bust/adjustment API** | All 10 exchanges | `bust_trade(trade_id)` reverses a trade, restores orders. Core mechanics. |
+| **GTC order persistence hooks** | All 10 exchanges | Core provides `serialize_order()` / `restore_order()` for session boundary management. Exchange manages storage. |
+| **Daily price limit** | 8/10 exchanges | Like price bands but absolute limits that trigger halt/lock-limit state. Core enforces; exchange configures levels. |
+| **Order rate tracking** | All 10 exchanges | Core counts orders per account per interval. Exchange sets the threshold via config. |
+
+### 3.2 Core (Extensible) — Framework with CRTP Hooks
+
+Core provides the mechanism; exchange implementations customize behavior.
+
+| Feature | Core Provides | Exchange Provides (CRTP) |
+|---------|---------------|--------------------------|
+| **Session state transitions** | State enum, validation framework, `transition()` | `on_session_transition(old, new)` — defines which TIFs are valid, whether matching occurs, whether new orders are accepted |
+| **Auction trigger conditions** | Volatility auction framework, `enter_auction()` / `exit_auction()` | `should_trigger_volatility_auction(price, reference)` — thresholds and rules |
+| **Dynamic price bands** | Band check infrastructure, `update_bands()` | `calculate_bands(reference_price)` — band width, reference price source, asymmetric bands |
+| **Circuit breaker behavior** | Halt state, `trigger_circuit_breaker()` | `on_circuit_breaker(level)` — what happens (halt, auction, restrict range) per level |
+| **Matching algorithm per phase** | Dispatch to different MatchAlgoT for auction vs continuous | `get_match_algo_for_phase(phase)` — or use template specialization |
+| **Market maker priority** | LMM priority allocation in matching | `is_market_maker(order)`, `get_mm_priority_pct()` — who qualifies and their allocation share |
+| **SMP variations** | Already extensible (cancel newest/oldest/both/decrement) | `is_self_match()`, `get_smp_action()` — already CRTP hooks |
+| **Modify policy** | Already extensible | `get_modify_policy()` — already a CRTP hook |
+| **Stop trigger logic** | Already extensible | `should_trigger_stop()` — already a CRTP hook |
+| **Indicative auction price** | Calculation method, callback `on_indicative_price()` | `calculate_indicative_price()` — exchange may weight differently |
+| **Settlement price** | Calculation hooks, `on_settlement_price()` | `calculate_settlement_price()` — VWAP, last trade, weighted average vary by venue |
+
+### 3.3 Exchange Layer Only — Per-Venue Implementation
+
+These do NOT belong in exchange-core. They are implemented in the per-exchange CRTP class or exchange wrapper.
+
+| Feature | Why Exchange Layer | Example Venues |
+|---------|-------------------|----------------|
+| **Session schedule / timing** | Every exchange has unique times, holidays, early closes | CME 17:00-16:00 CT; Eurex 07:30-22:00 CET; HKEX T+1 session |
+| **LME Ring/telephone trading** | Unique to LME, non-electronic | LME only |
+| **JPX Itayose method specifics** | Unique auction variant | JPX only |
+| **KRX sidecar mechanism** | Halts programme trading only, unique | KRX only |
+| **HKEX VCM soft halt** | Restricts range instead of halting, unique | HKEX only |
+| **NSE 3-tier circuit breaker percentages** | Specific thresholds (10%/15%/20%) | NSE only |
+| **Random auction end time** | ASX, some others add random extension to prevent sniping | ASX, Eurex |
+| **Exchange-specific order types** | Eurex BOC, SGX MTL — unique per venue | Per venue |
+| **Session-specific TIFs** | JPX AM/PM session TIFs | JPX only |
+| **ATO/ATC/GFA TIF rules** | Which TIF is valid in which phase — varies per venue | Eurex GFA, SGX ATO/ATC |
+| **Implied/spread strategy definitions** | Which spreads exist, how legs combine — product-specific | CME, Eurex, ICE, SGX |
+| **Member/firm hierarchy** | Access levels, permissions — venue-specific | All, but each is different |
+| **Margin integration** | Margin methodology (SPAN, PRISMA, VaR) is venue-specific | All, but each uses different system |
+| **Position limit levels** | Specific limits per product/account | All, but values are venue-specific |
+| **Velocity logic rules** | CME-specific anti-disruptive trading | CME only |
+| **Protocol-specific behavior** | FIX tags, ITCH fields, OUCH semantics | Per protocol |
+
+### 3.4 New CRTP Extension Points Needed
+
+These hooks need to be added to `MatchingEngine` for Phase 2:
+
+| Hook | Signature | Default | Purpose |
+|------|-----------|---------|---------|
+| `on_session_transition` | `void(SessionState old_state, SessionState new_state)` | no-op | Exchange controls phase transition behavior |
+| `is_order_allowed_in_phase` | `bool(const OrderRequest&, SessionState)` | `return true` | Reject orders invalid for current phase (e.g., IOC during auction) |
+| `should_trigger_volatility_auction` | `bool(Price trade_price, Price reference)` | `return false` | Exchange defines VI thresholds |
+| `calculate_dynamic_bands` | `std::pair<Price,Price>(Price reference)` | static bands | Exchange defines band calculation |
+| `is_market_maker` | `bool(const Order&)` | `return false` | Identifies MM orders for priority |
+| `get_mm_priority_pct` | `int()` | `0` | Percentage of level allocated to MMs |
+| `get_min_display_qty` | `Quantity(const Order&)` | `0` (no iceberg) | Exchange sets min visible qty |
+| `calculate_settlement_price` | `Price()` | `last_trade_price_` | Exchange defines settlement method |
+| `on_circuit_breaker` | `void(int level, Price trigger_price)` | no-op | Exchange defines halt/auction behavior |
+| `get_auction_match_algo` | `AuctionAlgo()` | `MaxVolume` | Exchange may use different uncrossing |
+
+### 3.5 Design Principle Summary
+
+```
++------------------------------------------------------------------+
+|                    ExchangeImpl (CRTP derived)                    |
+|  Per-venue: session schedule, TIF rules per phase, VI thresholds,|
+|  MM identification, SMP policy, circuit breaker levels,          |
+|  settlement method, implied strategy definitions, protocol layer |
++------------------------------------------------------------------+
+         |  inherits via CRTP
+         v
++------------------------------------------------------------------+
+|              MatchingEngine<Derived, ...>  (exchange-core)        |
+|                                                                   |
+|  Generic: session state machine, auction uncrossing, iceberg,    |
+|  dynamic bands framework, mass cancel, order rate tracking,      |
+|  OHLCV stats, market status, trade bust, GTC persistence hooks,  |
+|  daily price limits, max order size, L1/L2/L3 market data       |
++------------------------------------------------------------------+
+         |  uses
+         v
++------------------------------------------------------------------+
+|              Foundation (exchange-core)                            |
+|                                                                   |
+|  OrderBook, StopBook, ObjectPool, IntrusiveList, SPSC buffer,   |
+|  FifoMatch, ProRataMatch, Listeners, Events, Types               |
++------------------------------------------------------------------+
+```
+
+**The rule:** If a feature's *mechanism* is the same everywhere but its *parameters* vary, the mechanism goes in core and parameters go in CRTP. If both mechanism and parameters are venue-specific, it's exchange layer only.
+
+---
+
+## 4. Gap Analysis by Category (Detailed)
 
 ### 3.A Session State Machine
 
@@ -621,51 +740,65 @@ The current engine has no persistence layer and no session lifecycle management.
 
 ---
 
-## 4. Priority Recommendations
+## 5. Priority Recommendations (Revised with Core/Exchange Split)
 
-### Phase 2 (Next Priority) -- Core Exchange Simulation Capability
+### Phase 2 — Core Generic Mechanisms
 
-These features are needed to simulate ANY of the 10 exchanges at even basic accuracy:
+These go into exchange-core. They are universal, have a single correct implementation, and unblock all exchange simulators.
 
-| Priority | Feature | Effort | Justification |
-|----------|---------|--------|---------------|
-| **P2-1** | Session state machine + trading phase enum | Medium | Foundation for everything else; every exchange needs this |
-| **P2-2** | Auction mechanism (opening + closing) | High | Required by all 10 exchanges; includes equilibrium price calc |
-| **P2-3** | Iceberg / Display Quantity orders | Medium | Required by 7 of 10 exchanges; impacts book management and market data |
-| **P2-4** | Dynamic price banding | Low | All exchanges use dynamic bands; current static bands are insufficient |
-| **P2-5** | Daily price limits + circuit breaker halt | Medium | Required by 8 of 10 exchanges; triggers session state transitions |
-| **P2-6** | LMM priority in matching | Medium | Required by CME, Eurex, HKEX, SGX; extends match algo framework |
-| **P2-7** | Mass cancel / kill switch | Low | Regulatory requirement; straightforward to implement |
-| **P2-8** | Max order size validation | Low | Simple validation; every exchange requires it |
-| **P2-9** | OHLCV statistics tracking | Low | Needed for settlement price and market data completeness |
-| **P2-10** | Market status event emission | Low | Needed for session state transitions; simple event type |
+| Priority | Feature | Layer | Effort | Justification |
+|----------|---------|-------|--------|---------------|
+| **P2-1** | Session state machine framework | **Core** | Medium | Provides `SessionState` enum, `transition()`, phase-aware TIF validation. Exchange defines schedule via CRTP. |
+| **P2-2** | Auction uncrossing algorithm | **Core** | High | Standard equilibrium price calc (max volume, min imbalance). Exchange controls when it runs. |
+| **P2-3** | Iceberg / display quantity orders | **Core** | Medium | Add `display_qty` to Order, tranche reveal on fill. Exchange sets min display via CRTP hook. |
+| **P2-4** | Dynamic price band framework | **Core (extensible)** | Low | Core checks bands; exchange provides `calculate_dynamic_bands()` via CRTP. |
+| **P2-5** | Daily price limits + halt state | **Core** | Medium | Core enforces limits and enters halt; exchange sets levels. |
+| **P2-6** | Mass cancel / kill switch API | **Core** | Low | `mass_cancel(account)`, `mass_cancel_all()`. Pure engine operation. |
+| **P2-7** | Max order size validation | **Core** | Low | Add to EngineConfig. Trivial. |
+| **P2-8** | OHLCV statistics accumulator | **Core** | Low | Track open/high/low/close/volume/vwap per session. |
+| **P2-9** | Market status callback | **Core** | Low | `on_market_status(state, ts)` — new event type. |
+| **P2-10** | LMM priority in matching | **Core (extensible)** | Medium | Core allocates MM percentage; exchange identifies MMs via `is_market_maker()` CRTP hook. |
 
-### Phase 3 (Advanced) -- Exchange-Specific Accuracy
+### Phase 3a — Core Extensible Frameworks
 
-These features differentiate individual exchanges and enable high-fidelity simulation:
+These add CRTP hooks to core that exchange implementations customize.
 
-| Priority | Feature | Effort | Justification |
-|----------|---------|--------|---------------|
-| **P3-1** | Calendar spread / strategy order books | Very High | Required for CME, Eurex, ICE, ASX, SGX; complex multi-book architecture |
-| **P3-2** | Implied-in / Implied-out pricing | Very High | Required alongside spread books; computationally complex |
-| **P3-3** | Volatility auction / interruption | Medium | Eurex, JPX, HKEX, ASX, SGX use mid-session volatility auctions |
-| **P3-4** | CME matching algorithm variants | High | 6 additional algorithms beyond current FIFO + ProRata |
-| **P3-5** | Velocity logic (CME) | Medium | CME-specific but critical for CME simulation accuracy |
-| **P3-6** | Additional order types (MTL, MIT, OCO, BOC) | Medium | Exchange-specific; each is moderate complexity |
-| **P3-7** | Additional TIF types (ATO, ATC, GFA, session) | Low | Straightforward once session state machine exists |
-| **P3-8** | GTC cross-session persistence | Medium | Requires persistence layer + session lifecycle |
-| **P3-9** | Settlement price calculation | Medium | Exchange-specific formulas |
-| **P3-10** | Per-order SMP instruction | Low | CME-specific enhancement to existing SMP |
-| **P3-11** | Order rate throttling | Low | Simple counter/timer mechanism |
-| **P3-12** | Position limits | Medium | Requires position tracking infrastructure |
-| **P3-13** | Member/firm hierarchy + controls | Medium | Structural change to account model |
-| **P3-14** | Trade bust / adjustment | Medium | Requires trade journal/log |
-| **P3-15** | Implied price dissemination | Medium | Coupled with P3-1 and P3-2 |
-| **P3-16** | Margin integration hooks | Medium | Interface design; actual margin calc is external |
+| Priority | Feature | Layer | Effort | Justification |
+|----------|---------|-------|--------|---------------|
+| **P3a-1** | Volatility auction framework | **Core (extensible)** | Medium | Core provides `enter_auction()` / `exit_auction()`. Exchange provides trigger thresholds via CRTP. |
+| **P3a-2** | Circuit breaker framework | **Core (extensible)** | Medium | Core provides halt states. Exchange defines levels and behavior via `on_circuit_breaker()`. |
+| **P3a-3** | Settlement price hooks | **Core (extensible)** | Low | Core provides `calculate_settlement_price()` hook. Exchange implements formula. |
+| **P3a-4** | GTC persistence hooks | **Core** | Medium | `serialize_order()` / `restore_order()`. Exchange manages storage. |
+| **P3a-5** | Trade bust/adjustment API | **Core** | Medium | `bust_trade(id)` reverses a trade. Core mechanics. |
+| **P3a-6** | Order rate tracking | **Core** | Low | Core counts orders per account per interval. Exchange sets threshold. |
+| **P3a-7** | Additional TIF types (ATO/ATC/GFA) | **Core** | Low | Add to enum. Phase validity controlled by exchange via `is_order_allowed_in_phase()`. |
+
+### Phase 3b — Exchange Layer (Per-Venue Implementation)
+
+These do NOT go into exchange-core. Built when implementing specific exchange simulators.
+
+| Priority | Feature | Layer | Effort | First Needed By |
+|----------|---------|-------|--------|-----------------|
+| **P3b-1** | Calendar spread / strategy books | **Exchange** | Very High | CME, Eurex |
+| **P3b-2** | Implied-in / implied-out pricing | **Exchange** | Very High | CME, Eurex |
+| **P3b-3** | CME matching algorithm variants (6 more) | **Exchange** | High | CME only |
+| **P3b-4** | Velocity logic | **Exchange** | Medium | CME only |
+| **P3b-5** | Exchange-specific order types (MTL, MIT, OCO, BOC) | **Exchange** | Medium each | Per venue |
+| **P3b-6** | Session schedules and holiday calendars | **Exchange** | Low each | Per venue |
+| **P3b-7** | Per-order SMP instruction | **Exchange** | Low | CME |
+| **P3b-8** | Member/firm hierarchy | **Exchange** | Medium | Per venue |
+| **P3b-9** | Position limits (specific values) | **Exchange** | Medium | Per venue |
+| **P3b-10** | Margin integration (SPAN/PRISMA/VaR) | **Exchange** | Medium | Per venue |
+| **P3b-11** | JPX Itayose specifics | **Exchange** | Low | JPX only |
+| **P3b-12** | KRX sidecar mechanism | **Exchange** | Low | KRX only |
+| **P3b-13** | HKEX VCM soft halt | **Exchange** | Low | HKEX only |
+| **P3b-14** | ASX random auction end | **Exchange** | Low | ASX only |
+| **P3b-15** | Implied price dissemination | **Exchange** | Medium | With P3b-1/2 |
+| **P3b-16** | NSE multi-tier circuit breakers | **Exchange** | Low | NSE only |
 
 ---
 
-## 5. Per-Exchange Notes
+## 6. Per-Exchange Notes
 
 ### 5.1 CME (Globex)
 
@@ -913,7 +1046,7 @@ Sources:
 
 ---
 
-## 6. Implementation Architecture Recommendations
+## 7. Implementation Architecture Recommendations
 
 ### 6.1 Session State Machine Design
 
@@ -978,7 +1111,7 @@ struct Order {
 
 ---
 
-## 7. Effort Estimates
+## 8. Effort Estimates
 
 | Phase | Feature Count | Estimated Lines of Code | Calendar Time |
 |-------|--------------|-------------------------|---------------|
