@@ -47,3 +47,15 @@ cc_binary(
         "//test-harness:journal_writer",
     ],
 )
+
+cc_binary(
+    name = "generate_important_journals",
+    srcs = ["generate_important_journals.cc"],
+    deps = [
+        "//exchange-core:matching_engine",
+        "//exchange-core:match_algo",
+        "//test-harness:recording_listener",
+        "//test-harness:journal_parser",
+        "//test-harness:journal_writer",
+    ],
+)
