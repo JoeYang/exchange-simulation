@@ -53,6 +53,20 @@ const char* reject_reason_to_journal(RejectReason r) {
     return "UNKNOWN";
 }
 
+const char* session_state_to_journal(SessionState s) {
+    switch (s) {
+        case SessionState::Closed:            return "CLOSED";
+        case SessionState::PreOpen:           return "PRE_OPEN";
+        case SessionState::OpeningAuction:    return "OPENING_AUCTION";
+        case SessionState::Continuous:        return "CONTINUOUS";
+        case SessionState::PreClose:          return "PRE_CLOSE";
+        case SessionState::ClosingAuction:    return "CLOSING_AUCTION";
+        case SessionState::Halt:              return "HALT";
+        case SessionState::VolatilityAuction: return "VOLATILITY_AUCTION";
+    }
+    return "UNKNOWN";
+}
+
 const char* cancel_reason_to_journal(CancelReason r) {
     switch (r) {
         case CancelReason::UserRequested:       return "USER_REQUESTED";
@@ -97,10 +111,13 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
     os << "ACTION ";
 
     switch (action.type) {
-        case ParsedAction::NewOrder:      os << "NEW_ORDER";      break;
-        case ParsedAction::Cancel:        os << "CANCEL";         break;
-        case ParsedAction::Modify:        os << "MODIFY";         break;
-        case ParsedAction::TriggerExpiry: os << "TRIGGER_EXPIRY"; break;
+        case ParsedAction::NewOrder:          os << "NEW_ORDER";          break;
+        case ParsedAction::Cancel:            os << "CANCEL";             break;
+        case ParsedAction::Modify:            os << "MODIFY";             break;
+        case ParsedAction::TriggerExpiry:     os << "TRIGGER_EXPIRY";     break;
+        case ParsedAction::SetSessionState:   os << "SET_SESSION_STATE";  break;
+        case ParsedAction::ExecuteAuction:    os << "EXECUTE_AUCTION";    break;
+        case ParsedAction::PublishIndicative: os << "PUBLISH_INDICATIVE"; break;
     }
 
     // Emit fields in a deterministic order based on action type, then any
@@ -144,6 +161,21 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
             emit("ts");
             emit("tif");
             break;
+
+        case ParsedAction::SetSessionState:
+            emit("ts");
+            emit("state");
+            break;
+
+        case ParsedAction::ExecuteAuction:
+            emit("ts");
+            emit("reference_price");
+            break;
+
+        case ParsedAction::PublishIndicative:
+            emit("ts");
+            emit("reference_price");
+            break;
     }
 
     // Emit any extra fields not in the canonical order (preserves unknown fields).
@@ -156,13 +188,22 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "ord_id", "cl_ord_id", "new_price", "new_qty"};
     static const std::vector<std::string> known_trigger_expiry =
         {"ts", "tif"};
+    static const std::vector<std::string> known_set_session_state =
+        {"ts", "state"};
+    static const std::vector<std::string> known_execute_auction =
+        {"ts", "reference_price"};
+    static const std::vector<std::string> known_publish_indicative =
+        {"ts", "reference_price"};
 
     const std::vector<std::string>* known = nullptr;
     switch (action.type) {
-        case ParsedAction::NewOrder:      known = &known_new_order;      break;
-        case ParsedAction::Cancel:        known = &known_cancel;         break;
-        case ParsedAction::Modify:        known = &known_modify;         break;
-        case ParsedAction::TriggerExpiry: known = &known_trigger_expiry; break;
+        case ParsedAction::NewOrder:          known = &known_new_order;          break;
+        case ParsedAction::Cancel:            known = &known_cancel;             break;
+        case ParsedAction::Modify:            known = &known_modify;             break;
+        case ParsedAction::TriggerExpiry:     known = &known_trigger_expiry;     break;
+        case ParsedAction::SetSessionState:   known = &known_set_session_state;  break;
+        case ParsedAction::ExecuteAuction:    known = &known_execute_auction;    break;
+        case ParsedAction::PublishIndicative: known = &known_publish_indicative; break;
     }
 
     for (const auto& kv_pair : action.fields) {
@@ -275,6 +316,19 @@ std::string JournalWriter::event_to_expect_line(const RecordedEvent& event) {
             kv(os, "resting",       e.resting_id);
             kv(os, "aggressor_side", side_to_journal(e.aggressor_side));
             kv(os, "ts",            e.ts);
+
+        } else if constexpr (std::is_same_v<T, MarketStatus>) {
+            os << "EXPECT MARKET_STATUS";
+            kv(os, "state", session_state_to_journal(e.state));
+            kv(os, "ts",    e.ts);
+
+        } else if constexpr (std::is_same_v<T, IndicativePrice>) {
+            os << "EXPECT INDICATIVE_PRICE";
+            kv(os, "price",       e.price);
+            kv(os, "matched_vol", e.matched_volume);
+            kv(os, "buy_surplus", e.buy_surplus);
+            kv(os, "sell_surplus", e.sell_surplus);
+            kv(os, "ts",          e.ts);
         }
 
         return os.str();

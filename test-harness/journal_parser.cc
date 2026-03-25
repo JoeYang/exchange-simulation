@@ -138,6 +138,12 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::Modify;
             } else if (type_str == "TRIGGER_EXPIRY") {
                 atype = ParsedAction::TriggerExpiry;
+            } else if (type_str == "SET_SESSION_STATE") {
+                atype = ParsedAction::SetSessionState;
+            } else if (type_str == "EXECUTE_AUCTION") {
+                atype = ParsedAction::ExecuteAuction;
+            } else if (type_str == "PUBLISH_INDICATIVE") {
+                atype = ParsedAction::PublishIndicative;
             } else {
                 throw std::runtime_error(
                     source_name + ":" + std::to_string(line_number) +

@@ -55,6 +55,18 @@ TimeInForce parse_tif(const std::string& s) {
     throw std::runtime_error("viz_replay: unknown TIF '" + s + "'");
 }
 
+SessionState parse_session_state(const std::string& s) {
+    if (s == "CLOSED")             return SessionState::Closed;
+    if (s == "PRE_OPEN")           return SessionState::PreOpen;
+    if (s == "OPENING_AUCTION")    return SessionState::OpeningAuction;
+    if (s == "CONTINUOUS")         return SessionState::Continuous;
+    if (s == "PRE_CLOSE")          return SessionState::PreClose;
+    if (s == "CLOSING_AUCTION")    return SessionState::ClosingAuction;
+    if (s == "HALT")               return SessionState::Halt;
+    if (s == "VOLATILITY_AUCTION") return SessionState::VolatilityAuction;
+    throw std::runtime_error("viz_replay: unknown session state '" + s + "'");
+}
+
 template <typename EngineT>
 void dispatch_action(EngineT& engine, const ParsedAction& action) {
     switch (action.type) {
@@ -129,6 +141,27 @@ void dispatch_action(EngineT& engine, const ParsedAction& action) {
         Timestamp   ts  = static_cast<Timestamp>(action.get_int("ts"));
         TimeInForce tif = parse_tif(action.get_str("tif"));
         engine.trigger_expiry(ts, tif);
+        break;
+    }
+
+    case ParsedAction::SetSessionState: {
+        Timestamp    ts    = static_cast<Timestamp>(action.get_int("ts"));
+        SessionState state = parse_session_state(action.get_str("state"));
+        engine.set_session_state(state, ts);
+        break;
+    }
+
+    case ParsedAction::ExecuteAuction: {
+        Timestamp ts  = static_cast<Timestamp>(action.get_int("ts"));
+        Price     ref = static_cast<Price>(action.get_int("reference_price"));
+        engine.execute_auction(ref, ts);
+        break;
+    }
+
+    case ParsedAction::PublishIndicative: {
+        Timestamp ts  = static_cast<Timestamp>(action.get_int("ts"));
+        Price     ref = static_cast<Price>(action.get_int("reference_price"));
+        engine.publish_indicative_price(ref, ts);
         break;
     }
 

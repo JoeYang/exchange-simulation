@@ -28,7 +28,8 @@ struct ParsedConfig {
 // perform on-demand conversion so errors surface at assertion time.
 // ---------------------------------------------------------------------------
 struct ParsedAction {
-    enum Type { NewOrder, Cancel, Modify, TriggerExpiry };
+    enum Type { NewOrder, Cancel, Modify, TriggerExpiry,
+                SetSessionState, ExecuteAuction, PublishIndicative };
 
     Type type;
     std::unordered_map<std::string, std::string> fields;

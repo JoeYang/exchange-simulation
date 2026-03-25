@@ -66,6 +66,19 @@ CancelReason parse_cancel_reason(const std::string& s) {
     throw std::runtime_error("test_runner: unknown cancel reason '" + s + "'");
 }
 
+// Parse SessionState string from journal field value.
+SessionState parse_session_state(const std::string& s) {
+    if (s == "CLOSED")             return SessionState::Closed;
+    if (s == "PRE_OPEN")           return SessionState::PreOpen;
+    if (s == "OPENING_AUCTION")    return SessionState::OpeningAuction;
+    if (s == "CONTINUOUS")         return SessionState::Continuous;
+    if (s == "PRE_CLOSE")          return SessionState::PreClose;
+    if (s == "CLOSING_AUCTION")    return SessionState::ClosingAuction;
+    if (s == "HALT")               return SessionState::Halt;
+    if (s == "VOLATILITY_AUCTION") return SessionState::VolatilityAuction;
+    throw std::runtime_error("test_runner: unknown session state '" + s + "'");
+}
+
 // Parse DepthUpdate::Action string.
 DepthUpdate::Action parse_depth_action(const std::string& s) {
     if (s == "ADD")    return DepthUpdate::Add;
@@ -196,6 +209,27 @@ void JournalTestRunner::execute_action(EngineT& engine,
         break;
     }
 
+    case ParsedAction::SetSessionState: {
+        Timestamp    ts    = static_cast<Timestamp>(action.get_int("ts"));
+        SessionState state = parse_session_state(action.get_str("state"));
+        engine.set_session_state(state, ts);
+        break;
+    }
+
+    case ParsedAction::ExecuteAuction: {
+        Timestamp ts  = static_cast<Timestamp>(action.get_int("ts"));
+        Price     ref = static_cast<Price>(action.get_int("reference_price"));
+        engine.execute_auction(ref, ts);
+        break;
+    }
+
+    case ParsedAction::PublishIndicative: {
+        Timestamp ts  = static_cast<Timestamp>(action.get_int("ts"));
+        Price     ref = static_cast<Price>(action.get_int("reference_price"));
+        engine.publish_indicative_price(ref, ts);
+        break;
+    }
+
     }  // switch
 }
 
@@ -315,6 +349,21 @@ RecordedEvent JournalTestRunner::expectation_to_event(
             static_cast<OrderId>(e.get_int("aggressor")),
             static_cast<OrderId>(e.get_int("resting")),
             parse_side(e.get_str("aggressor_side")),
+            static_cast<Timestamp>(e.get_int("ts"))
+        };
+    }
+    if (t == "MARKET_STATUS") {
+        return MarketStatus{
+            parse_session_state(e.get_str("state")),
+            static_cast<Timestamp>(e.get_int("ts"))
+        };
+    }
+    if (t == "INDICATIVE_PRICE") {
+        return IndicativePrice{
+            static_cast<Price>(e.get_int("price")),
+            static_cast<Quantity>(e.get_int("matched_vol")),
+            static_cast<Quantity>(e.get_int("buy_surplus")),
+            static_cast<Quantity>(e.get_int("sell_surplus")),
             static_cast<Timestamp>(e.get_int("ts"))
         };
     }

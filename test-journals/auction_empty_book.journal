@@ -1,0 +1,8 @@
+# auction_empty_book.journal
+# Empty book: execute_auction produces no events.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION SET_SESSION_STATE ts=1000 state=PRE_OPEN
+EXPECT MARKET_STATUS ts=1000 state=PRE_OPEN
+
+ACTION EXECUTE_AUCTION ts=5000 reference_price=1000000

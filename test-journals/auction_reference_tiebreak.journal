@@ -1,0 +1,40 @@
+# auction_reference_tiebreak.journal
+# Two prices (100.0000 and 102.0000) give the same matched volume.
+# Reference price 100.0000 breaks the tie: auction at 100.0000.
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION SET_SESSION_STATE ts=1000 state=PRE_OPEN
+EXPECT MARKET_STATUS ts=1000 state=PRE_OPEN
+
+ACTION NEW_ORDER ts=2000 cl_ord_id=1 account_id=1 side=BUY price=1020000 qty=100000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=2000 cl_ord_id=1 ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=2000 action=ADD qty=100000 price=1020000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=2000 action=ADD count=1 qty=100000 price=1020000 side=BUY
+EXPECT TOP_OF_BOOK ts=2000 ask_qty=0 ask=0 bid_qty=100000 bid=1020000
+
+ACTION NEW_ORDER ts=3000 cl_ord_id=2 account_id=1 side=BUY price=1000000 qty=100000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=3000 cl_ord_id=2 ord_id=2
+EXPECT ORDER_BOOK_ACTION ts=3000 action=ADD qty=100000 price=1000000 side=BUY ord_id=2
+EXPECT DEPTH_UPDATE ts=3000 action=ADD count=1 qty=100000 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=3000 ask_qty=0 ask=0 bid_qty=100000 bid=1020000
+
+ACTION NEW_ORDER ts=4000 cl_ord_id=3 account_id=2 side=SELL price=1000000 qty=100000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=4000 cl_ord_id=3 ord_id=3
+EXPECT ORDER_BOOK_ACTION ts=4000 action=ADD qty=100000 price=1000000 side=SELL ord_id=3
+EXPECT DEPTH_UPDATE ts=4000 action=ADD count=1 qty=100000 price=1000000 side=SELL
+EXPECT TOP_OF_BOOK ts=4000 ask_qty=100000 ask=1000000 bid_qty=100000 bid=1020000
+
+ACTION NEW_ORDER ts=5000 cl_ord_id=4 account_id=2 side=SELL price=1020000 qty=100000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=5000 cl_ord_id=4 ord_id=4
+EXPECT ORDER_BOOK_ACTION ts=5000 action=ADD qty=100000 price=1020000 side=SELL ord_id=4
+EXPECT DEPTH_UPDATE ts=5000 action=ADD count=1 qty=100000 price=1020000 side=SELL
+EXPECT TOP_OF_BOOK ts=5000 ask_qty=100000 ask=1000000 bid_qty=100000 bid=1020000
+
+ACTION EXECUTE_AUCTION ts=7000 reference_price=1000000
+EXPECT ORDER_FILLED ts=7000 qty=100000 price=1000000 resting=3 aggressor=1
+EXPECT TRADE ts=7000 aggressor_side=BUY resting=3 aggressor=1 qty=100000 price=1000000
+EXPECT ORDER_BOOK_ACTION ts=7000 action=FILL qty=100000 price=1000000 side=BUY ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=7000 action=FILL qty=100000 price=1000000 side=SELL ord_id=3
+EXPECT DEPTH_UPDATE ts=7000 action=REMOVE count=0 qty=0 price=1020000 side=BUY
+EXPECT DEPTH_UPDATE ts=7000 action=REMOVE count=0 qty=0 price=1000000 side=SELL
+EXPECT TOP_OF_BOOK ts=7000 ask_qty=100000 ask=1020000 bid_qty=100000 bid=1000000
