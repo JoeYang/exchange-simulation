@@ -63,16 +63,54 @@ public:
     size_t client_count() const { return clients_.size(); }
 
 private:
-    static constexpr size_t kHeaderSize = 4;  // 4-byte LE length prefix
+    static constexpr size_t kHeaderSize = 4;         // 4-byte LE length prefix
     static constexpr size_t kMaxMessageSize = 16 * 1024 * 1024;  // 16 MB
+    static constexpr size_t kInitialBufSize = 64 * 1024;         // 64 KB pre-alloc
 
+    // Pre-allocated receive buffer with read cursor to avoid O(N) erase.
+    // compact() shifts unconsumed bytes to the front only when the cursor
+    // passes the midpoint, amortising the memmove to O(1) per byte.
     struct ClientState {
         std::vector<char> recv_buf;
+        size_t read_pos{0};   // start of unconsumed data
+        size_t write_pos{0};  // end of received data
+
+        ClientState() { recv_buf.resize(kInitialBufSize); }
+
+        size_t readable() const { return write_pos - read_pos; }
+        size_t writable() const { return recv_buf.size() - write_pos; }
+        char* write_ptr() { return recv_buf.data() + write_pos; }
+        const char* read_ptr() const { return recv_buf.data() + read_pos; }
+
+        void advance_write(size_t n) { write_pos += n; }
+        void advance_read(size_t n) { read_pos += n; }
+
+        // Reclaim space when cursor passes midpoint.
+        void compact() {
+            if (read_pos > recv_buf.size() / 2) {
+                size_t remaining = readable();
+                std::memmove(recv_buf.data(), read_ptr(), remaining);
+                read_pos = 0;
+                write_pos = remaining;
+            }
+        }
+
+        // Grow buffer if needed for large messages. Only called when a
+        // frame header indicates more space is required — not on every recv.
+        void ensure_capacity(size_t needed) {
+            if (recv_buf.size() - read_pos < needed) {
+                compact();
+                if (recv_buf.size() < needed) {
+                    recv_buf.resize(needed);
+                }
+            }
+        }
     };
 
     void set_nonblocking(int fd);
     void accept_connections();
     void handle_read(int fd);
+    void drain_and_remove_client(int fd);
     void remove_client(int fd);
 
     Config config_;

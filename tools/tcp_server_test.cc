@@ -439,5 +439,45 @@ TEST(TcpServerTest, CoalescedFrames) {
     ::close(client);
 }
 
+// ---------------------------------------------------------------------------
+// Data received before peer close is processed before disconnect callback
+// ---------------------------------------------------------------------------
+
+TEST(TcpServerTest, DataBeforeDisconnectIsProcessed) {
+    std::vector<std::string> messages;
+    bool disconnected = false;
+    size_t msgs_at_disconnect = 0;
+
+    TcpServer::Config cfg;
+    cfg.on_message = [&](int fd, const char* data, size_t len) {
+        (void)fd;
+        messages.emplace_back(data, len);
+    };
+    cfg.on_disconnect = [&](int fd) {
+        (void)fd;
+        msgs_at_disconnect = messages.size();
+        disconnected = true;
+    };
+
+    TcpServer server(cfg);
+    int client = ConnectClient(server.port());
+    ASSERT_NE(client, -1);
+
+    PollUntil(server, [&] { return server.client_count() == 1; });
+
+    // Send a message then immediately close — server must see the message
+    // before the disconnect callback fires.
+    std::string msg = "final_message";
+    ASSERT_TRUE(SendFramed(client, msg.data(), msg.size()));
+    ::close(client);
+
+    PollUntil(server, [&] { return disconnected; });
+    EXPECT_TRUE(disconnected);
+    ASSERT_EQ(messages.size(), 1u);
+    EXPECT_EQ(messages[0], msg);
+    // The message callback must have fired before the disconnect callback.
+    EXPECT_EQ(msgs_at_disconnect, 1u);
+}
+
 }  // namespace
 }  // namespace exchange

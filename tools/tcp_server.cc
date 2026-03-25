@@ -52,9 +52,9 @@ TcpServer::TcpServer(Config config) : config_(std::move(config)) {
         throw std::runtime_error(std::string("listen: ") + std::strerror(errno));
     }
 
-    // Register listener with epoll.
+    // Register listener with epoll — edge-triggered.
     epoll_event ev{};
-    ev.events = EPOLLIN;
+    ev.events = EPOLLIN | EPOLLET;
     ev.data.fd = listen_fd_;
     if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, listen_fd_, &ev) == -1) {
         ::close(listen_fd_);
@@ -76,26 +76,28 @@ void TcpServer::set_nonblocking(int fd) {
 }
 
 void TcpServer::accept_connections() {
+    // EPOLLET: must drain all pending connections until EAGAIN.
     while (true) {
         int client_fd = ::accept4(listen_fd_, nullptr, nullptr,
                                   SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (client_fd == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-            break;  // Other error, stop accepting this round.
+            break;
         }
 
         int opt = 1;
         ::setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
+        // Edge-triggered for client sockets; EPOLLRDHUP to detect peer close.
         epoll_event ev{};
-        ev.events = EPOLLIN | EPOLLRDHUP;
+        ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
         ev.data.fd = client_fd;
         if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
             ::close(client_fd);
             continue;
         }
 
-        clients_[client_fd] = ClientState{};
+        clients_.emplace(client_fd, ClientState{});
 
         if (config_.on_connect) {
             config_.on_connect(client_fd);
@@ -108,44 +110,67 @@ void TcpServer::handle_read(int fd) {
     if (it == clients_.end()) return;
 
     auto& state = it->second;
-    char buf[4096];
 
+    // EPOLLET: drain all available data until EAGAIN.
     while (true) {
-        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        // Ensure we have space to recv into.
+        if (state.writable() == 0) {
+            state.compact();
+            if (state.writable() == 0) {
+                // Buffer full after compact — double it.
+                state.recv_buf.resize(state.recv_buf.size() * 2);
+            }
+        }
+
+        ssize_t n = ::recv(fd, state.write_ptr(), state.writable(), 0);
         if (n > 0) {
-            state.recv_buf.insert(state.recv_buf.end(), buf, buf + n);
+            state.advance_write(static_cast<size_t>(n));
         } else if (n == 0) {
-            // Peer closed connection.
-            remove_client(fd);
-            return;
+            // Peer closed — process remaining data first, then disconnect.
+            break;
         } else {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-            // Real error — disconnect.
-            remove_client(fd);
-            return;
+            // Real error — process remaining data first, then disconnect.
+            break;
         }
     }
 
     // Process complete frames: [4-byte LE length][payload].
-    while (state.recv_buf.size() >= kHeaderSize) {
+    // Uses read cursor — no memmove per frame.
+    while (state.readable() >= kHeaderSize) {
         uint32_t payload_len = 0;
-        std::memcpy(&payload_len, state.recv_buf.data(), kHeaderSize);
+        std::memcpy(&payload_len, state.read_ptr(), kHeaderSize);
 
         if (payload_len > kMaxMessageSize) {
-            // Protocol violation — disconnect.
             remove_client(fd);
             return;
         }
 
         size_t frame_size = kHeaderSize + payload_len;
-        if (state.recv_buf.size() < frame_size) break;  // Incomplete frame.
-
-        if (config_.on_message) {
-            config_.on_message(fd, state.recv_buf.data() + kHeaderSize, payload_len);
+        if (state.readable() < frame_size) {
+            // Incomplete frame — ensure buffer can hold the full frame.
+            state.ensure_capacity(frame_size);
+            break;
         }
 
-        state.recv_buf.erase(state.recv_buf.begin(),
-                             state.recv_buf.begin() + static_cast<ptrdiff_t>(frame_size));
+        if (config_.on_message) {
+            config_.on_message(fd, state.read_ptr() + kHeaderSize, payload_len);
+        }
+
+        state.advance_read(frame_size);
+    }
+
+    // Compact if cursor is past midpoint to reclaim space.
+    state.compact();
+}
+
+// Drain any remaining data in the socket, process frames, then disconnect.
+void TcpServer::drain_and_remove_client(int fd) {
+    // Read any final data the peer sent before closing.
+    handle_read(fd);
+    // Now remove if still present (handle_read may have removed on protocol error).
+    if (clients_.find(fd) != clients_.end()) {
+        remove_client(fd);
     }
 }
 
@@ -179,13 +204,16 @@ int TcpServer::poll(int timeout_ms) {
             continue;
         }
 
-        if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-            remove_client(fd);
-            continue;
-        }
-
+        // Always attempt to read data first — even on EPOLLRDHUP/EPOLLHUP.
+        // The peer may have sent final data before closing.
         if (events[i].events & EPOLLIN) {
             handle_read(fd);
+        }
+
+        // After processing data, handle disconnect indicators.
+        if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+            drain_and_remove_client(fd);
+            continue;
         }
     }
 
