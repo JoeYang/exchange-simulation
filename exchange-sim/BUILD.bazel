@@ -7,3 +7,24 @@ cc_library(
     deps = ["//exchange-core:matching_engine"],
     visibility = ["//visibility:public"],
 )
+
+cc_library(
+    name = "exchange_simulator",
+    hdrs = ["exchange_simulator.h"],
+    deps = [
+        ":instrument_config",
+        "//exchange-core:matching_engine",
+        "//exchange-core:ohlcv",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "exchange_simulator_test",
+    srcs = ["exchange_simulator_test.cc"],
+    deps = [
+        ":exchange_simulator",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
