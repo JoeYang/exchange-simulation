@@ -502,6 +502,139 @@ public:
         return best;
     }
 
+    // execute_auction -- uncross the book at a single equilibrium price.
+    //
+    // Calculates the auction price using the reference price, then walks both
+    // sides of the book filling all matchable orders at that single price.
+    // Handles iceberg tranche reveals, removes fully-filled orders, and fires
+    // the full callback sequence: OrderFilled/PartiallyFilled, Trade,
+    // OrderBookAction (L3), DepthUpdate (L2), TopOfBook (L1).
+    //
+    // Convention: in auctions both sides are resting. We use the buy side as
+    // the "aggressor" in callbacks by convention.
+
+    void execute_auction(Price reference_price, Timestamp ts) {
+        AuctionResult result = calculate_auction_price(reference_price);
+        if (!result.has_price || result.matched_volume == 0) return;
+
+        Price auction_price = result.price;
+        Quantity remaining_to_fill = result.matched_volume;
+
+        // Walk bids from best (highest) and asks from best (lowest).
+        // All bids with price >= auction_price and all asks with
+        // price <= auction_price are matchable.
+        PriceLevel* bid_level = book_.best_bid();
+        PriceLevel* ask_level = book_.best_ask();
+
+        while (remaining_to_fill > 0 && bid_level && ask_level) {
+            if (bid_level->price < auction_price) break;
+            if (ask_level->price > auction_price) break;
+
+            Order* bid = bid_level->head;
+            Order* ask = ask_level->head;
+
+            while (remaining_to_fill > 0 && bid && ask) {
+                Quantity fill_qty = std::min({remaining_to_fill,
+                                              bid->remaining_quantity,
+                                              ask->remaining_quantity});
+
+                // Apply fill to both sides
+                bid->filled_quantity    += fill_qty;
+                bid->remaining_quantity -= fill_qty;
+                ask->filled_quantity    += fill_qty;
+                ask->remaining_quantity -= fill_qty;
+                remaining_to_fill       -= fill_qty;
+
+                // Update level totals
+                bid->level->total_quantity -= fill_qty;
+                ask->level->total_quantity -= fill_qty;
+
+                last_trade_price_ = auction_price;
+
+                // Fire order callbacks (buy side is aggressor by convention)
+                bool bid_done = (bid->remaining_quantity == 0 &&
+                                 !(bid->display_qty > 0 &&
+                                   bid->total_qty > bid->filled_quantity));
+                bool ask_done = (ask->remaining_quantity == 0 &&
+                                 !(ask->display_qty > 0 &&
+                                   ask->total_qty > ask->filled_quantity));
+
+                if (bid_done && ask_done) {
+                    order_listener_.on_order_filled(OrderFilled{
+                        bid->id, ask->id,
+                        auction_price, fill_qty, ts});
+                } else {
+                    Quantity bid_rem = bid->remaining_quantity;
+                    if (bid->display_qty > 0 &&
+                        bid->remaining_quantity == 0 &&
+                        bid->total_qty > bid->filled_quantity) {
+                        bid_rem = std::min(bid->display_qty,
+                                           bid->total_qty -
+                                               bid->filled_quantity);
+                    }
+                    Quantity ask_rem = ask->remaining_quantity;
+                    if (ask->display_qty > 0 &&
+                        ask->remaining_quantity == 0 &&
+                        ask->total_qty > ask->filled_quantity) {
+                        ask_rem = std::min(ask->display_qty,
+                                           ask->total_qty -
+                                               ask->filled_quantity);
+                    }
+                    order_listener_.on_order_partially_filled(
+                        OrderPartiallyFilled{
+                            bid->id, ask->id,
+                            auction_price, fill_qty,
+                            bid_rem, ask_rem, ts});
+                }
+
+                // Fire Trade
+                md_listener_.on_trade(Trade{
+                    auction_price, fill_qty,
+                    bid->id, ask->id,
+                    Side::Buy, ts});
+
+                // Fire L3 for both sides
+                md_listener_.on_order_book_action(OrderBookAction{
+                    bid->id, Side::Buy, auction_price,
+                    fill_qty, OrderBookAction::Fill, ts});
+                md_listener_.on_order_book_action(OrderBookAction{
+                    ask->id, Side::Sell, auction_price,
+                    fill_qty, OrderBookAction::Fill, ts});
+
+                // Advance pointers before cleanup
+                Order* next_bid = bid->next;
+                Order* next_ask = ask->next;
+
+                // Handle bid side cleanup
+                if (bid->remaining_quantity == 0) {
+                    bid = auction_handle_filled_order(bid, ts);
+                    if (!bid) bid = next_bid;
+                }
+                if (ask->remaining_quantity == 0) {
+                    ask = auction_handle_filled_order(ask, ts);
+                    if (!ask) ask = next_ask;
+                }
+            }
+
+            // Advance to next level if current is exhausted or not matchable
+            if (bid_level->order_count == 0 ||
+                bid_level->head == nullptr) {
+                bid_level = book_.best_bid();
+            } else if (bid_level->price < auction_price) {
+                bid_level = nullptr;
+            }
+            if (ask_level->order_count == 0 ||
+                ask_level->head == nullptr) {
+                ask_level = book_.best_ask();
+            } else if (ask_level->price > auction_price) {
+                ask_level = nullptr;
+            }
+        }
+
+        // Fire L2 for any modified levels and TopOfBook after all fills
+        fire_top_of_book(ts);
+    }
+
     // Status queries
 
     size_t active_order_count() const {
@@ -1084,6 +1217,59 @@ private:
             level = level->next;
         }
         return total;
+    }
+
+    // auction_handle_filled_order -- handle a fully-consumed visible tranche
+    // during auction execution. If the order is an iceberg with hidden qty
+    // remaining, reveal the next tranche and move to back of queue. Otherwise
+    // remove the order from the book entirely. Returns a pointer to the
+    // revealed order (still in book) or nullptr if the order was removed.
+
+    Order* auction_handle_filled_order(Order* order, Timestamp ts) {
+        if (order->display_qty > 0 &&
+            order->total_qty > order->filled_quantity) {
+            // Iceberg: reveal next tranche
+            Quantity next = std::min(order->display_qty,
+                                     order->total_qty -
+                                         order->filled_quantity);
+            order->remaining_quantity = next;
+
+            PriceLevel* lv = order->level;
+            list_remove(lv->head, lv->tail, order);
+            list_push_back(lv->head, lv->tail, order);
+            lv->total_quantity += next;
+
+            // Fire L3: new tranche appears
+            md_listener_.on_order_book_action(OrderBookAction{
+                order->id, order->side, order->price, next,
+                OrderBookAction::Add, ts});
+            // Fire L2
+            md_listener_.on_depth_update(DepthUpdate{
+                order->side, lv->price,
+                lv->total_quantity, lv->order_count,
+                DepthUpdate::Update, ts});
+            return order;
+        }
+
+        // Fully filled — remove from book
+        Side side = order->side;
+        Price price = order->price;
+        PriceLevel* freed = book_.remove_order(order);
+        if (freed) {
+            md_listener_.on_depth_update(DepthUpdate{
+                side, price, 0, 0, DepthUpdate::Remove, ts});
+            level_pool_.deallocate(freed);
+        } else {
+            PriceLevel* lv = find_level_by_price(side, price);
+            if (lv) {
+                md_listener_.on_depth_update(DepthUpdate{
+                    side, lv->price, lv->total_quantity,
+                    lv->order_count, DepthUpdate::Update, ts});
+            }
+        }
+        order_index_[order->id] = nullptr;
+        order_pool_.deallocate(order);
+        return nullptr;
     }
 
     // find_level_by_price -- linear search for a price level on a side
