@@ -346,6 +346,22 @@ public:
         return count;
     }
 
+    // Session state management
+
+    SessionState session_state() const { return current_state_; }
+
+    void set_session_state(SessionState new_state, Timestamp ts) {
+        SessionState old = current_state_;
+        if (old == new_state) return;  // no-op
+
+        if (!derived().on_session_transition(old, new_state, ts)) {
+            return;  // exchange blocked the transition
+        }
+
+        current_state_ = new_state;
+        md_listener_.on_market_status(MarketStatus{.state = new_state, .ts = ts});
+    }
+
     // Status queries
 
     size_t active_order_count() const {
@@ -361,6 +377,19 @@ public:
     }
 
     // CRTP hook defaults
+
+    // Called before state transition. Return false to block.
+    bool on_session_transition(SessionState /*old_state*/,
+                               SessionState /*new_state*/,
+                               Timestamp /*ts*/) {
+        return true;
+    }
+
+    // Called during new_order validation. Return false to reject order.
+    bool is_order_allowed_in_phase(const OrderRequest& /*req*/,
+                                   SessionState /*state*/) {
+        return true;  // default: all orders allowed in all phases
+    }
 
     bool on_validate_order(const OrderRequest&) { return true; }
     bool is_tif_valid(TimeInForce) { return true; }
@@ -581,15 +610,46 @@ private:
 
                 // Handle resting order removal/update + L2
                 if (resting_fully_filled) {
-                    PriceLevel* freed = book_.remove_order(resting);
-                    md_listener_.on_depth_update(DepthUpdate{
-                        resting->side, fill.price,
-                        0, 0, DepthUpdate::Remove, ts});
-                    if (freed) {
-                        level_pool_.deallocate(freed);
+                    // Check iceberg: visible tranche exhausted but
+                    // hidden quantity remains
+                    if (resting->display_qty > 0 &&
+                        resting->total_qty > resting->filled_quantity) {
+                        // Reveal next tranche
+                        Quantity next = std::min(
+                            resting->display_qty,
+                            resting->total_qty - resting->filled_quantity);
+                        resting->remaining_quantity = next;
+
+                        // Move to back of queue (loses time priority)
+                        PriceLevel* lv = resting->level;
+                        list_remove(lv->head, lv->tail, resting);
+                        list_push_back(lv->head, lv->tail, resting);
+                        lv->total_quantity += next;
+                        // order_count unchanged — order stays at level
+
+                        // Fire L3: new tranche appears
+                        md_listener_.on_order_book_action(OrderBookAction{
+                            resting->id, resting->side,
+                            resting->price, next,
+                            OrderBookAction::Add, ts});
+                        // Fire L2: level updated with revealed qty
+                        md_listener_.on_depth_update(DepthUpdate{
+                            resting->side, lv->price,
+                            lv->total_quantity, lv->order_count,
+                            DepthUpdate::Update, ts});
+                    } else {
+                        // Fully filled (non-iceberg or all tranches
+                        // consumed) — remove from book
+                        PriceLevel* freed = book_.remove_order(resting);
+                        md_listener_.on_depth_update(DepthUpdate{
+                            resting->side, fill.price,
+                            0, 0, DepthUpdate::Remove, ts});
+                        if (freed) {
+                            level_pool_.deallocate(freed);
+                        }
+                        order_index_[resting->id] = nullptr;
+                        order_pool_.deallocate(resting);
                     }
-                    order_index_[resting->id] = nullptr;
-                    order_pool_.deallocate(resting);
                 } else {
                     PriceLevel* lv = resting->level;
                     md_listener_.on_depth_update(DepthUpdate{

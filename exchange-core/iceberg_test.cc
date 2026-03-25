@@ -234,5 +234,294 @@ TEST_F(IcebergTest, NonIcebergTotalQtyEqualsQuantity) {
     EXPECT_EQ(o->display_qty, 0);
 }
 
+// ===========================================================================
+// 8. Iceberg fills one tranche, next tranche revealed, order at back of queue
+// ===========================================================================
+
+TEST_F(IcebergTest, IcebergTrancheRevealAfterFill) {
+    // Resting iceberg sell: total=30000, display=10000
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 30000, 10000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Aggressor buy consumes exactly the first tranche (10000)
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 10000, 2000));
+
+    // The iceberg should have revealed a new tranche
+    const Order* ice = engine_.lookup(1);
+    ASSERT_NE(ice, nullptr);
+    EXPECT_EQ(ice->remaining_quantity, 10000);  // second tranche
+    EXPECT_EQ(ice->filled_quantity, 10000);      // first tranche filled
+    EXPECT_EQ(ice->total_qty, 30000);
+}
+
+// ===========================================================================
+// 9. Iceberg fully fills (all tranches consumed), removed from book
+// ===========================================================================
+
+TEST_F(IcebergTest, IcebergFullyConsumedRemovedFromBook) {
+    // Resting iceberg sell: total=20000, display=10000 (2 tranches)
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 20000, 10000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Aggressor buy for 20000 — should consume both tranches
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 20000, 2000));
+
+    // Iceberg order should be gone from the book
+    const Order* ice = engine_.lookup(1);
+    EXPECT_EQ(ice, nullptr);
+
+    // Aggressor should be fully filled too (no remainder on book)
+    const Order* agg = engine_.lookup(2);
+    EXPECT_EQ(agg, nullptr);
+}
+
+// ===========================================================================
+// 10. Iceberg tranche reveal fires L3 Add and L2 Update callbacks
+// ===========================================================================
+
+TEST_F(IcebergTest, IcebergTrancheRevealFiresCallbacks) {
+    // Resting iceberg sell: total=30000, display=10000
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 30000, 10000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Aggressor consumes first tranche
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 10000, 2000));
+
+    // Walk MD events to find the L3 Add for the revealed tranche and
+    // the L2 Update reflecting it.
+    // Expected MD sequence for the fill + reveal:
+    //   Trade, L3 Fill (resting), L3 Add (tranche reveal),
+    //   L2 Update (level), L1 TopOfBook
+    bool found_l3_add = false;
+    bool found_l2_update = false;
+    for (size_t i = 0; i < md_listener_.size(); ++i) {
+        auto& ev = md_listener_.events()[i];
+        if (std::holds_alternative<OrderBookAction>(ev)) {
+            auto& oba = std::get<OrderBookAction>(ev);
+            if (oba.action == OrderBookAction::Add &&
+                oba.id == 1 && oba.qty == 10000) {
+                found_l3_add = true;
+            }
+        }
+        if (std::holds_alternative<DepthUpdate>(ev)) {
+            auto& du = std::get<DepthUpdate>(ev);
+            if (du.action == DepthUpdate::Update &&
+                du.side == Side::Sell && du.price == 1000 &&
+                du.total_qty == 10000) {
+                found_l2_update = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_l3_add) << "Expected L3 OrderBookAction(Add) for revealed tranche";
+    EXPECT_TRUE(found_l2_update) << "Expected L2 DepthUpdate(Update) after tranche reveal";
+}
+
+// ===========================================================================
+// 11. Iceberg loses priority on reveal: other orders at same level fill first
+// ===========================================================================
+
+TEST_F(IcebergTest, IcebergLosesPriorityOnReveal) {
+    // Order A: iceberg sell, total=20000, display=10000 (arrives first)
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 20000, 10000, 1000));
+    // Order B: plain sell 10000 (arrives second)
+    engine_.new_order(make_limit(101, Side::Sell, 1000, 10000, 2000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy 10000 — should fill iceberg's first tranche (FIFO, it arrived first)
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 10000, 3000));
+
+    // Iceberg reveals second tranche and goes to back of queue.
+    // Now order B should be ahead of the iceberg's second tranche.
+    const Order* ice = engine_.lookup(1);
+    const Order* plain = engine_.lookup(2);
+    ASSERT_NE(ice, nullptr);
+    ASSERT_NE(plain, nullptr);
+    EXPECT_EQ(ice->remaining_quantity, 10000);  // revealed second tranche
+    EXPECT_EQ(plain->remaining_quantity, 10000); // untouched
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy another 10000 — should fill order B (now at front), not the iceberg
+    engine_.new_order(make_limit(300, Side::Buy, 1000, 10000, 4000));
+
+    // Order B should be gone (filled)
+    const Order* plain_after = engine_.lookup(2);
+    EXPECT_EQ(plain_after, nullptr);
+
+    // Iceberg should still be resting with second tranche
+    const Order* ice_after = engine_.lookup(1);
+    ASSERT_NE(ice_after, nullptr);
+    EXPECT_EQ(ice_after->remaining_quantity, 10000);
+    EXPECT_EQ(ice_after->filled_quantity, 10000);  // only first tranche filled
+}
+
+// ===========================================================================
+// 12. Multiple iceberg orders at same price level
+// ===========================================================================
+
+TEST_F(IcebergTest, MultipleIcebergsAtSameLevel) {
+    // Iceberg A: total=20000, display=10000
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 20000, 10000, 1000));
+    // Iceberg B: total=20000, display=10000
+    engine_.new_order(make_iceberg(101, Side::Sell, 1000, 20000, 10000, 2000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy 10000 — fills iceberg A's first tranche (FIFO)
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 10000, 3000));
+
+    // A reveals second tranche at back; B is now first in queue
+    const Order* a = engine_.lookup(1);
+    const Order* b = engine_.lookup(2);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(a->filled_quantity, 10000);
+    EXPECT_EQ(a->remaining_quantity, 10000);
+    EXPECT_EQ(b->filled_quantity, 0);
+    EXPECT_EQ(b->remaining_quantity, 10000);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy 10000 — fills iceberg B's first tranche (now first in queue)
+    engine_.new_order(make_limit(300, Side::Buy, 1000, 10000, 4000));
+
+    a = engine_.lookup(1);
+    b = engine_.lookup(2);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    // B reveals second tranche at back; A's second tranche is now first
+    EXPECT_EQ(a->filled_quantity, 10000);
+    EXPECT_EQ(a->remaining_quantity, 10000);
+    EXPECT_EQ(b->filled_quantity, 10000);
+    EXPECT_EQ(b->remaining_quantity, 10000);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy 10000 — fills A's second tranche (now first in queue)
+    engine_.new_order(make_limit(400, Side::Buy, 1000, 10000, 5000));
+
+    // A should be fully consumed (20000 total filled)
+    a = engine_.lookup(1);
+    EXPECT_EQ(a, nullptr);
+
+    // B still has its second tranche
+    b = engine_.lookup(2);
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(b->filled_quantity, 10000);
+    EXPECT_EQ(b->remaining_quantity, 10000);
+}
+
+// ===========================================================================
+// 13. Non-iceberg behavior unchanged (regression)
+// ===========================================================================
+
+TEST_F(IcebergTest, NonIcebergRegressionFullFill) {
+    // Resting plain sell
+    engine_.new_order(make_limit(100, Side::Sell, 1000, 20000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Aggressor buy consumes it entirely
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 20000, 2000));
+
+    // Resting order gone
+    const Order* rest = engine_.lookup(1);
+    EXPECT_EQ(rest, nullptr);
+
+    // Aggressor also fully filled
+    const Order* agg = engine_.lookup(2);
+    EXPECT_EQ(agg, nullptr);
+
+    // Should see OrderFilled for aggressor
+    bool found_fill = false;
+    for (auto& ev : order_listener_.events()) {
+        if (std::holds_alternative<OrderFilled>(ev)) {
+            found_fill = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_fill);
+}
+
+TEST_F(IcebergTest, NonIcebergRegressionPartialFill) {
+    // Resting plain sell
+    engine_.new_order(make_limit(100, Side::Sell, 1000, 30000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Aggressor buy takes part of it
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 10000, 2000));
+
+    // Resting order still present with remainder
+    const Order* rest = engine_.lookup(1);
+    ASSERT_NE(rest, nullptr);
+    EXPECT_EQ(rest->remaining_quantity, 20000);
+    EXPECT_EQ(rest->filled_quantity, 10000);
+    EXPECT_EQ(rest->display_qty, 0);  // not an iceberg
+}
+
+// ===========================================================================
+// 14. Iceberg last tranche is smaller than display_qty
+// ===========================================================================
+
+TEST_F(IcebergTest, IcebergLastTrancheSmaller) {
+    // total=30000, display=20000 — first tranche=20000, second=10000
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 30000, 20000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy 20000 — fills first tranche
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 20000, 2000));
+
+    const Order* ice = engine_.lookup(1);
+    ASSERT_NE(ice, nullptr);
+    // Last tranche should be min(20000, 30000-20000) = 10000
+    EXPECT_EQ(ice->remaining_quantity, 10000);
+    EXPECT_EQ(ice->filled_quantity, 20000);
+
+    // Verify the L3 Add callback shows the smaller tranche size
+    bool found_add = false;
+    for (size_t i = 0; i < md_listener_.size(); ++i) {
+        auto& ev = md_listener_.events()[i];
+        if (std::holds_alternative<OrderBookAction>(ev)) {
+            auto& oba = std::get<OrderBookAction>(ev);
+            if (oba.action == OrderBookAction::Add && oba.id == 1) {
+                EXPECT_EQ(oba.qty, 10000);
+                found_add = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_add);
+}
+
+// ===========================================================================
+// 15. Large aggressor fills multiple iceberg tranches in one match
+// ===========================================================================
+
+TEST_F(IcebergTest, AggressorFillsMultipleIcebergTranches) {
+    // Resting iceberg: total=30000, display=10000 (3 tranches)
+    engine_.new_order(make_iceberg(100, Side::Sell, 1000, 30000, 10000, 1000));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Buy 30000 — should consume all 3 tranches
+    engine_.new_order(make_limit(200, Side::Buy, 1000, 30000, 2000));
+
+    // Iceberg fully consumed
+    const Order* ice = engine_.lookup(1);
+    EXPECT_EQ(ice, nullptr);
+
+    // Aggressor also fully filled
+    const Order* agg = engine_.lookup(2);
+    EXPECT_EQ(agg, nullptr);
+}
+
 }  // namespace
 }  // namespace exchange
