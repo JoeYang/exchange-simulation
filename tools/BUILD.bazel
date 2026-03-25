@@ -67,6 +67,19 @@ cc_binary(
     visibility = ["//visibility:public"],
 )
 
+# --- Task 19: UDP Multicast ---
+cc_library(
+    name = "udp_multicast",
+    hdrs = ["udp_multicast.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "udp_multicast_test",
+    srcs = ["udp_multicast_test.cc"],
+    deps = [":udp_multicast", "@googletest//:gtest_main"],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
