@@ -1,0 +1,9 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "instrument_config",
+    hdrs = ["instrument_config.h"],
+    deps = ["//exchange-core:matching_engine"],
+    visibility = ["//visibility:public"],
+)
