@@ -1,0 +1,27 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "cme_exchange",
+    hdrs = ["cme_exchange.h"],
+    deps = ["//exchange-core:matching_engine"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "cme_products",
+    hdrs = ["cme_products.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "cme_exchange_test",
+    srcs = ["cme_exchange_test.cc"],
+    deps = [
+        ":cme_exchange",
+        ":cme_products",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
