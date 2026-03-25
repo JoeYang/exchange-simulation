@@ -635,6 +635,26 @@ public:
         fire_top_of_book(ts);
     }
 
+    // publish_indicative_price -- calculate and broadcast the indicative
+    // auction price during collection phases (PreOpen, PreClose, etc.).
+    //
+    // Called by the exchange implementation at its discretion (e.g. after
+    // every order in PreOpen, or on a timer). The engine itself never calls
+    // this automatically.
+
+    void publish_indicative_price(Price reference_price, Timestamp ts) {
+        AuctionResult result = calculate_auction_price(reference_price);
+        if (result.has_price) {
+            md_listener_.on_indicative_price(IndicativePrice{
+                .price = result.price,
+                .matched_volume = result.matched_volume,
+                .buy_surplus = result.buy_surplus,
+                .sell_surplus = result.sell_surplus,
+                .ts = ts,
+            });
+        }
+    }
+
     // Status queries
 
     size_t active_order_count() const {

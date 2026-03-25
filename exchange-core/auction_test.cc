@@ -723,5 +723,109 @@ TEST_F(AuctionTest, ExecuteAuction_NoCrossing_NoOp) {
     EXPECT_EQ(engine_.active_order_count(), 2u);
 }
 
+// ===========================================================================
+// C3 Tests: Indicative Price (publish_indicative_price)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// C3-1: Publish indicative price during PreOpen
+// ---------------------------------------------------------------------------
+
+TEST_F(AuctionTest, PublishIndicativePrice_DuringPreOpen) {
+    add_limit(Side::Buy,  1010000, 20000);
+    add_limit(Side::Sell, 1000000, 10000);
+
+    md_listener_.clear();
+
+    engine_.publish_indicative_price(1005000, 10000);
+
+    bool found_indicative = false;
+    for (const auto& ev : md_listener_.events()) {
+        if (std::holds_alternative<IndicativePrice>(ev)) {
+            const auto& ip = std::get<IndicativePrice>(ev);
+            EXPECT_EQ(ip.matched_volume, 10000);
+            EXPECT_EQ(ip.ts, 10000);
+            found_indicative = true;
+        }
+    }
+    EXPECT_TRUE(found_indicative);
+}
+
+// ---------------------------------------------------------------------------
+// C3-2: Indicative price updates as orders are added
+// ---------------------------------------------------------------------------
+
+TEST_F(AuctionTest, PublishIndicativePrice_UpdatesWithNewOrders) {
+    add_limit(Side::Buy,  1000000, 10000);
+    add_limit(Side::Sell, 1000000, 10000);
+
+    md_listener_.clear();
+    engine_.publish_indicative_price(1000000, 11000);
+
+    // First indicative: matched=10000
+    ASSERT_GE(md_listener_.size(), 1u);
+    {
+        const auto& ip = std::get<IndicativePrice>(md_listener_.events()[0]);
+        EXPECT_EQ(ip.matched_volume, 10000);
+    }
+
+    // Add more sell qty
+    add_limit(Side::Sell, 1000000, 20000);
+
+    md_listener_.clear();
+    engine_.publish_indicative_price(1000000, 12000);
+
+    // Now matched = min(10000, 30000) = 10000 still, but sell_surplus changed
+    ASSERT_GE(md_listener_.size(), 1u);
+    {
+        const auto& ip = std::get<IndicativePrice>(md_listener_.events()[0]);
+        EXPECT_EQ(ip.matched_volume, 10000);
+        EXPECT_EQ(ip.sell_surplus, 20000);  // 30000 - 10000
+    }
+
+    // Add more buy qty to increase matched volume
+    add_limit(Side::Buy, 1000000, 20000);
+
+    md_listener_.clear();
+    engine_.publish_indicative_price(1000000, 13000);
+
+    {
+        const auto& ip = std::get<IndicativePrice>(md_listener_.events()[0]);
+        EXPECT_EQ(ip.matched_volume, 30000);  // min(30000, 30000)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C3-3: No crossing — indicative price not published
+// ---------------------------------------------------------------------------
+
+TEST_F(AuctionTest, PublishIndicativePrice_NoCrossing_NoEvent) {
+    add_limit(Side::Buy,   980000, 10000);
+    add_limit(Side::Sell, 1000000, 10000);
+
+    md_listener_.clear();
+    engine_.publish_indicative_price(990000, 14000);
+
+    bool found_indicative = false;
+    for (const auto& ev : md_listener_.events()) {
+        if (std::holds_alternative<IndicativePrice>(ev))
+            found_indicative = true;
+    }
+    EXPECT_FALSE(found_indicative);
+}
+
+// ---------------------------------------------------------------------------
+// C3-4: Indicative price is read-only — book unchanged after call
+// ---------------------------------------------------------------------------
+
+TEST_F(AuctionTest, PublishIndicativePrice_NoSideEffects) {
+    add_limit(Side::Buy,  1010000, 20000);
+    add_limit(Side::Sell, 1000000, 10000);
+
+    size_t before = engine_.active_order_count();
+    engine_.publish_indicative_price(1005000, 15000);
+    EXPECT_EQ(engine_.active_order_count(), before);
+}
+
 }  // namespace
 }  // namespace exchange
