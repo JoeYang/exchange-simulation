@@ -38,6 +38,8 @@ public:
     void on_depth_update(const DepthUpdate& e) { events_.emplace_back(e); }
     void on_order_book_action(const OrderBookAction& e) { events_.emplace_back(e); }
     void on_trade(const Trade& e) { events_.emplace_back(e); }
+    void on_market_status(const MarketStatus& e) { events_.emplace_back(e); }
+    void on_indicative_price(const IndicativePrice& e) { events_.emplace_back(e); }
 
     const std::vector<RecordedEvent>& events() const { return events_; }
     size_t size() const { return events_.size(); }

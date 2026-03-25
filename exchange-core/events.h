@@ -101,4 +101,19 @@ struct Trade {
     Timestamp ts;
 };
 
+// --- Session state events (Phase 2, Section 1.4 / 2.4) ---
+
+struct MarketStatus {
+    SessionState state{};
+    Timestamp    ts{};
+};
+
+struct IndicativePrice {
+    Price    price{};
+    Quantity matched_volume{};
+    Quantity buy_surplus{};
+    Quantity sell_surplus{};
+    Timestamp ts{};
+};
+
 }  // namespace exchange

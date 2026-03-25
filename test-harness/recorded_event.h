@@ -21,7 +21,9 @@ using RecordedEvent = std::variant<
     TopOfBook,
     DepthUpdate,
     OrderBookAction,
-    Trade
+    Trade,
+    MarketStatus,
+    IndicativePrice
 >;
 
 // Equality comparisons for all event types.
@@ -38,6 +40,8 @@ bool operator==(const TopOfBook& a, const TopOfBook& b);
 bool operator==(const DepthUpdate& a, const DepthUpdate& b);
 bool operator==(const OrderBookAction& a, const OrderBookAction& b);
 bool operator==(const Trade& a, const Trade& b);
+bool operator==(const MarketStatus& a, const MarketStatus& b);
+bool operator==(const IndicativePrice& a, const IndicativePrice& b);
 
 // Human-readable string representation for test assertion diffs.
 // Format: TypeName{field=value, ...}

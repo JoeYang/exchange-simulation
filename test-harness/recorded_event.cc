@@ -99,6 +99,19 @@ bool operator==(const Trade& a, const Trade& b) {
            a.ts == b.ts;
 }
 
+bool operator==(const MarketStatus& a, const MarketStatus& b) {
+    return a.state == b.state &&
+           a.ts == b.ts;
+}
+
+bool operator==(const IndicativePrice& a, const IndicativePrice& b) {
+    return a.price == b.price &&
+           a.matched_volume == b.matched_volume &&
+           a.buy_surplus == b.buy_surplus &&
+           a.sell_surplus == b.sell_surplus &&
+           a.ts == b.ts;
+}
+
 // --- to_string helpers ---
 
 namespace {
@@ -128,15 +141,30 @@ const char* book_action_str(OrderBookAction::Action a) {
 
 const char* reject_reason_str(RejectReason r) {
     switch (r) {
-        case RejectReason::PoolExhausted:       return "PoolExhausted";
-        case RejectReason::InvalidPrice:        return "InvalidPrice";
-        case RejectReason::InvalidQuantity:     return "InvalidQuantity";
-        case RejectReason::InvalidTif:          return "InvalidTif";
-        case RejectReason::InvalidSide:         return "InvalidSide";
-        case RejectReason::UnknownOrder:        return "UnknownOrder";
-        case RejectReason::PriceBandViolation:  return "PriceBandViolation";
-        case RejectReason::LevelPoolExhausted:  return "LevelPoolExhausted";
-        case RejectReason::ExchangeSpecific:    return "ExchangeSpecific";
+        case RejectReason::PoolExhausted:         return "PoolExhausted";
+        case RejectReason::InvalidPrice:          return "InvalidPrice";
+        case RejectReason::InvalidQuantity:       return "InvalidQuantity";
+        case RejectReason::InvalidTif:            return "InvalidTif";
+        case RejectReason::InvalidSide:           return "InvalidSide";
+        case RejectReason::UnknownOrder:          return "UnknownOrder";
+        case RejectReason::PriceBandViolation:    return "PriceBandViolation";
+        case RejectReason::LevelPoolExhausted:    return "LevelPoolExhausted";
+        case RejectReason::MaxOrderSizeExceeded:  return "MaxOrderSizeExceeded";
+        case RejectReason::ExchangeSpecific:      return "ExchangeSpecific";
+    }
+    return "Unknown";
+}
+
+const char* session_state_str(SessionState s) {
+    switch (s) {
+        case SessionState::Closed:            return "Closed";
+        case SessionState::PreOpen:           return "PreOpen";
+        case SessionState::OpeningAuction:    return "OpeningAuction";
+        case SessionState::Continuous:        return "Continuous";
+        case SessionState::PreClose:          return "PreClose";
+        case SessionState::ClosingAuction:    return "ClosingAuction";
+        case SessionState::Halt:              return "Halt";
+        case SessionState::VolatilityAuction: return "VolatilityAuction";
     }
     return "Unknown";
 }
@@ -149,6 +177,7 @@ const char* cancel_reason_str(CancelReason r) {
         case CancelReason::Expired:             return "Expired";
         case CancelReason::SelfMatchPrevention: return "SelfMatchPrevention";
         case CancelReason::LevelPoolExhausted:  return "LevelPoolExhausted";
+        case CancelReason::MassCancelled:       return "MassCancelled";
     }
     return "Unknown";
 }
@@ -229,6 +258,15 @@ std::string to_string(const RecordedEvent& event) {
                    ", price=" + std::to_string(e.price) +
                    ", qty=" + std::to_string(e.quantity) +
                    ", side=" + std::string(side_str(e.aggressor_side)) +
+                   ", ts=" + std::to_string(e.ts) + "}";
+        } else if constexpr (std::is_same_v<T, MarketStatus>) {
+            return "MarketStatus{state=" + std::string(session_state_str(e.state)) +
+                   ", ts=" + std::to_string(e.ts) + "}";
+        } else if constexpr (std::is_same_v<T, IndicativePrice>) {
+            return "IndicativePrice{price=" + std::to_string(e.price) +
+                   ", matched_vol=" + std::to_string(e.matched_volume) +
+                   ", buy_surplus=" + std::to_string(e.buy_surplus) +
+                   ", sell_surplus=" + std::to_string(e.sell_surplus) +
                    ", ts=" + std::to_string(e.ts) + "}";
         }
     }, event);

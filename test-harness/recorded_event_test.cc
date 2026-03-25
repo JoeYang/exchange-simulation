@@ -355,5 +355,106 @@ TEST(RecordedEventTest, ToStringTopOfBookFormat) {
     EXPECT_NE(s.find("ts=500"), std::string::npos);
 }
 
+// --- MarketStatus RecordedEvent ---
+
+TEST(RecordedEventTest, ConstructFromMarketStatus) {
+    MarketStatus e{.state = SessionState::Continuous, .ts = 5000};
+    RecordedEvent ev = e;
+    EXPECT_EQ(ev.index(), 12u);
+    EXPECT_TRUE(std::holds_alternative<MarketStatus>(ev));
+}
+
+TEST(RecordedEventTest, EqualityMarketStatus) {
+    RecordedEvent a = MarketStatus{.state = SessionState::PreOpen, .ts = 1000};
+    RecordedEvent b = MarketStatus{.state = SessionState::PreOpen, .ts = 1000};
+    EXPECT_EQ(a, b);
+}
+
+TEST(RecordedEventTest, InequalityMarketStatusDifferentState) {
+    RecordedEvent a = MarketStatus{.state = SessionState::PreOpen,   .ts = 1000};
+    RecordedEvent b = MarketStatus{.state = SessionState::Continuous, .ts = 1000};
+    EXPECT_NE(a, b);
+}
+
+TEST(RecordedEventTest, InequalityMarketStatusDifferentTs) {
+    RecordedEvent a = MarketStatus{.state = SessionState::Continuous, .ts = 1000};
+    RecordedEvent b = MarketStatus{.state = SessionState::Continuous, .ts = 2000};
+    EXPECT_NE(a, b);
+}
+
+TEST(RecordedEventTest, ToStringMarketStatus) {
+    RecordedEvent ev = MarketStatus{.state = SessionState::Continuous, .ts = 5000};
+    std::string s = to_string(ev);
+    EXPECT_FALSE(s.empty());
+    EXPECT_NE(s.find("MarketStatus"), std::string::npos);
+    EXPECT_NE(s.find("Continuous"), std::string::npos);
+    EXPECT_NE(s.find("5000"), std::string::npos);
+}
+
+TEST(RecordedEventTest, ToStringMarketStatusAllStates) {
+    // Spot-check that every SessionState name appears correctly in to_string output.
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::Closed,            .ts = 0}}).find("Closed"),            std::string::npos);
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::PreOpen,           .ts = 0}}).find("PreOpen"),           std::string::npos);
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::OpeningAuction,    .ts = 0}}).find("OpeningAuction"),    std::string::npos);
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::PreClose,          .ts = 0}}).find("PreClose"),          std::string::npos);
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::ClosingAuction,    .ts = 0}}).find("ClosingAuction"),    std::string::npos);
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::Halt,              .ts = 0}}).find("Halt"),              std::string::npos);
+    EXPECT_NE(to_string(RecordedEvent{MarketStatus{.state = SessionState::VolatilityAuction, .ts = 0}}).find("VolatilityAuction"), std::string::npos);
+}
+
+// --- IndicativePrice RecordedEvent ---
+
+TEST(RecordedEventTest, ConstructFromIndicativePrice) {
+    IndicativePrice e{.price = 1005000, .matched_volume = 50000,
+                      .buy_surplus = 10000, .sell_surplus = 0, .ts = 9000};
+    RecordedEvent ev = e;
+    EXPECT_EQ(ev.index(), 13u);
+    EXPECT_TRUE(std::holds_alternative<IndicativePrice>(ev));
+}
+
+TEST(RecordedEventTest, EqualityIndicativePrice) {
+    IndicativePrice e{.price = 1005000, .matched_volume = 50000,
+                      .buy_surplus = 10000, .sell_surplus = 0, .ts = 9000};
+    RecordedEvent a = e;
+    RecordedEvent b = e;
+    EXPECT_EQ(a, b);
+}
+
+TEST(RecordedEventTest, InequalityIndicativePriceDifferentPrice) {
+    RecordedEvent a = IndicativePrice{.price = 1005000, .matched_volume = 50000,
+                                      .buy_surplus = 0, .sell_surplus = 0, .ts = 1000};
+    RecordedEvent b = IndicativePrice{.price = 1006000, .matched_volume = 50000,
+                                      .buy_surplus = 0, .sell_surplus = 0, .ts = 1000};
+    EXPECT_NE(a, b);
+}
+
+TEST(RecordedEventTest, InequalityIndicativePriceDifferentSurplus) {
+    RecordedEvent a = IndicativePrice{.price = 1005000, .matched_volume = 50000,
+                                      .buy_surplus = 5000, .sell_surplus = 0, .ts = 1000};
+    RecordedEvent b = IndicativePrice{.price = 1005000, .matched_volume = 50000,
+                                      .buy_surplus = 0, .sell_surplus = 5000, .ts = 1000};
+    EXPECT_NE(a, b);
+}
+
+TEST(RecordedEventTest, ToStringIndicativePrice) {
+    RecordedEvent ev = IndicativePrice{.price = 1005000, .matched_volume = 50000,
+                                       .buy_surplus = 10000, .sell_surplus = 0, .ts = 9000};
+    std::string s = to_string(ev);
+    EXPECT_FALSE(s.empty());
+    EXPECT_NE(s.find("IndicativePrice"), std::string::npos);
+    EXPECT_NE(s.find("1005000"), std::string::npos);
+    EXPECT_NE(s.find("50000"), std::string::npos);
+    EXPECT_NE(s.find("9000"), std::string::npos);
+}
+
+// --- MarketStatus and IndicativePrice are distinct types ---
+
+TEST(RecordedEventTest, InequalityMarketStatusVsIndicativePrice) {
+    RecordedEvent a = MarketStatus{.state = SessionState::Continuous, .ts = 1000};
+    RecordedEvent b = IndicativePrice{.price = 0, .matched_volume = 0,
+                                      .buy_surplus = 0, .sell_surplus = 0, .ts = 1000};
+    EXPECT_NE(a, b);
+}
+
 }  // namespace
 }  // namespace exchange

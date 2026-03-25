@@ -34,11 +34,15 @@ struct CountingMdListener : MarketDataListenerBase {
     int depth_update_count{0};
     int order_book_action_count{0};
     int trade_count{0};
+    int market_status_count{0};
+    int indicative_price_count{0};
 
     void on_top_of_book(const TopOfBook&) { ++top_of_book_count; }
     void on_depth_update(const DepthUpdate&) { ++depth_update_count; }
     void on_order_book_action(const OrderBookAction&) { ++order_book_action_count; }
     void on_trade(const Trade&) { ++trade_count; }
+    void on_market_status(const MarketStatus&) { ++market_status_count; }
+    void on_indicative_price(const IndicativePrice&) { ++indicative_price_count; }
 };
 
 // A listener that only overrides on_order_filled — used to test independent dispatch.
@@ -198,11 +202,15 @@ TEST(CompositeMdListenerTest, SingleListenerForwardsAllEvents) {
     composite.on_depth_update(DepthUpdate{});
     composite.on_order_book_action(OrderBookAction{});
     composite.on_trade(Trade{});
+    composite.on_market_status(MarketStatus{});
+    composite.on_indicative_price(IndicativePrice{});
 
     EXPECT_EQ(a.top_of_book_count, 1);
     EXPECT_EQ(a.depth_update_count, 1);
     EXPECT_EQ(a.order_book_action_count, 1);
     EXPECT_EQ(a.trade_count, 1);
+    EXPECT_EQ(a.market_status_count, 1);
+    EXPECT_EQ(a.indicative_price_count, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,15 +235,21 @@ TEST(CompositeMdListenerTest, TwoListenersBothReceiveAllEvents) {
     composite.on_depth_update(DepthUpdate{});
     composite.on_order_book_action(OrderBookAction{});
     composite.on_trade(Trade{});
+    composite.on_market_status(MarketStatus{});
+    composite.on_indicative_price(IndicativePrice{});
 
     EXPECT_EQ(a.top_of_book_count, 1);
     EXPECT_EQ(a.depth_update_count, 1);
     EXPECT_EQ(a.order_book_action_count, 1);
     EXPECT_EQ(a.trade_count, 1);
+    EXPECT_EQ(a.market_status_count, 1);
+    EXPECT_EQ(a.indicative_price_count, 1);
     EXPECT_EQ(b.top_of_book_count, 1);
     EXPECT_EQ(b.depth_update_count, 1);
     EXPECT_EQ(b.order_book_action_count, 1);
     EXPECT_EQ(b.trade_count, 1);
+    EXPECT_EQ(b.market_status_count, 1);
+    EXPECT_EQ(b.indicative_price_count, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +302,34 @@ TEST(CompositeMdListenerTest, EmptyCompositeCompileAndNocrash) {
     composite.on_depth_update(DepthUpdate{});
     composite.on_order_book_action(OrderBookAction{});
     composite.on_trade(Trade{});
+    composite.on_market_status(MarketStatus{});
+    composite.on_indicative_price(IndicativePrice{});
+}
+
+// ---------------------------------------------------------------------------
+// CompositeMdListener — MarketStatus and IndicativePrice fan-out
+// ---------------------------------------------------------------------------
+
+TEST(CompositeMdListenerTest, TwoListenersBothReceiveMarketStatus) {
+    CountingMdListener a, b;
+    CompositeMdListener<CountingMdListener, CountingMdListener> composite(&a, &b);
+
+    composite.on_market_status(MarketStatus{.state = SessionState::PreOpen, .ts = 1000});
+    composite.on_market_status(MarketStatus{.state = SessionState::Continuous, .ts = 2000});
+
+    EXPECT_EQ(a.market_status_count, 2);
+    EXPECT_EQ(b.market_status_count, 2);
+}
+
+TEST(CompositeMdListenerTest, TwoListenersBothReceiveIndicativePrice) {
+    CountingMdListener a, b;
+    CompositeMdListener<CountingMdListener, CountingMdListener> composite(&a, &b);
+
+    composite.on_indicative_price(IndicativePrice{.price = 1005000, .matched_volume = 50000,
+                                                   .buy_surplus = 0, .sell_surplus = 0, .ts = 3000});
+
+    EXPECT_EQ(a.indicative_price_count, 1);
+    EXPECT_EQ(b.indicative_price_count, 1);
 }
 
 // ---------------------------------------------------------------------------

@@ -46,8 +46,9 @@ const char* reject_reason_to_journal(RejectReason r) {
         case RejectReason::InvalidSide:        return "INVALID_SIDE";
         case RejectReason::UnknownOrder:       return "UNKNOWN_ORDER";
         case RejectReason::PriceBandViolation: return "PRICE_BAND_VIOLATION";
-        case RejectReason::LevelPoolExhausted: return "LEVEL_POOL_EXHAUSTED";
-        case RejectReason::ExchangeSpecific:   return "EXCHANGE_SPECIFIC";
+        case RejectReason::LevelPoolExhausted:   return "LEVEL_POOL_EXHAUSTED";
+        case RejectReason::MaxOrderSizeExceeded: return "MAX_ORDER_SIZE_EXCEEDED";
+        case RejectReason::ExchangeSpecific:     return "EXCHANGE_SPECIFIC";
     }
     return "UNKNOWN";
 }
@@ -60,6 +61,7 @@ const char* cancel_reason_to_journal(CancelReason r) {
         case CancelReason::Expired:             return "EXPIRED";
         case CancelReason::SelfMatchPrevention: return "SELF_MATCH_PREVENTION";
         case CancelReason::LevelPoolExhausted:  return "LEVEL_POOL_EXHAUSTED";
+        case CancelReason::MassCancelled:       return "MASS_CANCELLED";
     }
     return "UNKNOWN";
 }

@@ -27,6 +27,8 @@ TEST(ListenersTest, MarketDataListenerBaseNoOps) {
     listener.on_depth_update(DepthUpdate{});
     listener.on_order_book_action(OrderBookAction{});
     listener.on_trade(Trade{});
+    listener.on_market_status(MarketStatus{});
+    listener.on_indicative_price(IndicativePrice{});
 }
 
 // Verify a derived class can override individual methods by name hiding.
@@ -79,6 +81,8 @@ TEST(ListenersTest, DerivedMdListenerOverrideByNameHiding) {
     listener.on_top_of_book(TopOfBook{});
     listener.on_depth_update(DepthUpdate{});
     listener.on_order_book_action(OrderBookAction{});
+    listener.on_market_status(MarketStatus{});
+    listener.on_indicative_price(IndicativePrice{});
 
     EXPECT_EQ(listener.trade_count, 1);
 }

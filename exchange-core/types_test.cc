@@ -210,5 +210,34 @@ TEST(TypesTest, PriceRepresentation) {
     EXPECT_EQ(p % PRICE_SCALE, 5000);
 }
 
+TEST(TypesTest, SessionStateEnumCoversAllValues) {
+    auto check = [](SessionState s) {
+        switch (s) {
+            case SessionState::Closed:            return;
+            case SessionState::PreOpen:           return;
+            case SessionState::OpeningAuction:    return;
+            case SessionState::Continuous:        return;
+            case SessionState::PreClose:          return;
+            case SessionState::ClosingAuction:    return;
+            case SessionState::Halt:              return;
+            case SessionState::VolatilityAuction: return;
+        }
+    };
+    check(SessionState::Closed);
+    check(SessionState::PreOpen);
+    check(SessionState::OpeningAuction);
+    check(SessionState::Continuous);
+    check(SessionState::PreClose);
+    check(SessionState::ClosingAuction);
+    check(SessionState::Halt);
+    check(SessionState::VolatilityAuction);
+}
+
+TEST(TypesTest, SessionStateUnderlyingType) {
+    // Verify the underlying type is uint8_t (space-efficient for network protocols).
+    static_assert(sizeof(SessionState) == sizeof(uint8_t),
+                  "SessionState must fit in one byte");
+}
+
 }  // namespace
 }  // namespace exchange

@@ -76,6 +76,12 @@ public:
     void on_trade(const Trade& e) {
         std::apply([&](auto*... l) { (l->on_trade(e), ...); }, listeners_);
     }
+    void on_market_status(const MarketStatus& e) {
+        std::apply([&](auto*... l) { (l->on_market_status(e), ...); }, listeners_);
+    }
+    void on_indicative_price(const IndicativePrice& e) {
+        std::apply([&](auto*... l) { (l->on_indicative_price(e), ...); }, listeners_);
+    }
 };
 
 }  // namespace exchange

@@ -279,5 +279,60 @@ TEST(RecordingListenerEqualityTest, InequalityDifferentEventTypes) {
     EXPECT_NE(order_listener.events()[0], md_listener.events()[0]);
 }
 
+// --- RecordingMdListener: MarketStatus and IndicativePrice ---
+
+TEST(RecordingMdListenerTest, RecordMarketStatus) {
+    RecordingMdListener listener;
+    MarketStatus e{.state = SessionState::PreOpen, .ts = 3000};
+    listener.on_market_status(e);
+    EXPECT_EQ(listener.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<MarketStatus>(listener.events()[0]));
+    EXPECT_EQ(listener.events()[0], RecordedEvent{e});
+}
+
+TEST(RecordingMdListenerTest, RecordIndicativePrice) {
+    RecordingMdListener listener;
+    IndicativePrice e{.price = 1005000, .matched_volume = 40000,
+                      .buy_surplus = 5000, .sell_surplus = 0, .ts = 4000};
+    listener.on_indicative_price(e);
+    EXPECT_EQ(listener.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<IndicativePrice>(listener.events()[0]));
+    EXPECT_EQ(listener.events()[0], RecordedEvent{e});
+}
+
+TEST(RecordingMdListenerTest, MarketStatusAndIndicativePricePreserveOrder) {
+    RecordingMdListener listener;
+    MarketStatus ms{.state = SessionState::PreOpen, .ts = 1000};
+    IndicativePrice ip1{.price = 1005000, .matched_volume = 30000,
+                        .buy_surplus = 10000, .sell_surplus = 0, .ts = 2000};
+    IndicativePrice ip2{.price = 1006000, .matched_volume = 40000,
+                        .buy_surplus = 0, .sell_surplus = 5000, .ts = 3000};
+    MarketStatus ms2{.state = SessionState::OpeningAuction, .ts = 4000};
+
+    listener.on_market_status(ms);
+    listener.on_indicative_price(ip1);
+    listener.on_indicative_price(ip2);
+    listener.on_market_status(ms2);
+
+    EXPECT_EQ(listener.size(), 4u);
+    EXPECT_EQ(listener.events()[0], RecordedEvent{ms});
+    EXPECT_EQ(listener.events()[1], RecordedEvent{ip1});
+    EXPECT_EQ(listener.events()[2], RecordedEvent{ip2});
+    EXPECT_EQ(listener.events()[3], RecordedEvent{ms2});
+}
+
+TEST(RecordingMdListenerTest, MarketStatusClearedCorrectly) {
+    RecordingMdListener listener;
+    listener.on_market_status(MarketStatus{.state = SessionState::Continuous, .ts = 1});
+    listener.clear();
+    EXPECT_EQ(listener.size(), 0u);
+
+    IndicativePrice e{.price = 1000, .matched_volume = 100,
+                      .buy_surplus = 0, .sell_surplus = 0, .ts = 2};
+    listener.on_indicative_price(e);
+    EXPECT_EQ(listener.size(), 1u);
+    EXPECT_EQ(listener.events()[0], RecordedEvent{e});
+}
+
 }  // namespace
 }  // namespace exchange

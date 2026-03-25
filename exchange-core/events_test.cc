@@ -202,5 +202,53 @@ TEST(EventsTest, TradeConstruction) {
     EXPECT_EQ(t.ts, 3000);
 }
 
+TEST(EventsTest, MarketStatusDefaultConstruct) {
+    MarketStatus e{};
+    EXPECT_EQ(e.state, SessionState::Closed);
+    EXPECT_EQ(e.ts, 0);
+}
+
+TEST(EventsTest, MarketStatusConstruction) {
+    MarketStatus e{.state = SessionState::Continuous, .ts = 12345};
+    EXPECT_EQ(e.state, SessionState::Continuous);
+    EXPECT_EQ(e.ts, 12345);
+}
+
+TEST(EventsTest, MarketStatusAllStates) {
+    // Verify each SessionState can be stored in a MarketStatus event.
+    for (auto s : {
+            SessionState::Closed, SessionState::PreOpen,
+            SessionState::OpeningAuction, SessionState::Continuous,
+            SessionState::PreClose, SessionState::ClosingAuction,
+            SessionState::Halt, SessionState::VolatilityAuction}) {
+        MarketStatus e{.state = s, .ts = 1000};
+        EXPECT_EQ(e.state, s);
+    }
+}
+
+TEST(EventsTest, IndicativePriceDefaultConstruct) {
+    IndicativePrice e{};
+    EXPECT_EQ(e.price, 0);
+    EXPECT_EQ(e.matched_volume, 0);
+    EXPECT_EQ(e.buy_surplus, 0);
+    EXPECT_EQ(e.sell_surplus, 0);
+    EXPECT_EQ(e.ts, 0);
+}
+
+TEST(EventsTest, IndicativePriceConstruction) {
+    IndicativePrice e{
+        .price = 1005000,
+        .matched_volume = 50000,
+        .buy_surplus = 10000,
+        .sell_surplus = 0,
+        .ts = 9999
+    };
+    EXPECT_EQ(e.price, 1005000);
+    EXPECT_EQ(e.matched_volume, 50000);
+    EXPECT_EQ(e.buy_surplus, 10000);
+    EXPECT_EQ(e.sell_surplus, 0);
+    EXPECT_EQ(e.ts, 9999);
+}
+
 }  // namespace
 }  // namespace exchange

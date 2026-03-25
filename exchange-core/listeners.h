@@ -34,6 +34,8 @@ public:
     void on_depth_update(const DepthUpdate&) {}
     void on_order_book_action(const OrderBookAction&) {}
     void on_trade(const Trade&) {}
+    void on_market_status(const MarketStatus&) {}
+    void on_indicative_price(const IndicativePrice&) {}
 };
 
 }  // namespace exchange
