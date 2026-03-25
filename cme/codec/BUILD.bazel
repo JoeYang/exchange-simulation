@@ -67,3 +67,23 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "mdp3_encoder",
+    hdrs = ["mdp3_encoder.h"],
+    deps = [
+        ":mdp3_messages",
+        ":sbe_header",
+        "//exchange-core:events",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "mdp3_encoder_test",
+    srcs = ["mdp3_encoder_test.cc"],
+    deps = [
+        ":mdp3_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
