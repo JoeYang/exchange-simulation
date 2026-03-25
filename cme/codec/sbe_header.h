@@ -43,6 +43,11 @@ inline int64_t decode_le64_signed(int64_t v) {
 //   MDP3    templates_FixBinary.xml line 90  (schemaId=1, version=13)
 // ---------------------------------------------------------------------------
 
+// MessageHeader uses alignas(2) rather than __attribute__((packed)) because
+// all fields are uint16_t — natural 2-byte alignment produces the correct
+// 8-byte layout without padding, while avoiding the performance penalties of
+// packed access on some architectures. GroupHeader/GroupHeader16 use packed
+// because their mixed-width fields (uint16 + uint8) would otherwise get padded.
 struct alignas(2) MessageHeader {
     uint16_t block_length;  // root block size in bytes
     uint16_t template_id;   // SBE template identifier
@@ -201,7 +206,10 @@ struct PRICE9 {
 
     bool is_null() const { return mantissa == INT64_NULL; }
 
+    // Convert mantissa to little-endian IN PLACE. After encode(), mantissa is
+    // in wire format and must not be interpreted as a host integer.
     void encode() { mantissa = encode_le64_signed(mantissa); }
+    // Convert mantissa from little-endian to host byte order IN PLACE.
     void decode() { mantissa = decode_le64_signed(mantissa); }
 };
 
@@ -229,7 +237,9 @@ struct __attribute__((packed)) MaturityMonthYear {
 
     bool is_null() const { return year == UINT16_NULL; }
 
+    // Convert year to little-endian IN PLACE (month/day/week are uint8, no swap needed).
     void encode() { year = encode_le16(year); }
+    // Convert year from little-endian to host IN PLACE.
     void decode() { year = decode_le16(year); }
 };
 
