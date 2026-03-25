@@ -35,3 +35,25 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "cme_simulator",
+    hdrs = ["cme_simulator.h"],
+    deps = [
+        ":cme_exchange",
+        ":cme_products",
+        "//exchange-sim:exchange_simulator",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "cme_simulator_test",
+    srcs = ["cme_simulator_test.cc"],
+    deps = [
+        ":cme_simulator",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
