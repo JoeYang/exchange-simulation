@@ -163,6 +163,19 @@ cc_test(
 )
 
 cc_library(
+    name = "ohlcv",
+    hdrs = ["ohlcv.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ohlcv_test",
+    srcs = ["ohlcv_test.cc"],
+    deps = [":ohlcv", "@googletest//:gtest_main"],
+)
+
+cc_library(
     name = "matching_engine",
     hdrs = ["matching_engine.h"],
     deps = [
