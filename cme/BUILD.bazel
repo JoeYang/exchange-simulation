@@ -20,6 +20,16 @@ cc_test(
     srcs = ["cme_exchange_test.cc"],
     deps = [
         ":cme_exchange",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cme_products_test",
+    srcs = ["cme_products_test.cc"],
+    deps = [
+        ":cme_exchange",
         ":cme_products",
         "//test-harness:recording_listener",
         "@googletest//:gtest_main",
