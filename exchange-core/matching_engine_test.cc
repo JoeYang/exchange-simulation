@@ -1118,5 +1118,395 @@ TEST_F(MatchingEngineTest, MassCancelIncludesStopOrders) {
     EXPECT_EQ(cancel_count, 2u);
 }
 
+// ===========================================================================
+// Task B1: Session State Tracking
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 26. Default state is Continuous -- all existing behavior unchanged
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, DefaultStateIsContinuous) {
+    EXPECT_EQ(engine_.session_state(), SessionState::Continuous);
+}
+
+// ---------------------------------------------------------------------------
+// 27. set_session_state fires MarketStatus callback
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, SetSessionStateFiresMarketStatus) {
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+
+    EXPECT_EQ(engine_.session_state(), SessionState::PreOpen);
+    ASSERT_EQ(md_listener_.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<MarketStatus>(md_listener_.events()[0]));
+    auto& ms = std::get<MarketStatus>(md_listener_.events()[0]);
+    EXPECT_EQ(ms.state, SessionState::PreOpen);
+    EXPECT_EQ(ms.ts, 5000);
+}
+
+// ---------------------------------------------------------------------------
+// 28. set_session_state no-op when state is same
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, SetSessionStateSameIsNoOp) {
+    engine_.set_session_state(SessionState::Continuous, 5000);
+
+    EXPECT_EQ(engine_.session_state(), SessionState::Continuous);
+    EXPECT_EQ(md_listener_.size(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 29. Order rejected in Closed state
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, OrderRejectedInClosedState) {
+    engine_.set_session_state(SessionState::Closed, 5000);
+    md_listener_.clear();
+
+    engine_.new_order(make_limit(100, Side::Buy, 1000, 10000, 6000));
+
+    ASSERT_EQ(order_listener_.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderRejected>(
+        order_listener_.events()[0]));
+    auto& rej = std::get<OrderRejected>(order_listener_.events()[0]);
+    EXPECT_EQ(rej.client_order_id, 100u);
+    EXPECT_EQ(rej.reason, RejectReason::ExchangeSpecific);
+}
+
+// ---------------------------------------------------------------------------
+// 30. Limit order accepted in PreOpen -- rests on book, no matching
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, LimitOrderRestsInPreOpen) {
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+    md_listener_.clear();
+
+    engine_.new_order(make_limit(100, Side::Buy, 1000, 10000, 6000));
+
+    // Order is accepted
+    ASSERT_GE(order_listener_.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderAccepted>(
+        order_listener_.events()[0]));
+
+    // Should have L3 Add, L2 Add, TopOfBook -- but NO Trade
+    bool found_trade = false;
+    for (auto& e : md_listener_.events()) {
+        if (std::holds_alternative<Trade>(e)) {
+            found_trade = true;
+        }
+    }
+    EXPECT_FALSE(found_trade);
+
+    // Order is on the book
+    EXPECT_EQ(engine_.active_order_count(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// 31. Two crossing limit orders in PreOpen -- both rest, no matching
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, CrossingOrdersInPreOpenNoMatch) {
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+    md_listener_.clear();
+
+    // Buy at 1100
+    engine_.new_order(make_limit(100, Side::Buy, 1100, 10000, 6000));
+    // Sell at 1000 -- would match in Continuous, but NOT in PreOpen
+    engine_.new_order(make_limit(200, Side::Sell, 1000, 10000, 7000));
+
+    // Both should be accepted
+    size_t accept_count = 0;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderAccepted>(e)) ++accept_count;
+    }
+    EXPECT_EQ(accept_count, 2u);
+
+    // No fills
+    bool found_fill = false;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderFilled>(e) ||
+            std::holds_alternative<OrderPartiallyFilled>(e)) {
+            found_fill = true;
+        }
+    }
+    EXPECT_FALSE(found_fill);
+
+    // No trades
+    bool found_trade = false;
+    for (auto& e : md_listener_.events()) {
+        if (std::holds_alternative<Trade>(e)) found_trade = true;
+    }
+    EXPECT_FALSE(found_trade);
+
+    // Both orders are on the book
+    EXPECT_EQ(engine_.active_order_count(), 2u);
+}
+
+// ---------------------------------------------------------------------------
+// 32. IOC rejected in PreOpen via is_order_allowed_in_phase override
+// ---------------------------------------------------------------------------
+
+class PreOpenExchange
+    : public MatchingEngine<PreOpenExchange, RecordingOrderListener,
+                            RecordingMdListener, FifoMatch, 100, 50, 1000> {
+public:
+    using Base = MatchingEngine<PreOpenExchange, RecordingOrderListener,
+                                RecordingMdListener, FifoMatch, 100, 50, 1000>;
+    using Base::Base;
+
+    bool is_order_allowed_in_phase(const OrderRequest& req,
+                                   SessionState state) {
+        // Reject IOC/FOK in collection phases
+        if (state == SessionState::PreOpen ||
+            state == SessionState::PreClose ||
+            state == SessionState::VolatilityAuction) {
+            if (req.tif == TimeInForce::IOC || req.tif == TimeInForce::FOK)
+                return false;
+        }
+        return true;
+    }
+};
+
+TEST_F(MatchingEngineTest, IOCRejectedInPreOpenViaHook) {
+    RecordingOrderListener po_order_listener;
+    RecordingMdListener po_md_listener;
+    EngineConfig po_config{.tick_size = 100,
+                           .lot_size = 10000,
+                           .price_band_low = 0,
+                           .price_band_high = 0};
+    PreOpenExchange po_engine(po_config, po_order_listener, po_md_listener);
+
+    po_engine.set_session_state(SessionState::PreOpen, 5000);
+    po_md_listener.clear();
+
+    OrderRequest ioc_req{.client_order_id = 100,
+                         .account_id = 1,
+                         .side = Side::Buy,
+                         .type = OrderType::Limit,
+                         .tif = TimeInForce::IOC,
+                         .price = 1000,
+                         .quantity = 10000,
+                         .stop_price = 0,
+                         .timestamp = 6000,
+                         .gtd_expiry = 0};
+    po_engine.new_order(ioc_req);
+
+    ASSERT_EQ(po_order_listener.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderRejected>(
+        po_order_listener.events()[0]));
+    auto& rej = std::get<OrderRejected>(po_order_listener.events()[0]);
+    EXPECT_EQ(rej.reason, RejectReason::InvalidTif);
+}
+
+// ---------------------------------------------------------------------------
+// 33. Cancel works in PreOpen
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, CancelWorksInPreOpen) {
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+    md_listener_.clear();
+
+    // Place a limit order
+    engine_.new_order(make_limit(100, Side::Buy, 1000, 10000, 6000));
+    EXPECT_EQ(engine_.active_order_count(), 1u);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Cancel it -- should succeed in PreOpen
+    engine_.cancel_order(1, 7000);
+
+    ASSERT_GE(order_listener_.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderCancelled>(
+        order_listener_.events()[0]));
+    auto& canc = std::get<OrderCancelled>(order_listener_.events()[0]);
+    EXPECT_EQ(canc.id, 1u);
+    EXPECT_EQ(canc.reason, CancelReason::UserRequested);
+
+    EXPECT_EQ(engine_.active_order_count(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 34. Cancel rejected in Closed state
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, CancelRejectedInClosedState) {
+    // Place order in Continuous
+    engine_.new_order(make_limit(100, Side::Buy, 1000, 10000, 1000));
+    EXPECT_EQ(engine_.active_order_count(), 1u);
+
+    // Transition to Closed
+    engine_.set_session_state(SessionState::Closed, 5000);
+    order_listener_.clear();
+    md_listener_.clear();
+
+    engine_.cancel_order(1, 6000);
+
+    ASSERT_EQ(order_listener_.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderCancelRejected>(
+        order_listener_.events()[0]));
+    auto& rej = std::get<OrderCancelRejected>(order_listener_.events()[0]);
+    EXPECT_EQ(rej.reason, RejectReason::ExchangeSpecific);
+}
+
+// ---------------------------------------------------------------------------
+// 35. Modify rejected in Closed state
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, ModifyRejectedInClosedState) {
+    // Place order in Continuous
+    engine_.new_order(make_limit(100, Side::Buy, 1000, 10000, 1000));
+    EXPECT_EQ(engine_.active_order_count(), 1u);
+
+    // Transition to Closed
+    engine_.set_session_state(SessionState::Closed, 5000);
+    order_listener_.clear();
+    md_listener_.clear();
+
+    ModifyRequest mod{.order_id = 1,
+                      .client_order_id = 100,
+                      .new_price = 1100,
+                      .new_quantity = 10000,
+                      .timestamp = 6000};
+    engine_.modify_order(mod);
+
+    ASSERT_EQ(order_listener_.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderModifyRejected>(
+        order_listener_.events()[0]));
+    auto& rej = std::get<OrderModifyRejected>(order_listener_.events()[0]);
+    EXPECT_EQ(rej.reason, RejectReason::ExchangeSpecific);
+}
+
+// ---------------------------------------------------------------------------
+// 36. State transition back to Continuous -- next order matches normally
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, TransitionBackToContinuousMatchesNormally) {
+    // Enter PreOpen and place crossing orders
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+
+    engine_.new_order(make_limit(100, Side::Buy, 1100, 10000, 6000));
+    engine_.new_order(make_limit(200, Side::Sell, 1000, 10000, 7000));
+    EXPECT_EQ(engine_.active_order_count(), 2u);
+
+    // Transition back to Continuous
+    engine_.set_session_state(SessionState::Continuous, 8000);
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // New aggressive sell should match against the resting buy
+    engine_.new_order(make_limit(300, Side::Sell, 1100, 10000, 9000));
+
+    // Should see a fill
+    bool found_fill = false;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderFilled>(e)) found_fill = true;
+    }
+    EXPECT_TRUE(found_fill);
+
+    // Should see a trade
+    bool found_trade = false;
+    for (auto& e : md_listener_.events()) {
+        if (std::holds_alternative<Trade>(e)) found_trade = true;
+    }
+    EXPECT_TRUE(found_trade);
+}
+
+// ---------------------------------------------------------------------------
+// 37. on_session_transition returns false -- transition blocked
+// ---------------------------------------------------------------------------
+
+class BlockTransitionExchange
+    : public MatchingEngine<BlockTransitionExchange, RecordingOrderListener,
+                            RecordingMdListener, FifoMatch, 100, 50, 1000> {
+public:
+    using Base = MatchingEngine<BlockTransitionExchange, RecordingOrderListener,
+                                RecordingMdListener, FifoMatch, 100, 50, 1000>;
+    using Base::Base;
+
+    bool block_transition{false};
+
+    bool on_session_transition(SessionState /*old_state*/,
+                               SessionState /*new_state*/,
+                               Timestamp /*ts*/) {
+        return !block_transition;
+    }
+};
+
+TEST_F(MatchingEngineTest, TransitionBlockedByHook) {
+    RecordingOrderListener bt_order_listener;
+    RecordingMdListener bt_md_listener;
+    EngineConfig bt_config{.tick_size = 100,
+                           .lot_size = 10000,
+                           .price_band_low = 0,
+                           .price_band_high = 0};
+    BlockTransitionExchange bt_engine(bt_config, bt_order_listener,
+                                      bt_md_listener);
+
+    bt_engine.block_transition = true;
+    bt_engine.set_session_state(SessionState::PreOpen, 5000);
+
+    // Transition should have been blocked
+    EXPECT_EQ(bt_engine.session_state(), SessionState::Continuous);
+    // No MarketStatus event
+    EXPECT_EQ(bt_md_listener.size(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 38. Market order in PreOpen is accepted then cancelled
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MarketOrderInPreOpenCancelled) {
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+    md_listener_.clear();
+
+    engine_.new_order(make_market(100, Side::Buy, 10000, 6000));
+
+    // Should see OrderAccepted then OrderCancelled
+    ASSERT_GE(order_listener_.size(), 2u);
+    EXPECT_TRUE(std::holds_alternative<OrderAccepted>(
+        order_listener_.events()[0]));
+    EXPECT_TRUE(std::holds_alternative<OrderCancelled>(
+        order_listener_.events()[1]));
+    auto& canc = std::get<OrderCancelled>(order_listener_.events()[1]);
+    EXPECT_EQ(canc.reason, CancelReason::IOCRemainder);
+
+    EXPECT_EQ(engine_.active_order_count(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 39. Modify works in PreOpen (collection phase)
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, ModifyWorksInPreOpen) {
+    engine_.set_session_state(SessionState::PreOpen, 5000);
+    md_listener_.clear();
+
+    // Place a limit order
+    engine_.new_order(make_limit(100, Side::Buy, 1000, 10000, 6000));
+    EXPECT_EQ(engine_.active_order_count(), 1u);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Modify should succeed in PreOpen
+    ModifyRequest mod{.order_id = 1,
+                      .client_order_id = 100,
+                      .new_price = 1100,
+                      .new_quantity = 20000,
+                      .timestamp = 7000};
+    engine_.modify_order(mod);
+
+    // Should see OrderModified (not rejected)
+    bool found_modified = false;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderModified>(e)) {
+            found_modified = true;
+        }
+    }
+    EXPECT_TRUE(found_modified);
+}
+
 }  // namespace
 }  // namespace exchange
