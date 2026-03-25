@@ -173,6 +173,13 @@ cc_test(
     ],
 )
 
+cc_binary(
+    name = "mdp3-replayer",
+    srcs = ["mdp3_replayer_main.cc"],
+    deps = [":mdp3_replayer"],
+    visibility = ["//visibility:public"],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
