@@ -41,7 +41,7 @@ class UdpMulticastPublisher {
 
 public:
     // Opens a UDP socket configured for multicast sending.
-    // group: multicast address (e.g. "224.0.0.1")
+    // group: multicast address (e.g. "239.0.0.1")
     // port:  destination port
     // ttl:   multicast TTL (default 1 = link-local)
     // loopback: if true, sender can receive its own messages (needed for tests)
