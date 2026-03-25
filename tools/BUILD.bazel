@@ -94,6 +94,22 @@ cc_test(
     deps = [":tcp_server", "@googletest//:gtest_main"],
 )
 
+# --- Task 26: Latency Logger ---
+cc_library(
+    name = "latency_logger",
+    hdrs = ["latency_logger.h"],
+    deps = [
+        "//exchange-core:matching_engine",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "latency_logger_test",
+    srcs = ["latency_logger_test.cc"],
+    deps = [":latency_logger", "@googletest//:gtest_main"],
+)
+
 # --- Task 22: Pcap Reader ---
 cc_library(
     name = "pcap_reader",
