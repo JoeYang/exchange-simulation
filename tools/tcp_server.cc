@@ -69,12 +69,6 @@ TcpServer::~TcpServer() {
     shutdown();
 }
 
-void TcpServer::set_nonblocking(int fd) {
-    int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags == -1) return;
-    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-}
-
 void TcpServer::accept_connections() {
     // EPOLLET: must drain all pending connections until EAGAIN.
     while (true) {

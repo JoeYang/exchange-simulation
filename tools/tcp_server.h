@@ -6,7 +6,6 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <fcntl.h>
 
 #include <cstdint>
 #include <cstring>
@@ -107,7 +106,6 @@ private:
         }
     };
 
-    void set_nonblocking(int fd);
     void accept_connections();
     void handle_read(int fd);
     void drain_and_remove_client(int fd);

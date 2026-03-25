@@ -63,28 +63,39 @@ public:
     }
 
     void on_order_filled(const OrderFilled& e) {
+        // Emit fill report for the resting order.
         auto it = orders_.find(e.resting_id);
-        Order order{};
+        Order resting_order{};
         if (it != orders_.end()) {
-            order = it->second.order;
+            resting_order = it->second.order;
             orders_.erase(it);  // fully filled, remove
         }
 
         ctx_.seq_num++;
         size_t n = sbe::ilink3::encode_exec_fill(
-            report_buf_, e, order, false, ctx_);
+            report_buf_, e, resting_order, false, ctx_);
         store_report(report_buf_, n, sbe::ilink3::EXEC_REPORT_TRADE_OUTRIGHT_ID);
+
+        // Emit fill report for the aggressor order.
+        auto ag_it = orders_.find(e.aggressor_id);
+        if (ag_it != orders_.end()) {
+            Order aggressor_order = ag_it->second.order;
+            aggressor_order.filled_quantity += e.quantity;
+            // If aggressor is also fully filled, remove it.
+            if (aggressor_order.filled_quantity >= aggressor_order.quantity) {
+                orders_.erase(ag_it);
+            } else {
+                ag_it->second.order = aggressor_order;
+            }
+
+            ctx_.seq_num++;
+            n = sbe::ilink3::encode_exec_fill(
+                report_buf_, e, aggressor_order, true, ctx_);
+            store_report(report_buf_, n, sbe::ilink3::EXEC_REPORT_TRADE_OUTRIGHT_ID);
+        }
     }
 
     void on_order_partially_filled(const OrderPartiallyFilled& e) {
-        auto it = orders_.find(e.resting_id);
-        Order order{};
-        if (it != orders_.end()) {
-            order = it->second.order;
-            order.filled_quantity += e.quantity;
-            it->second.order = order;
-        }
-
         // Reuse the fill encoder — partial fills are the same wire message.
         OrderFilled fill_evt{};
         fill_evt.aggressor_id = e.aggressor_id;
@@ -93,10 +104,32 @@ public:
         fill_evt.quantity = e.quantity;
         fill_evt.ts = e.ts;
 
+        // Emit fill report for the resting order.
+        auto it = orders_.find(e.resting_id);
+        Order resting_order{};
+        if (it != orders_.end()) {
+            resting_order = it->second.order;
+            resting_order.filled_quantity += e.quantity;
+            it->second.order = resting_order;
+        }
+
         ctx_.seq_num++;
         size_t n = sbe::ilink3::encode_exec_fill(
-            report_buf_, fill_evt, order, false, ctx_);
+            report_buf_, fill_evt, resting_order, false, ctx_);
         store_report(report_buf_, n, sbe::ilink3::EXEC_REPORT_TRADE_OUTRIGHT_ID);
+
+        // Emit fill report for the aggressor order.
+        auto ag_it = orders_.find(e.aggressor_id);
+        if (ag_it != orders_.end()) {
+            Order aggressor_order = ag_it->second.order;
+            aggressor_order.filled_quantity += e.quantity;
+            ag_it->second.order = aggressor_order;
+
+            ctx_.seq_num++;
+            n = sbe::ilink3::encode_exec_fill(
+                report_buf_, fill_evt, aggressor_order, true, ctx_);
+            store_report(report_buf_, n, sbe::ilink3::EXEC_REPORT_TRADE_OUTRIGHT_ID);
+        }
     }
 
     void on_order_cancelled(const OrderCancelled& e) {

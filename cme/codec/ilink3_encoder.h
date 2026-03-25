@@ -339,11 +339,16 @@ inline size_t encode_exec_fill(
     msg.security_id = ctx.security_id;
     msg.order_qty = engine_qty_to_wire(order.quantity);
     msg.last_qty = engine_qty_to_wire(evt.quantity);
-    msg.cum_qty = engine_qty_to_wire(order.filled_quantity + evt.quantity);
-    msg.leaves_qty = 0;  // fully filled
+    Quantity cum = order.filled_quantity + evt.quantity;
+    Quantity leaves = order.quantity - cum;
+    if (leaves < 0) leaves = 0;
+    msg.cum_qty = engine_qty_to_wire(cum);
+    msg.leaves_qty = engine_qty_to_wire(leaves);
     msg.trade_date = UINT16_NULL;
     msg.expire_date = UINT16_NULL;
-    msg.ord_status = static_cast<uint8_t>(OrdStatus::Filled);
+    msg.ord_status = (leaves == 0)
+        ? static_cast<uint8_t>(OrdStatus::Filled)
+        : static_cast<uint8_t>(OrdStatus::PartiallyFilled);
     msg.ord_type = encode_ord_type(order.type);
     msg.side = encode_side(order.side);
     msg.time_in_force = encode_tif(order.tif);
