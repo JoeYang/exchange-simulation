@@ -156,6 +156,12 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::ILink3Replace;
             } else if (type_str == "ILINK3_MASS_CANCEL") {
                 atype = ParsedAction::ILink3MassCancel;
+            } else if (type_str == "SESSION_START") {
+                atype = ParsedAction::SessionStart;
+            } else if (type_str == "SESSION_OPEN") {
+                atype = ParsedAction::SessionOpen;
+            } else if (type_str == "SESSION_CLOSE") {
+                atype = ParsedAction::SessionClose;
             } else {
                 throw std::runtime_error(
                     source_name + ":" + std::to_string(line_number) +

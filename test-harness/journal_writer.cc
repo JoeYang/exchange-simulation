@@ -124,6 +124,9 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::ILink3Cancel:      os << "ILINK3_CANCEL";     break;
         case ParsedAction::ILink3Replace:     os << "ILINK3_REPLACE";    break;
         case ParsedAction::ILink3MassCancel:  os << "ILINK3_MASS_CANCEL"; break;
+        case ParsedAction::SessionStart:      os << "SESSION_START";      break;
+        case ParsedAction::SessionOpen:       os << "SESSION_OPEN";       break;
+        case ParsedAction::SessionClose:      os << "SESSION_CLOSE";      break;
     }
 
     // Emit fields in a deterministic order based on action type, then any
@@ -227,6 +230,19 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
             emit("instrument");
             emit("account");
             break;
+
+        case ParsedAction::SessionStart:
+            emit("ts");
+            emit("state");
+            break;
+
+        case ParsedAction::SessionOpen:
+            emit("ts");
+            break;
+
+        case ParsedAction::SessionClose:
+            emit("ts");
+            break;
     }
 
     // Emit any extra fields not in the canonical order (preserves unknown fields).
@@ -258,6 +274,12 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "price", "qty"};
     static const std::vector<std::string> known_ilink3_mass_cancel =
         {"ts", "instrument", "account"};
+    static const std::vector<std::string> known_session_start =
+        {"ts", "state"};
+    static const std::vector<std::string> known_session_open =
+        {"ts"};
+    static const std::vector<std::string> known_session_close =
+        {"ts"};
 
     const std::vector<std::string>* known = nullptr;
     switch (action.type) {
@@ -274,6 +296,9 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::ILink3Cancel:      known = &known_ilink3_cancel;      break;
         case ParsedAction::ILink3Replace:     known = &known_ilink3_replace;     break;
         case ParsedAction::ILink3MassCancel:  known = &known_ilink3_mass_cancel; break;
+        case ParsedAction::SessionStart:      known = &known_session_start;      break;
+        case ParsedAction::SessionOpen:       known = &known_session_open;       break;
+        case ParsedAction::SessionClose:      known = &known_session_close;      break;
     }
 
     for (const auto& kv_pair : action.fields) {

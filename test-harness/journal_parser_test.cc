@@ -490,13 +490,15 @@ TEST(JournalParserTest, ParseExecFillExpect) {
     const std::string content =
         "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
         "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
-        "EXPECT EXEC_FILL ord_id=1 cl_ord_id=1 fill_price=50000000 fill_qty=10000 status=FILLED\n";
+        "EXPECT EXEC_FILL ord_id=1 cl_ord_id=1 fill_price=50000000 fill_qty=10000 "
+        "leaves_qty=0 status=FILLED\n";
     Journal j = JournalParser::parse_string(content);
     ASSERT_EQ(j.entries[0].expectations.size(), 1u);
     const ParsedExpectation& e = j.entries[0].expectations[0];
     EXPECT_EQ(e.event_type, "EXEC_FILL");
     EXPECT_EQ(e.get_int("fill_price"), 50000000);
     EXPECT_EQ(e.get_int("fill_qty"), 10000);
+    EXPECT_EQ(e.get_int("leaves_qty"), 0);
     EXPECT_EQ(e.get_str("status"), "FILLED");
 }
 
@@ -538,7 +540,7 @@ TEST(JournalParserTest, ParseExecPartialExpect) {
         "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
         "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
         "EXPECT EXEC_PARTIAL ord_id=1 cl_ord_id=1 fill_price=50000000 fill_qty=5000 "
-        "leaves_qty=5000 status=PARTIALLY_FILLED\n";
+        "leaves_qty=5000 status=PARTIAL\n";
     Journal j = JournalParser::parse_string(content);
     ASSERT_EQ(j.entries[0].expectations.size(), 1u);
     const ParsedExpectation& e = j.entries[0].expectations[0];
@@ -651,6 +653,39 @@ TEST(JournalParserTest, FullE2EJournalParsing) {
     // Third entry: mass cancel (no expects in this test)
     EXPECT_EQ(j.entries[2].action.type, ParsedAction::ILink3MassCancel);
     EXPECT_EQ(j.entries[2].expectations.size(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// Session lifecycle action parsing
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, ParseSessionStart) {
+    const std::string content =
+        "ACTION SESSION_START ts=0 state=PRE_OPEN\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::SessionStart);
+    EXPECT_EQ(a.get_int("ts"), 0);
+    EXPECT_EQ(a.get_str("state"), "PRE_OPEN");
+}
+
+TEST(JournalParserTest, ParseSessionOpen) {
+    const std::string content =
+        "ACTION SESSION_OPEN ts=1000\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    EXPECT_EQ(j.entries[0].action.type, ParsedAction::SessionOpen);
+    EXPECT_EQ(j.entries[0].action.get_int("ts"), 1000);
+}
+
+TEST(JournalParserTest, ParseSessionClose) {
+    const std::string content =
+        "ACTION SESSION_CLOSE ts=86400000\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    EXPECT_EQ(j.entries[0].action.type, ParsedAction::SessionClose);
+    EXPECT_EQ(j.entries[0].action.get_int("ts"), 86400000);
 }
 
 }  // namespace exchange

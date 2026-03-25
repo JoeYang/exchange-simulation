@@ -262,6 +262,14 @@ void JournalTestRunner::execute_action(EngineT& engine,
             "iLink3 actions require the E2E test runner, "
             "not the unit-test JournalTestRunner");
 
+    // E2E session lifecycle actions — handled by E2E test runner.
+    case ParsedAction::SessionStart:
+    case ParsedAction::SessionOpen:
+    case ParsedAction::SessionClose:
+        throw std::runtime_error(
+            "Session lifecycle actions require the E2E test runner, "
+            "not the unit-test JournalTestRunner");
+
     }  // switch
 }
 
