@@ -33,7 +33,8 @@ const char* reject_reason_str(RejectReason r) {
         case RejectReason::InvalidSide:        return "InvalidSide";
         case RejectReason::UnknownOrder:       return "UnknownOrder";
         case RejectReason::PriceBandViolation: return "PriceBandViolation";
-        case RejectReason::LevelPoolExhausted: return "LevelPoolExhausted";
+        case RejectReason::LevelPoolExhausted:  return "LevelPoolExhausted";
+        case RejectReason::MaxOrderSizeExceeded: return "MaxOrderSizeExceeded";
         case RejectReason::ExchangeSpecific:   return "ExchangeSpecific";
     }
     return "Unknown";
@@ -48,6 +49,7 @@ const char* cancel_reason_str(CancelReason r) {
         case CancelReason::Expired:             return "Expired";
         case CancelReason::SelfMatchPrevention: return "SelfMatchPrevention";
         case CancelReason::LevelPoolExhausted:  return "LevelPoolExhausted";
+        case CancelReason::MassCancelled:       return "MassCancelled";
     }
     return "Unknown";
 }
