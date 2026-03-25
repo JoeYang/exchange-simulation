@@ -1,0 +1,14 @@
+# CME: Tick alignment — ES tick = 2500 (0.25 index point)
+CONFIG match_algo=FIFO instrument=ES tick_size=2500 lot_size=10000
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Price aligned to tick — accepted
+ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 account=FIRM_A side=BUY price=50002500 qty=10000 type=LIMIT tif=DAY
+EXPECT EXEC_NEW cl_ord_id=1 status=NEW
+EXPECT MD_BOOK_ADD side=BUY price=5000250000000 qty=1 num_orders=1
+EXPECT MD_BOOK_UPDATE side=BUY price=5000250000000 qty=1 num_orders=2147483647
+
+# Price NOT aligned to tick — rejected (invalid price)
+ACTION ILINK3_NEW_ORDER ts=1001 instrument=ES cl_ord_id=2 account=FIRM_A side=BUY price=50001000 qty=10000 type=LIMIT tif=DAY
+EXPECT EXEC_REJECTED cl_ord_id=2
