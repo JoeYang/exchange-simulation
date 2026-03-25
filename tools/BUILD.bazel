@@ -80,6 +80,20 @@ cc_test(
     deps = [":udp_multicast", "@googletest//:gtest_main"],
 )
 
+# --- Task 18: TCP Server ---
+cc_library(
+    name = "tcp_server",
+    hdrs = ["tcp_server.h"],
+    srcs = ["tcp_server.cc"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "tcp_server_test",
+    srcs = ["tcp_server_test.cc"],
+    deps = [":tcp_server", "@googletest//:gtest_main"],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
