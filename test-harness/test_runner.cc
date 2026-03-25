@@ -63,6 +63,7 @@ CancelReason parse_cancel_reason(const std::string& s) {
     if (s == "EXPIRED")              return CancelReason::Expired;
     if (s == "SELF_MATCH_PREVENTION") return CancelReason::SelfMatchPrevention;
     if (s == "LEVEL_POOL_EXHAUSTED") return CancelReason::LevelPoolExhausted;
+    if (s == "MASS_CANCELLED")       return CancelReason::MassCancelled;
     throw std::runtime_error("test_runner: unknown cancel reason '" + s + "'");
 }
 
