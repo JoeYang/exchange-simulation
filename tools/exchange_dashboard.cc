@@ -33,14 +33,14 @@
 #include <thread>
 #include <vector>
 
-using namespace ftxui;
-
 namespace {
 
-volatile std::sig_atomic_t g_running = 1;
+using namespace ftxui;
+
+std::atomic<bool> g_running{true};
 
 void signal_handler(int /*sig*/) {
-    g_running = 0;
+    g_running.store(false, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +475,7 @@ int main(int argc, char* argv[]) {
         // Run the FTXUI event loop with periodic SHM polling.
         auto loop = Loop(&screen, component);
 
-        while (!loop.HasQuitted() && g_running) {
+        while (!loop.HasQuitted() && g_running.load(std::memory_order_relaxed)) {
             // Drain available events from shared memory.
             exchange::RecordedEvent event;
             bool got_event = false;
