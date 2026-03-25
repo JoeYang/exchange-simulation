@@ -31,3 +31,19 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "mdp3_messages",
+    hdrs = ["mdp3_messages.h"],
+    deps = [":sbe_header"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "mdp3_messages_test",
+    srcs = ["mdp3_messages_test.cc"],
+    deps = [
+        ":mdp3_messages",
+        "@googletest//:gtest_main",
+    ],
+)
