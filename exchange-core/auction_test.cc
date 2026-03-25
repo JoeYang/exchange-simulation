@@ -281,5 +281,165 @@ TEST_F(AuctionTest, ComplexScenario_ClearWinner) {
     EXPECT_EQ(result.sell_surplus, 10000); // sell_vol=60000 - matched=50000
 }
 
+// ===========================================================================
+// Test 7: Volume tie, imbalance tiebreak picks lower imbalance candidate
+//
+// Book:
+//   Buy  103.00 (1030000) qty=10000
+//   Buy  102.00 (1020000) qty=10000
+//   Sell 101.00 (1010000) qty=10000
+//   Sell 102.00 (1020000) qty=15000
+//
+// Candidates: 1010000, 1020000, 1030000
+//   At 1010000:
+//     buy_vol = 20000, sell_vol = 10000 → matched=10000, imbal=10000
+//   At 1020000:
+//     buy_vol = 20000, sell_vol = 25000 → matched=20000, imbal=5000
+//   At 1030000:
+//     buy_vol = 10000, sell_vol = 25000 → matched=10000, imbal=15000
+//
+// Winner: 1020000 (matched=20000, highest).
+// ===========================================================================
+
+TEST_F(AuctionTest, VolumeTie_ImbalanceTiebreak) {
+    add_limit(Side::Buy,  1030000, 10000);
+    add_limit(Side::Buy,  1020000, 10000);
+    add_limit(Side::Sell, 1010000, 10000);
+    add_limit(Side::Sell, 1020000, 15000);
+
+    AuctionResult result = engine_.calculate_auction_price(1020000);
+    EXPECT_TRUE(result.has_price);
+    EXPECT_EQ(result.price, 1020000);
+    EXPECT_EQ(result.matched_volume, 20000);
+    EXPECT_EQ(result.buy_surplus, 0);
+    EXPECT_EQ(result.sell_surplus, 5000);
+}
+
+// ===========================================================================
+// Test 8: Bids only, no asks — no auction price
+// ===========================================================================
+
+TEST_F(AuctionTest, BidsOnly_NoPrice) {
+    add_limit(Side::Buy, 1000000, 10000);
+    add_limit(Side::Buy,  990000, 20000);
+
+    AuctionResult result = engine_.calculate_auction_price(995000);
+    EXPECT_FALSE(result.has_price);
+    EXPECT_EQ(result.matched_volume, 0);
+}
+
+// ===========================================================================
+// Test 9: Asks only, no bids — no auction price
+// ===========================================================================
+
+TEST_F(AuctionTest, AsksOnly_NoPrice) {
+    add_limit(Side::Sell, 1000000, 10000);
+    add_limit(Side::Sell, 1010000, 20000);
+
+    AuctionResult result = engine_.calculate_auction_price(1005000);
+    EXPECT_FALSE(result.has_price);
+    EXPECT_EQ(result.matched_volume, 0);
+}
+
+// ===========================================================================
+// Test 10: Single matching level — exact price match
+//
+// Book:
+//   Buy  100.00 (1000000) qty=20000
+//   Sell 100.00 (1000000) qty=20000
+//
+// Only candidate: 1000000
+//   buy_vol=20000, sell_vol=20000 → matched=20000, imbal=0
+// ===========================================================================
+
+TEST_F(AuctionTest, ExactPriceMatch_SingleLevel) {
+    add_limit(Side::Buy,  1000000, 20000);
+    add_limit(Side::Sell, 1000000, 20000);
+
+    AuctionResult result = engine_.calculate_auction_price(1000000);
+    EXPECT_TRUE(result.has_price);
+    EXPECT_EQ(result.price, 1000000);
+    EXPECT_EQ(result.matched_volume, 20000);
+    EXPECT_EQ(result.buy_surplus, 0);
+    EXPECT_EQ(result.sell_surplus, 0);
+}
+
+// ===========================================================================
+// Test 11: Reference price tiebreak — equal imbalance, pick closest to ref
+//
+// Book:
+//   Buy  103.00 (1030000) qty=10000
+//   Buy  102.00 (1020000) qty=10000
+//   Sell 101.00 (1010000) qty=10000
+//   Sell 103.00 (1030000) qty=10000
+//
+// Candidates: 1010000, 1020000, 1030000
+//   At 1010000:
+//     buy_vol=20000, sell_vol=10000 → matched=10000, imbal=10000
+//   At 1020000:
+//     buy_vol=20000, sell_vol=10000 → matched=10000, imbal=10000
+//   At 1030000:
+//     buy_vol=10000, sell_vol=20000 → matched=10000, imbal=10000
+//
+// All have matched=10000, imbal=10000. Tiebreak by ref distance.
+// Reference at 1010000: dist(1010000)=0 < dist(1020000)=10000 → 1010000 wins.
+// ===========================================================================
+
+TEST_F(AuctionTest, EqualImbalance_RefPriceTiebreak) {
+    add_limit(Side::Buy,  1030000, 10000);
+    add_limit(Side::Buy,  1020000, 10000);
+    add_limit(Side::Sell, 1010000, 10000);
+    add_limit(Side::Sell, 1030000, 10000);
+
+    AuctionResult result = engine_.calculate_auction_price(1010000);
+    EXPECT_TRUE(result.has_price);
+    EXPECT_EQ(result.price, 1010000);
+    EXPECT_EQ(result.matched_volume, 10000);
+}
+
+// ===========================================================================
+// Test 12: Higher price convention when all else equal
+//
+// Same book as Test 11, but reference at midpoint (1020000) — equidistant
+// from 1010000 and 1030000; 1020000 is the closest.
+// ===========================================================================
+
+TEST_F(AuctionTest, AllTied_HigherPriceWins) {
+    // Symmetric book: three candidates all yield matched=10000, imbal=10000.
+    // Reference at 1020000: dist(1010000)=10000, dist(1020000)=0, dist(1030000)=10000.
+    // 1020000 is closest → wins.
+    add_limit(Side::Buy,  1030000, 10000);
+    add_limit(Side::Buy,  1020000, 10000);
+    add_limit(Side::Sell, 1010000, 10000);
+    add_limit(Side::Sell, 1030000, 10000);
+
+    AuctionResult result = engine_.calculate_auction_price(1020000);
+    EXPECT_TRUE(result.has_price);
+    EXPECT_EQ(result.price, 1020000);
+    EXPECT_EQ(result.matched_volume, 10000);
+}
+
+// ===========================================================================
+// Test 13: Idempotency — calling calculate_auction_price twice with same
+// book state returns same result (read-only, no side effects).
+// ===========================================================================
+
+TEST_F(AuctionTest, Idempotent_NoSideEffects) {
+    add_limit(Side::Buy,  1020000, 20000);
+    add_limit(Side::Sell, 1000000, 20000);
+
+    AuctionResult r1 = engine_.calculate_auction_price(1010000);
+    AuctionResult r2 = engine_.calculate_auction_price(1010000);
+
+    EXPECT_EQ(r1.has_price, r2.has_price);
+    EXPECT_EQ(r1.price, r2.price);
+    EXPECT_EQ(r1.matched_volume, r2.matched_volume);
+    EXPECT_EQ(r1.buy_surplus, r2.buy_surplus);
+    EXPECT_EQ(r1.sell_surplus, r2.sell_surplus);
+
+    // Order book must be unchanged — both orders still resting.
+    EXPECT_EQ(engine_.active_order_count(), 2u);
+}
+
 }  // namespace
 }  // namespace exchange
