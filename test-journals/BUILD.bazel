@@ -89,3 +89,22 @@ cc_binary(
         "//test-harness:journal_writer",
     ],
 )
+
+cc_binary(
+    name = "generate_e2e_journals",
+    srcs = ["generate_e2e_journals.cc"],
+    deps = [
+        "//cme:cme_simulator",
+        "//cme:ilink3_gateway",
+        "//cme:ilink3_report_publisher",
+        "//cme:mdp3_feed_publisher",
+        "//cme/codec:ilink3_decoder",
+        "//cme/codec:ilink3_encoder",
+        "//cme/codec:ilink3_messages",
+        "//cme/codec:mdp3_decoder",
+        "//cme/codec:mdp3_messages",
+        "//cme/codec:sbe_header",
+        "//exchange-core:composite_listener",
+        "//test-harness:recording_listener",
+    ],
+)
