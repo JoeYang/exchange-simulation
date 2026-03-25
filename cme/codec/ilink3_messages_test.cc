@@ -409,7 +409,7 @@ TEST(ILink3Enums, MassActionScope) {
     EXPECT_EQ(static_cast<uint8_t>(MassActionScope::Instrument), 1);
     EXPECT_EQ(static_cast<uint8_t>(MassActionScope::All), 7);
     EXPECT_EQ(static_cast<uint8_t>(MassActionScope::MarketSegment), 9);
-    EXPECT_EQ(static_cast<uint8_t>(MassActionScope::ProductGroup), 10);
+    EXPECT_EQ(static_cast<uint8_t>(MassActionScope::InstrumentGroup), 10);
 }
 
 TEST(ILink3Enums, ExecMode) {

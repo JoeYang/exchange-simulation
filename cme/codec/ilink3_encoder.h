@@ -97,7 +97,9 @@ inline size_t encode_new_order(
     NewOrderSingle514 msg{};
     std::memset(&msg, 0, sizeof(msg));
 
-    msg.price = engine_price_to_price9(req.price);
+    msg.price = (req.type == OrderType::Market)
+        ? PRICE9{INT64_NULL}
+        : engine_price_to_price9(req.price);
     msg.order_qty = engine_qty_to_wire(req.quantity);
     msg.security_id = ctx.security_id;
     msg.side = encode_side(req.side);
@@ -465,15 +467,15 @@ inline size_t encode_exec_reject(
     msg.ord_rej_reason = static_cast<uint16_t>(evt.reason);
     msg.expire_date = UINT16_NULL;
     msg.delay_duration = UINT16_NULL;
-    msg.ord_type = 0;
-    msg.side = 0;
-    msg.time_in_force = 0;
+    msg.ord_type = UINT8_NULL;          // unknown on reject
+    msg.side = UINT8_NULL;              // unknown on reject
+    msg.time_in_force = UINT8_NULL;     // unknown on reject
     msg.manual_order_indicator = 0;
     msg.poss_retrans_flag = 0;
     msg.split_msg = UINT8_NULL;
     msg.cross_type = UINT8_NULL;
     msg.exec_inst = 0;
-    msg.execution_mode = 0;
+    msg.execution_mode = UINT8_NULL;    // unknown on reject
     msg.liquidity_flag = UINT8_NULL;
     msg.managed_order = UINT8_NULL;
     msg.short_sale_type = 0;

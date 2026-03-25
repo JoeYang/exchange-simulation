@@ -70,7 +70,7 @@ enum class MassActionScope : uint8_t {
     Instrument    = 1,
     All           = 7,
     MarketSegment = 9,
-    ProductGroup  = 10,
+    InstrumentGroup = 10,  // schema: "Product Group" maps to value 10
 };
 
 enum class ManualOrdInd : uint8_t {

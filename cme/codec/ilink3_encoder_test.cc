@@ -143,6 +143,28 @@ TEST(EncodeNewOrder, IcebergOrder) {
     EXPECT_EQ(msg.side, 2);  // Sell
 }
 
+TEST(EncodeNewOrder, MarketOrderPriceIsNull) {
+    auto ctx = make_test_ctx();
+    OrderRequest req{};
+    req.client_order_id = 3003;
+    req.side = Side::Buy;
+    req.type = OrderType::Market;
+    req.tif = exchange::TimeInForce::DAY;
+    req.price = 0;
+    req.quantity = 10000;
+
+    char buf[512];
+    encode_new_order(buf, req, ctx);
+
+    MessageHeader hdr{};
+    const char* rp = MessageHeader::decode_from(buf, hdr);
+    NewOrderSingle514 msg{};
+    std::memcpy(&msg, rp, sizeof(msg));
+
+    EXPECT_TRUE(msg.price.is_null());
+    EXPECT_EQ(msg.ord_type, 1);  // MarketWithProtection
+}
+
 // ---------------------------------------------------------------------------
 // encode_cancel_order
 // ---------------------------------------------------------------------------
@@ -397,6 +419,11 @@ TEST(EncodeExecReject, InvalidPrice) {
     EXPECT_EQ(msg.order_request_id, 5005u);
     EXPECT_TRUE(msg.price.is_null());
     EXPECT_EQ(msg.order_id, UINT64_NULL);
+    // CRITICAL: unknown fields must be UINT8_NULL, not 0
+    EXPECT_EQ(msg.ord_type, UINT8_NULL);
+    EXPECT_EQ(msg.side, UINT8_NULL);
+    EXPECT_EQ(msg.time_in_force, UINT8_NULL);
+    EXPECT_EQ(msg.execution_mode, UINT8_NULL);
 }
 
 // ---------------------------------------------------------------------------
