@@ -1,0 +1,15 @@
+# E2E: Add then replace (cancel-replace) order
+CONFIG match_algo=FIFO instrument=ES tick_size=2500 lot_size=10000
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY
+EXPECT EXEC_NEW cl_ord_id=1 status=NEW
+EXPECT MD_BOOK_ADD side=BUY price=5000000000000 qty=1 num_orders=1
+EXPECT MD_BOOK_UPDATE side=BUY price=5000000000000 qty=1 num_orders=2147483647
+
+ACTION ILINK3_REPLACE ts=2000 instrument=ES cl_ord_id=2 orig_cl_ord_id=1 price=50010000 qty=10000
+EXPECT EXEC_NEW cl_ord_id=2 status=NEW
+EXPECT MD_BOOK_DELETE side=BUY price=5000000000000 qty=0 num_orders=0
+EXPECT MD_BOOK_ADD side=BUY price=5001000000000 qty=1 num_orders=1
+EXPECT MD_BOOK_UPDATE side=BUY price=5001000000000 qty=1 num_orders=2147483647
