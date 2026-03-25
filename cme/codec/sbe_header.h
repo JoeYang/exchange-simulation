@@ -49,6 +49,9 @@ struct alignas(2) MessageHeader {
     uint16_t schema_id;     // schema identifier
     uint16_t version;       // schema version
 
+    // Convert fields from host byte order to little-endian IN PLACE.
+    // After calling encode(), this struct's fields are in wire format
+    // and must not be read as host integers until decode() is called.
     void encode() {
         block_length = encode_le16(block_length);
         template_id  = encode_le16(template_id);
@@ -56,6 +59,8 @@ struct alignas(2) MessageHeader {
         version      = encode_le16(version);
     }
 
+    // Convert fields from little-endian wire format to host byte order IN PLACE.
+    // Call this after reading raw bytes into the struct before accessing fields.
     void decode() {
         block_length = decode_le16(block_length);
         template_id  = decode_le16(template_id);
@@ -92,7 +97,9 @@ struct __attribute__((packed)) GroupHeader {
     uint16_t block_length;
     uint8_t  num_in_group;
 
+    // Convert block_length to little-endian IN PLACE (num_in_group is uint8, no swap needed).
     void encode() { block_length = encode_le16(block_length); }
+    // Convert block_length from little-endian to host IN PLACE.
     void decode() { block_length = decode_le16(block_length); }
 
     char* encode_to(char* buf) const {
@@ -116,13 +123,28 @@ struct __attribute__((packed)) GroupHeader16 {
     uint16_t block_length;
     uint16_t num_in_group;
 
+    // Convert both fields to little-endian IN PLACE.
     void encode() {
         block_length = encode_le16(block_length);
         num_in_group = encode_le16(num_in_group);
     }
+    // Convert both fields from little-endian to host IN PLACE.
     void decode() {
         block_length = decode_le16(block_length);
         num_in_group = decode_le16(num_in_group);
+    }
+
+    char* encode_to(char* buf) const {
+        GroupHeader16 h = *this;
+        h.encode();
+        std::memcpy(buf, &h, sizeof(h));
+        return buf + sizeof(h);
+    }
+
+    static const char* decode_from(const char* buf, GroupHeader16& out) {
+        std::memcpy(&out, buf, sizeof(out));
+        out.decode();
+        return buf + sizeof(out);
     }
 };
 
@@ -155,6 +177,12 @@ inline bool is_null_i64(int64_t v) { return v == INT64_NULL; }
 //
 // Mantissa is int64; actual value = mantissa * 1e-9.
 // Used in both iLink3 (PRICE9/PRICENULL9) and MDP3 (PRICE9/PRICENULL9).
+//
+// This single struct serves both required PRICE9 and optional PRICENULL9
+// schema types. The is_null() method checks for the INT64_NULL sentinel
+// and is only meaningful on PRICENULL9 (optional) fields. On required
+// PRICE9 fields the mantissa should never hold the null sentinel — calling
+// is_null() on a required field is a logic error.
 // ---------------------------------------------------------------------------
 
 constexpr int64_t PRICE9_EXPONENT = -9;

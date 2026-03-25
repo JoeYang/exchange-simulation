@@ -88,6 +88,21 @@ TEST(GroupHeader16Test, RoundTrip) {
     EXPECT_EQ(hdr.num_in_group, 300);
 }
 
+TEST(GroupHeader16Test, EncodeToDecodFrom) {
+    GroupHeader16 original{};
+    original.block_length = 128;
+    original.num_in_group = 500;
+
+    char buf[sizeof(GroupHeader16)];
+    original.encode_to(buf);
+
+    GroupHeader16 decoded{};
+    GroupHeader16::decode_from(buf, decoded);
+
+    EXPECT_EQ(decoded.block_length, 128);
+    EXPECT_EQ(decoded.num_in_group, 500);
+}
+
 // ---------------------------------------------------------------------------
 // Endian helpers
 // ---------------------------------------------------------------------------
