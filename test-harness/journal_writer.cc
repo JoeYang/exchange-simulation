@@ -120,6 +120,10 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::PublishIndicative: os << "PUBLISH_INDICATIVE"; break;
         case ParsedAction::MassCancel:        os << "MASS_CANCEL";        break;
         case ParsedAction::MassCancelAll:     os << "MASS_CANCEL_ALL";    break;
+        case ParsedAction::ILink3NewOrder:    os << "ILINK3_NEW_ORDER";   break;
+        case ParsedAction::ILink3Cancel:      os << "ILINK3_CANCEL";     break;
+        case ParsedAction::ILink3Replace:     os << "ILINK3_REPLACE";    break;
+        case ParsedAction::ILink3MassCancel:  os << "ILINK3_MASS_CANCEL"; break;
     }
 
     // Emit fields in a deterministic order based on action type, then any
@@ -187,6 +191,42 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::MassCancelAll:
             emit("ts");
             break;
+
+        case ParsedAction::ILink3NewOrder:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("account");
+            emit("side");
+            emit("price");
+            emit("qty");
+            emit("type");
+            emit("tif");
+            emit("display_qty");
+            emit("stop_price");
+            break;
+
+        case ParsedAction::ILink3Cancel:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("orig_cl_ord_id");
+            break;
+
+        case ParsedAction::ILink3Replace:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("orig_cl_ord_id");
+            emit("price");
+            emit("qty");
+            break;
+
+        case ParsedAction::ILink3MassCancel:
+            emit("ts");
+            emit("instrument");
+            emit("account");
+            break;
     }
 
     // Emit any extra fields not in the canonical order (preserves unknown fields).
@@ -209,6 +249,15 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "account_id"};
     static const std::vector<std::string> known_mass_cancel_all =
         {"ts"};
+    static const std::vector<std::string> known_ilink3_new_order =
+        {"ts", "instrument", "cl_ord_id", "account", "side", "price", "qty",
+         "type", "tif", "display_qty", "stop_price"};
+    static const std::vector<std::string> known_ilink3_cancel =
+        {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id"};
+    static const std::vector<std::string> known_ilink3_replace =
+        {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "price", "qty"};
+    static const std::vector<std::string> known_ilink3_mass_cancel =
+        {"ts", "instrument", "account"};
 
     const std::vector<std::string>* known = nullptr;
     switch (action.type) {
@@ -221,6 +270,10 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::PublishIndicative: known = &known_publish_indicative; break;
         case ParsedAction::MassCancel:        known = &known_mass_cancel;        break;
         case ParsedAction::MassCancelAll:     known = &known_mass_cancel_all;    break;
+        case ParsedAction::ILink3NewOrder:    known = &known_ilink3_new_order;   break;
+        case ParsedAction::ILink3Cancel:      known = &known_ilink3_cancel;      break;
+        case ParsedAction::ILink3Replace:     known = &known_ilink3_replace;     break;
+        case ParsedAction::ILink3MassCancel:  known = &known_ilink3_mass_cancel; break;
     }
 
     for (const auto& kv_pair : action.fields) {

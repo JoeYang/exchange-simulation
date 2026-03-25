@@ -389,4 +389,268 @@ TEST(JournalParserTest, ExpectationFieldAccessors) {
     EXPECT_EQ(e.get_int("ts"), 1000);
 }
 
+// ---------------------------------------------------------------------------
+// iLink3 ACTION parsing (E2E extension)
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, ParseILink3NewOrder) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::ILink3NewOrder);
+    EXPECT_EQ(a.get_int("ts"), 1000);
+    EXPECT_EQ(a.get_str("instrument"), "ES");
+    EXPECT_EQ(a.get_int("cl_ord_id"), 1);
+    EXPECT_EQ(a.get_str("account"), "FIRM_A");
+    EXPECT_EQ(a.get_str("side"), "BUY");
+    EXPECT_EQ(a.get_int("price"), 50000000);
+    EXPECT_EQ(a.get_int("qty"), 10000);
+    EXPECT_EQ(a.get_str("type"), "LIMIT");
+    EXPECT_EQ(a.get_str("tif"), "DAY");
+}
+
+TEST(JournalParserTest, ParseILink3NewOrderWithOptionalFields) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=STOP_LIMIT "
+        "tif=DAY display_qty=2000 stop_price=49000000\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::ILink3NewOrder);
+    EXPECT_EQ(a.get_int("display_qty"), 2000);
+    EXPECT_EQ(a.get_int("stop_price"), 49000000);
+}
+
+TEST(JournalParserTest, ParseILink3Cancel) {
+    const std::string content =
+        "ACTION ILINK3_CANCEL ts=2000 instrument=ES cl_ord_id=2 orig_cl_ord_id=1\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::ILink3Cancel);
+    EXPECT_EQ(a.get_int("ts"), 2000);
+    EXPECT_EQ(a.get_str("instrument"), "ES");
+    EXPECT_EQ(a.get_int("cl_ord_id"), 2);
+    EXPECT_EQ(a.get_int("orig_cl_ord_id"), 1);
+}
+
+TEST(JournalParserTest, ParseILink3Replace) {
+    const std::string content =
+        "ACTION ILINK3_REPLACE ts=3000 instrument=ES cl_ord_id=3 "
+        "orig_cl_ord_id=1 price=50010000 qty=10000\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::ILink3Replace);
+    EXPECT_EQ(a.get_int("ts"), 3000);
+    EXPECT_EQ(a.get_str("instrument"), "ES");
+    EXPECT_EQ(a.get_int("cl_ord_id"), 3);
+    EXPECT_EQ(a.get_int("orig_cl_ord_id"), 1);
+    EXPECT_EQ(a.get_int("price"), 50010000);
+    EXPECT_EQ(a.get_int("qty"), 10000);
+}
+
+TEST(JournalParserTest, ParseILink3MassCancel) {
+    const std::string content =
+        "ACTION ILINK3_MASS_CANCEL ts=4000 instrument=ES account=FIRM_A\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::ILink3MassCancel);
+    EXPECT_EQ(a.get_int("ts"), 4000);
+    EXPECT_EQ(a.get_str("instrument"), "ES");
+    EXPECT_EQ(a.get_str("account"), "FIRM_A");
+}
+
+// ---------------------------------------------------------------------------
+// E2E EXPECT types (execution reports and market data)
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, ParseExecNewExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT EXEC_NEW ord_id=1 cl_ord_id=1 status=NEW instrument=ES\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    const ParsedExpectation& e = j.entries[0].expectations[0];
+    EXPECT_EQ(e.event_type, "EXEC_NEW");
+    EXPECT_EQ(e.get_int("ord_id"), 1);
+    EXPECT_EQ(e.get_int("cl_ord_id"), 1);
+    EXPECT_EQ(e.get_str("status"), "NEW");
+    EXPECT_EQ(e.get_str("instrument"), "ES");
+}
+
+TEST(JournalParserTest, ParseExecFillExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT EXEC_FILL ord_id=1 cl_ord_id=1 fill_price=50000000 fill_qty=10000 status=FILLED\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    const ParsedExpectation& e = j.entries[0].expectations[0];
+    EXPECT_EQ(e.event_type, "EXEC_FILL");
+    EXPECT_EQ(e.get_int("fill_price"), 50000000);
+    EXPECT_EQ(e.get_int("fill_qty"), 10000);
+    EXPECT_EQ(e.get_str("status"), "FILLED");
+}
+
+TEST(JournalParserTest, ParseExecCancelledExpect) {
+    const std::string content =
+        "ACTION ILINK3_CANCEL ts=2000 instrument=ES cl_ord_id=2 orig_cl_ord_id=1\n"
+        "EXPECT EXEC_CANCELLED ord_id=1 cl_ord_id=2 status=CANCELLED\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    const ParsedExpectation& e = j.entries[0].expectations[0];
+    EXPECT_EQ(e.event_type, "EXEC_CANCELLED");
+    EXPECT_EQ(e.get_str("status"), "CANCELLED");
+}
+
+TEST(JournalParserTest, ParseExecReplacedExpect) {
+    const std::string content =
+        "ACTION ILINK3_REPLACE ts=3000 instrument=ES cl_ord_id=3 "
+        "orig_cl_ord_id=1 price=50010000 qty=10000\n"
+        "EXPECT EXEC_REPLACED ord_id=1 cl_ord_id=3 new_price=50010000 status=REPLACED\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "EXEC_REPLACED");
+    EXPECT_EQ(j.entries[0].expectations[0].get_int("new_price"), 50010000);
+}
+
+TEST(JournalParserTest, ParseExecRejectedExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=0 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT EXEC_REJECTED cl_ord_id=1 reason=INVALID_PRICE\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "EXEC_REJECTED");
+    EXPECT_EQ(j.entries[0].expectations[0].get_str("reason"), "INVALID_PRICE");
+}
+
+TEST(JournalParserTest, ParseExecPartialExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT EXEC_PARTIAL ord_id=1 cl_ord_id=1 fill_price=50000000 fill_qty=5000 "
+        "leaves_qty=5000 status=PARTIALLY_FILLED\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    const ParsedExpectation& e = j.entries[0].expectations[0];
+    EXPECT_EQ(e.event_type, "EXEC_PARTIAL");
+    EXPECT_EQ(e.get_int("fill_qty"), 5000);
+    EXPECT_EQ(e.get_int("leaves_qty"), 5000);
+}
+
+TEST(JournalParserTest, ParseMdBookAddExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT MD_BOOK_ADD instrument=ES side=BUY price=50000000 qty=10000 num_orders=1\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    const ParsedExpectation& e = j.entries[0].expectations[0];
+    EXPECT_EQ(e.event_type, "MD_BOOK_ADD");
+    EXPECT_EQ(e.get_str("instrument"), "ES");
+    EXPECT_EQ(e.get_str("side"), "BUY");
+    EXPECT_EQ(e.get_int("price"), 50000000);
+    EXPECT_EQ(e.get_int("qty"), 10000);
+    EXPECT_EQ(e.get_int("num_orders"), 1);
+}
+
+TEST(JournalParserTest, ParseMdBookUpdateExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT MD_BOOK_UPDATE instrument=ES side=BUY price=50000000 qty=20000 num_orders=2\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "MD_BOOK_UPDATE");
+    EXPECT_EQ(j.entries[0].expectations[0].get_int("qty"), 20000);
+}
+
+TEST(JournalParserTest, ParseMdBookDeleteExpect) {
+    const std::string content =
+        "ACTION ILINK3_CANCEL ts=2000 instrument=ES cl_ord_id=2 orig_cl_ord_id=1\n"
+        "EXPECT MD_BOOK_DELETE instrument=ES side=BUY price=50000000\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "MD_BOOK_DELETE");
+    EXPECT_EQ(j.entries[0].expectations[0].get_int("price"), 50000000);
+}
+
+TEST(JournalParserTest, ParseMdTradeExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=SELL price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT MD_TRADE instrument=ES price=50000000 qty=10000 aggressor_side=SELL\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "MD_TRADE");
+    EXPECT_EQ(j.entries[0].expectations[0].get_str("aggressor_side"), "SELL");
+}
+
+TEST(JournalParserTest, ParseMdStatusExpect) {
+    const std::string content =
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT MD_STATUS instrument=ES state=PRE_OPEN\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 1u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "MD_STATUS");
+    EXPECT_EQ(j.entries[0].expectations[0].get_str("state"), "PRE_OPEN");
+}
+
+// ---------------------------------------------------------------------------
+// Full E2E journal with iLink3 actions and mixed expects
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, FullE2EJournalParsing) {
+    const std::string content =
+        "CONFIG match_algo=FIFO tick_size=100 lot_size=10000\n"
+        "\n"
+        "ACTION ILINK3_NEW_ORDER ts=1000 instrument=ES cl_ord_id=1 "
+        "account=FIRM_A side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT EXEC_NEW ord_id=1 cl_ord_id=1 status=NEW instrument=ES\n"
+        "EXPECT MD_BOOK_ADD instrument=ES side=BUY price=50000000 qty=10000 num_orders=1\n"
+        "\n"
+        "ACTION ILINK3_NEW_ORDER ts=2000 instrument=ES cl_ord_id=2 "
+        "account=FIRM_B side=SELL price=50000000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT EXEC_NEW ord_id=2 cl_ord_id=2 status=NEW instrument=ES\n"
+        "EXPECT EXEC_FILL ord_id=2 cl_ord_id=2 fill_price=50000000 fill_qty=10000 status=FILLED\n"
+        "EXPECT MD_TRADE instrument=ES price=50000000 qty=10000 aggressor_side=SELL\n"
+        "EXPECT MD_BOOK_DELETE instrument=ES side=BUY price=50000000\n"
+        "\n"
+        "ACTION ILINK3_MASS_CANCEL ts=5000 instrument=ES account=FIRM_A\n";
+
+    Journal j = JournalParser::parse_string(content);
+
+    EXPECT_EQ(j.config.match_algo, "FIFO");
+    ASSERT_EQ(j.entries.size(), 3u);
+
+    // First entry: iLink3 new order with exec report + market data
+    EXPECT_EQ(j.entries[0].action.type, ParsedAction::ILink3NewOrder);
+    EXPECT_EQ(j.entries[0].action.get_str("instrument"), "ES");
+    ASSERT_EQ(j.entries[0].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "EXEC_NEW");
+    EXPECT_EQ(j.entries[0].expectations[1].event_type, "MD_BOOK_ADD");
+
+    // Second entry: crossing order with fill + trade + book delete
+    EXPECT_EQ(j.entries[1].action.type, ParsedAction::ILink3NewOrder);
+    ASSERT_EQ(j.entries[1].expectations.size(), 4u);
+    EXPECT_EQ(j.entries[1].expectations[0].event_type, "EXEC_NEW");
+    EXPECT_EQ(j.entries[1].expectations[1].event_type, "EXEC_FILL");
+    EXPECT_EQ(j.entries[1].expectations[2].event_type, "MD_TRADE");
+    EXPECT_EQ(j.entries[1].expectations[3].event_type, "MD_BOOK_DELETE");
+
+    // Third entry: mass cancel (no expects in this test)
+    EXPECT_EQ(j.entries[2].action.type, ParsedAction::ILink3MassCancel);
+    EXPECT_EQ(j.entries[2].expectations.size(), 0u);
+}
+
 }  // namespace exchange

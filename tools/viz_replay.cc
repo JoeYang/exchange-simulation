@@ -178,6 +178,15 @@ void dispatch_action(EngineT& engine, const ParsedAction& action) {
         break;
     }
 
+    // iLink3 E2E actions are not supported by the viz replay tool.
+    case ParsedAction::ILink3NewOrder:
+    case ParsedAction::ILink3Cancel:
+    case ParsedAction::ILink3Replace:
+    case ParsedAction::ILink3MassCancel:
+        throw std::runtime_error(
+            "iLink3 actions require the E2E test runner, "
+            "not the viz replay tool");
+
     }  // switch
 }
 

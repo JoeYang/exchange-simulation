@@ -761,4 +761,151 @@ TEST(JournalWriterTest, MultipleEntriesPreserveOrder) {
     EXPECT_EQ(j.entries[2].action.get_int("ord_id"), 1);
 }
 
+// ---------------------------------------------------------------------------
+// iLink3 ACTION serialization (E2E extension)
+// ---------------------------------------------------------------------------
+
+static ParsedAction make_ilink3_new_order(int64_t ts, const std::string& instrument,
+                                           int64_t cl_ord_id, const std::string& account,
+                                           const std::string& side, int64_t price,
+                                           int64_t qty, const std::string& type,
+                                           const std::string& tif) {
+    ParsedAction a;
+    a.type = ParsedAction::ILink3NewOrder;
+    a.fields["ts"]         = std::to_string(ts);
+    a.fields["instrument"] = instrument;
+    a.fields["cl_ord_id"]  = std::to_string(cl_ord_id);
+    a.fields["account"]    = account;
+    a.fields["side"]       = side;
+    a.fields["price"]      = std::to_string(price);
+    a.fields["qty"]        = std::to_string(qty);
+    a.fields["type"]       = type;
+    a.fields["tif"]        = tif;
+    return a;
+}
+
+static ParsedAction make_ilink3_cancel(int64_t ts, const std::string& instrument,
+                                        int64_t cl_ord_id, int64_t orig_cl_ord_id) {
+    ParsedAction a;
+    a.type = ParsedAction::ILink3Cancel;
+    a.fields["ts"]              = std::to_string(ts);
+    a.fields["instrument"]      = instrument;
+    a.fields["cl_ord_id"]       = std::to_string(cl_ord_id);
+    a.fields["orig_cl_ord_id"]  = std::to_string(orig_cl_ord_id);
+    return a;
+}
+
+static ParsedAction make_ilink3_replace(int64_t ts, const std::string& instrument,
+                                         int64_t cl_ord_id, int64_t orig_cl_ord_id,
+                                         int64_t price, int64_t qty) {
+    ParsedAction a;
+    a.type = ParsedAction::ILink3Replace;
+    a.fields["ts"]              = std::to_string(ts);
+    a.fields["instrument"]      = instrument;
+    a.fields["cl_ord_id"]       = std::to_string(cl_ord_id);
+    a.fields["orig_cl_ord_id"]  = std::to_string(orig_cl_ord_id);
+    a.fields["price"]           = std::to_string(price);
+    a.fields["qty"]             = std::to_string(qty);
+    return a;
+}
+
+static ParsedAction make_ilink3_mass_cancel(int64_t ts, const std::string& instrument,
+                                             const std::string& account) {
+    ParsedAction a;
+    a.type = ParsedAction::ILink3MassCancel;
+    a.fields["ts"]         = std::to_string(ts);
+    a.fields["instrument"] = instrument;
+    a.fields["account"]    = account;
+    return a;
+}
+
+TEST(JournalWriterTest, ILink3NewOrderActionLine) {
+    ParsedAction a = make_ilink3_new_order(1000, "ES", 1, "FIRM_A",
+                                            "BUY", 50000000, 10000, "LIMIT", "DAY");
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ILINK3_NEW_ORDER"), std::string::npos);
+    EXPECT_NE(line.find("ts=1000"), std::string::npos);
+    EXPECT_NE(line.find("instrument=ES"), std::string::npos);
+    EXPECT_NE(line.find("cl_ord_id=1"), std::string::npos);
+    EXPECT_NE(line.find("account=FIRM_A"), std::string::npos);
+    EXPECT_NE(line.find("side=BUY"), std::string::npos);
+    EXPECT_NE(line.find("price=50000000"), std::string::npos);
+    EXPECT_NE(line.find("qty=10000"), std::string::npos);
+    EXPECT_NE(line.find("type=LIMIT"), std::string::npos);
+    EXPECT_NE(line.find("tif=DAY"), std::string::npos);
+}
+
+TEST(JournalWriterTest, ILink3CancelActionLine) {
+    ParsedAction a = make_ilink3_cancel(2000, "ES", 2, 1);
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ILINK3_CANCEL"), std::string::npos);
+    EXPECT_NE(line.find("ts=2000"), std::string::npos);
+    EXPECT_NE(line.find("instrument=ES"), std::string::npos);
+    EXPECT_NE(line.find("cl_ord_id=2"), std::string::npos);
+    EXPECT_NE(line.find("orig_cl_ord_id=1"), std::string::npos);
+}
+
+TEST(JournalWriterTest, ILink3ReplaceActionLine) {
+    ParsedAction a = make_ilink3_replace(3000, "ES", 3, 1, 50010000, 10000);
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ILINK3_REPLACE"), std::string::npos);
+    EXPECT_NE(line.find("ts=3000"), std::string::npos);
+    EXPECT_NE(line.find("instrument=ES"), std::string::npos);
+    EXPECT_NE(line.find("cl_ord_id=3"), std::string::npos);
+    EXPECT_NE(line.find("orig_cl_ord_id=1"), std::string::npos);
+    EXPECT_NE(line.find("price=50010000"), std::string::npos);
+    EXPECT_NE(line.find("qty=10000"), std::string::npos);
+}
+
+TEST(JournalWriterTest, ILink3MassCancelActionLine) {
+    ParsedAction a = make_ilink3_mass_cancel(4000, "ES", "FIRM_A");
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ILINK3_MASS_CANCEL"), std::string::npos);
+    EXPECT_NE(line.find("ts=4000"), std::string::npos);
+    EXPECT_NE(line.find("instrument=ES"), std::string::npos);
+    EXPECT_NE(line.find("account=FIRM_A"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// iLink3 round-trip: writer → parser
+// ---------------------------------------------------------------------------
+
+TEST(JournalWriterTest, ILink3RoundTripThroughParser) {
+    ParsedConfig cfg = default_config();
+
+    JournalEntry e1;
+    e1.action = make_ilink3_new_order(1000, "ES", 1, "FIRM_A",
+                                       "BUY", 50000000, 10000, "LIMIT", "DAY");
+    e1.expectations.push_back(ParsedExpectation{"EXEC_NEW", {{"ord_id", "1"}, {"cl_ord_id", "1"}, {"status", "NEW"}, {"instrument", "ES"}}});
+    e1.expectations.push_back(ParsedExpectation{"MD_BOOK_ADD", {{"instrument", "ES"}, {"side", "BUY"}, {"price", "50000000"}, {"qty", "10000"}, {"num_orders", "1"}}});
+
+    JournalEntry e2;
+    e2.action = make_ilink3_cancel(2000, "ES", 2, 1);
+    e2.expectations.push_back(ParsedExpectation{"EXEC_CANCELLED", {{"ord_id", "1"}, {"cl_ord_id", "2"}, {"status", "CANCELLED"}}});
+    e2.expectations.push_back(ParsedExpectation{"MD_BOOK_DELETE", {{"instrument", "ES"}, {"side", "BUY"}, {"price", "50000000"}}});
+
+    JournalEntry e3;
+    e3.action = make_ilink3_mass_cancel(5000, "ES", "FIRM_A");
+
+    std::vector<JournalEntry> entries = {e1, e2, e3};
+    std::string out = JournalWriter::to_string(cfg, entries);
+    Journal j = JournalParser::parse_string(out);
+
+    ASSERT_EQ(j.entries.size(), 3u);
+    EXPECT_EQ(j.entries[0].action.type, ParsedAction::ILink3NewOrder);
+    EXPECT_EQ(j.entries[0].action.get_str("instrument"), "ES");
+    EXPECT_EQ(j.entries[0].action.get_int("cl_ord_id"), 1);
+    ASSERT_EQ(j.entries[0].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "EXEC_NEW");
+    EXPECT_EQ(j.entries[0].expectations[1].event_type, "MD_BOOK_ADD");
+
+    EXPECT_EQ(j.entries[1].action.type, ParsedAction::ILink3Cancel);
+    ASSERT_EQ(j.entries[1].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[1].expectations[0].event_type, "EXEC_CANCELLED");
+    EXPECT_EQ(j.entries[1].expectations[1].event_type, "MD_BOOK_DELETE");
+
+    EXPECT_EQ(j.entries[2].action.type, ParsedAction::ILink3MassCancel);
+    EXPECT_EQ(j.entries[2].expectations.size(), 0u);
+}
+
 }  // namespace exchange

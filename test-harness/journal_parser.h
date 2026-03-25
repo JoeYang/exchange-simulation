@@ -30,7 +30,9 @@ struct ParsedConfig {
 struct ParsedAction {
     enum Type { NewOrder, Cancel, Modify, TriggerExpiry,
                 SetSessionState, ExecuteAuction, PublishIndicative,
-                MassCancel, MassCancelAll };
+                MassCancel, MassCancelAll,
+                // iLink3 E2E action types (client-side order entry)
+                ILink3NewOrder, ILink3Cancel, ILink3Replace, ILink3MassCancel };
 
     Type type;
     std::unordered_map<std::string, std::string> fields;

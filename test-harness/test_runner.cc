@@ -252,6 +252,16 @@ void JournalTestRunner::execute_action(EngineT& engine,
         break;
     }
 
+    // iLink3 E2E actions are handled by the E2E test runner, not
+    // the unit-test runner which drives the engine directly.
+    case ParsedAction::ILink3NewOrder:
+    case ParsedAction::ILink3Cancel:
+    case ParsedAction::ILink3Replace:
+    case ParsedAction::ILink3MassCancel:
+        throw std::runtime_error(
+            "iLink3 actions require the E2E test runner, "
+            "not the unit-test JournalTestRunner");
+
     }  // switch
 }
 

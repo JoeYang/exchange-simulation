@@ -148,6 +148,14 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::MassCancel;
             } else if (type_str == "MASS_CANCEL_ALL") {
                 atype = ParsedAction::MassCancelAll;
+            } else if (type_str == "ILINK3_NEW_ORDER") {
+                atype = ParsedAction::ILink3NewOrder;
+            } else if (type_str == "ILINK3_CANCEL") {
+                atype = ParsedAction::ILink3Cancel;
+            } else if (type_str == "ILINK3_REPLACE") {
+                atype = ParsedAction::ILink3Replace;
+            } else if (type_str == "ILINK3_MASS_CANCEL") {
+                atype = ParsedAction::ILink3MassCancel;
             } else {
                 throw std::runtime_error(
                     source_name + ":" + std::to_string(line_number) +
