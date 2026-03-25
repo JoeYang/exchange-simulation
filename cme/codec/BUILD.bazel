@@ -53,6 +53,27 @@ cc_test(
 )
 
 cc_library(
+    name = "ilink3_decoder",
+    hdrs = ["ilink3_decoder.h"],
+    deps = [
+        ":ilink3_messages",
+        ":sbe_header",
+        "//exchange-core:matching_engine",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ilink3_decoder_test",
+    srcs = ["ilink3_decoder_test.cc"],
+    deps = [
+        ":ilink3_decoder",
+        ":ilink3_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "mdp3_messages",
     hdrs = ["mdp3_messages.h"],
     deps = [":sbe_header"],
