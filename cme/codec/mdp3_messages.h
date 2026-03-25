@@ -114,7 +114,10 @@ struct __attribute__((packed)) GroupHeader8Byte {
     void decode() { block_length = decode_le16(block_length); }
 
     char* encode_to(char* buf) const {
-        GroupHeader8Byte h = *this;
+        GroupHeader8Byte h{};
+        std::memset(&h, 0, sizeof(h));
+        h.block_length = block_length;
+        h.num_in_group = num_in_group;
         h.encode();
         std::memcpy(buf, &h, sizeof(h));
         return buf + sizeof(h);
@@ -188,6 +191,7 @@ struct __attribute__((packed)) RefreshBookEntry {
     uint8_t  md_update_action;            // offset 25 — MDUpdateAction
     char     md_entry_type;               // offset 26 — MDEntryTypeBook
     int32_t  tradeable_size;              // offset 27 — Int32NULL (sinceVersion=10)
+                                         // WARNING: unaligned at offset 27; use memcpy to read/write
     uint8_t  padding;                     // offset 31
 };
 

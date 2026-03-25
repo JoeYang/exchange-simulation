@@ -268,6 +268,7 @@ TEST(Mdp3MessagesTest, RefreshBookEntryRoundTrip) {
     EXPECT_EQ(decoded.security_id, 12345);
     EXPECT_EQ(decoded.md_price_level, 1u);
     EXPECT_EQ(decoded.md_entry_type, '0');
+    EXPECT_EQ(decoded.tradeable_size, 100);
 }
 
 TEST(Mdp3MessagesTest, InstrumentDefinitionRoundTrip) {

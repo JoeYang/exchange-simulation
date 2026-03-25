@@ -98,7 +98,7 @@ private:
         // Grow buffer if needed for large messages. Only called when a
         // frame header indicates more space is required — not on every recv.
         void ensure_capacity(size_t needed) {
-            if (recv_buf.size() - read_pos < needed) {
+            if (recv_buf.size() - write_pos < needed) {
                 compact();
                 if (recv_buf.size() < needed) {
                     recv_buf.resize(needed);
