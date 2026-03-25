@@ -91,8 +91,8 @@ int main(int argc, char* argv[]) {
     ilink_ctx.uuid = 1;
     ilink_ctx.seq_num = 1;
     ilink_ctx.security_id = static_cast<int32_t>(products[0].instrument_id);
-    std::memcpy(ilink_ctx.sender_id, "CME-SIM ", 8);
-    std::memcpy(ilink_ctx.location, "US,IL   ", 8);
+    std::memcpy(ilink_ctx.sender_id, "CME-SIM", 7);
+    std::memcpy(ilink_ctx.location, "US,IL", sizeof(ilink_ctx.location));
     ilink_ctx.party_details_list_req_id = 1;
 
     ILink3ReportPublisher report_pub(ilink_ctx);

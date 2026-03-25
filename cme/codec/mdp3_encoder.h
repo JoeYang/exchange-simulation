@@ -269,7 +269,8 @@ inline size_t encode_market_status(
     msg.security_trading_event = static_cast<uint8_t>(SecurityTradingEvent::NoEvent);
 
     std::memcpy(p, &msg, sizeof(msg));
-    return sizeof(MessageHeader) + sizeof(SecurityStatus30);
+    p += sizeof(msg);
+    return static_cast<size_t>(p - buf);
 }
 
 // Maximum buffer size needed for any single MDP3 encoded message.

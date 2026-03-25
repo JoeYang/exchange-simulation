@@ -47,7 +47,7 @@ public:
             state.order.id = e.id;
             pending_.erase(it);
         }
-        orders_[e.id] = state;
+        orders_[order_key(e.id)] = state;
 
         ctx_.seq_num++;
         size_t n = sbe::ilink3::encode_exec_new(
@@ -64,7 +64,7 @@ public:
 
     void on_order_filled(const OrderFilled& e) {
         // Emit fill report for the resting order.
-        auto it = orders_.find(e.resting_id);
+        auto it = orders_.find(order_key(e.resting_id));
         Order resting_order{};
         if (it != orders_.end()) {
             resting_order = it->second.order;
@@ -77,7 +77,7 @@ public:
         store_report(report_buf_, n, sbe::ilink3::EXEC_REPORT_TRADE_OUTRIGHT_ID);
 
         // Emit fill report for the aggressor order.
-        auto ag_it = orders_.find(e.aggressor_id);
+        auto ag_it = orders_.find(order_key(e.aggressor_id));
         if (ag_it != orders_.end()) {
             Order aggressor_order = ag_it->second.order;
             aggressor_order.filled_quantity += e.quantity;
@@ -105,7 +105,7 @@ public:
         fill_evt.ts = e.ts;
 
         // Emit fill report for the resting order.
-        auto it = orders_.find(e.resting_id);
+        auto it = orders_.find(order_key(e.resting_id));
         Order resting_order{};
         if (it != orders_.end()) {
             resting_order = it->second.order;
@@ -119,7 +119,7 @@ public:
         store_report(report_buf_, n, sbe::ilink3::EXEC_REPORT_TRADE_OUTRIGHT_ID);
 
         // Emit fill report for the aggressor order.
-        auto ag_it = orders_.find(e.aggressor_id);
+        auto ag_it = orders_.find(order_key(e.aggressor_id));
         if (ag_it != orders_.end()) {
             Order aggressor_order = ag_it->second.order;
             aggressor_order.filled_quantity += e.quantity;
@@ -133,7 +133,7 @@ public:
     }
 
     void on_order_cancelled(const OrderCancelled& e) {
-        auto it = orders_.find(e.id);
+        auto it = orders_.find(order_key(e.id));
         Order order{};
         if (it != orders_.end()) {
             order = it->second.order;
@@ -153,7 +153,7 @@ public:
     }
 
     void on_order_modified(const OrderModified& e) {
-        auto it = orders_.find(e.id);
+        auto it = orders_.find(order_key(e.id));
         if (it != orders_.end()) {
             it->second.order.price = e.new_price;
             it->second.order.quantity = e.new_qty;
@@ -225,8 +225,15 @@ private:
         Order order{};
     };
 
+    // Composite key for orders_: packs (security_id, order_id) so that
+    // per-engine order IDs don't collide across instruments.
+    uint64_t order_key(OrderId id) const {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(ctx_.security_id)) << 32)
+             | static_cast<uint64_t>(id);
+    }
+
     sbe::ilink3::EncodeContext ctx_;
-    std::unordered_map<OrderId, OrderState> orders_;
+    std::unordered_map<uint64_t, OrderState> orders_;   // keyed by order_key()
     std::unordered_map<uint64_t, Order> pending_;  // keyed by client_order_id
     std::vector<EncodedReport> reports_;
     char report_buf_[EncodedReport::MAX_SIZE]{};

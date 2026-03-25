@@ -29,11 +29,11 @@ enum class DecodeResult : uint8_t {
 // Factor = 1e9 / 10000 = 100000.
 // ---------------------------------------------------------------------------
 
-constexpr int64_t PRICE9_TO_ENGINE_FACTOR = 100000;  // 1e9 / PRICE_SCALE
+constexpr int64_t PRICE9_TO_ENGINE_DIVISOR = 100000;  // 1e9 / PRICE_SCALE
 
 inline Price price9_to_engine(PRICE9 p) {
     if (p.is_null()) return 0;
-    return static_cast<Price>(p.mantissa / PRICE9_TO_ENGINE_FACTOR);
+    return static_cast<Price>(p.mantissa / PRICE9_TO_ENGINE_DIVISOR);
 }
 
 inline Quantity wire_qty_to_engine(uint32_t q) {
@@ -211,6 +211,9 @@ inline DecodeResult decode_exec_trade_525(
 
     if (gh.num_in_group > MAX_FILL_ENTRIES) return DecodeResult::kGroupOverflow;
     out.num_fills = gh.num_in_group;
+
+    if (gh.num_in_group > 0 && gh.block_length < sizeof(FillEntry))
+        return DecodeResult::kBadBlockLength;
 
     for (uint8_t i = 0; i < gh.num_in_group; ++i) {
         if (remaining < gh.block_length) return DecodeResult::kBufferTooShort;
