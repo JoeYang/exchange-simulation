@@ -10,8 +10,9 @@
 namespace exchange {
 namespace {
 
-// Use a link-local multicast group for loopback testing.
-constexpr const char* kTestGroup = "224.0.0.1";
+// Use an administratively-scoped multicast group for loopback testing.
+// 239.x.x.x is reserved for local/org use; 224.0.0.x is IANA-reserved.
+constexpr const char* kTestGroup = "239.0.0.1";
 
 // Helper: pick a port unlikely to collide. Each test uses a different port
 // to allow parallel execution.
@@ -255,6 +256,63 @@ TEST(UdpMulticastTest, SequenceNumberIncrement) {
         ASSERT_EQ(publisher.send("x", 1), SendResult::kOk);
         EXPECT_EQ(publisher.sequence_number(), i + 1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Invalid group address throws on publisher construction
+// ---------------------------------------------------------------------------
+
+TEST(UdpMulticastTest, InvalidGroupAddressThrows) {
+    EXPECT_THROW(
+        { UdpMulticastPublisher pub("not-an-ip", 12345); },
+        std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// Zero-length payload round-trip
+// ---------------------------------------------------------------------------
+
+TEST(UdpMulticastTest, ZeroLengthPayload) {
+    constexpr uint16_t port = kBasePort + 9;
+
+    UdpMulticastReceiver receiver;
+    receiver.join_group(kTestGroup, port);
+    SetRecvTimeout(receiver.fd(), 2000);
+
+    UdpMulticastPublisher publisher(kTestGroup, port);
+    ASSERT_EQ(publisher.send("", 0), SendResult::kOk);
+
+    // Should receive exactly the 4-byte sequence header with no payload.
+    char buf[64]{};
+    ssize_t n = receiver.receive(buf, sizeof(buf));
+    ASSERT_EQ(n, static_cast<ssize_t>(sizeof(McastSeqHeader)));
+    auto hdr = ExtractSeqHeader(buf);
+    EXPECT_EQ(hdr.seq_num, 0u);
+}
+
+// ---------------------------------------------------------------------------
+// receive() before join_group() returns error
+// ---------------------------------------------------------------------------
+
+TEST(UdpMulticastTest, ReceiveBeforeJoinReturnsError) {
+    UdpMulticastReceiver receiver;
+    char buf[64]{};
+    ssize_t n = receiver.receive(buf, sizeof(buf));
+    EXPECT_EQ(n, -1);
+    EXPECT_EQ(errno, EBADF);
+}
+
+// ---------------------------------------------------------------------------
+// TTL out of range throws
+// ---------------------------------------------------------------------------
+
+TEST(UdpMulticastTest, TtlOutOfRangeThrows) {
+    EXPECT_THROW(
+        { UdpMulticastPublisher pub(kTestGroup, 12345, -1); },
+        std::runtime_error);
+    EXPECT_THROW(
+        { UdpMulticastPublisher pub(kTestGroup, 12345, 256); },
+        std::runtime_error);
 }
 
 }  // namespace

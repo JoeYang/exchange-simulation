@@ -47,7 +47,10 @@ public:
     // loopback: if true, sender can receive its own messages (needed for tests)
     UdpMulticastPublisher(const char* group, uint16_t port,
                           int ttl = 1, bool loopback = true) {
-        fd_ = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+        if (ttl < 0 || ttl > 255)
+            throw std::runtime_error("TTL must be in range [0, 255]");
+
+        fd_ = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd_ < 0) throw std::runtime_error("socket() failed");
 
         // Set multicast TTL.
@@ -108,7 +111,11 @@ public:
         msg.msg_iov = iov;
         msg.msg_iovlen = 2;
 
-        ssize_t sent = ::sendmsg(fd_, &msg, MSG_DONTWAIT);
+        ssize_t sent;
+        do {
+            sent = ::sendmsg(fd_, &msg, MSG_DONTWAIT);
+        } while (sent < 0 && errno == EINTR);
+
         if (sent >= 0) {
             ++seq_;
             return SendResult::kOk;
@@ -147,7 +154,7 @@ public:
         if (joined_) leave_group();
         if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
 
-        fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+        fd_ = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         if (fd_ < 0) throw std::runtime_error("socket() failed");
 
         // Allow multiple receivers on the same port (useful for tests).
@@ -194,7 +201,9 @@ public:
 
     // Receive a datagram. Returns bytes received, or -1 on error.
     // Blocks until data arrives (caller should set a receive timeout if needed).
+    // Returns -1 with errno=EBADF if called before join_group().
     ssize_t receive(char* buffer, size_t max_len) {
+        if (fd_ < 0) { errno = EBADF; return -1; }
         return ::recvfrom(fd_, buffer, max_len, 0, nullptr, nullptr);
     }
 
