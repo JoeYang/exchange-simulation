@@ -22,6 +22,68 @@ constexpr uint16_t EXEC_REPORT_CANCEL_ID             = 534;
 constexpr uint16_t ORDER_CANCEL_REJECT_ID            = 535;
 
 // ---------------------------------------------------------------------------
+// iLink3 field enumerations — values from ilinkbinary.xml <enum> definitions.
+// ---------------------------------------------------------------------------
+
+enum class SideReq : uint8_t {
+    Buy  = 1,
+    Sell = 2,
+};
+
+enum class OrdType : uint8_t {
+    MarketWithProtection = 1,
+    Limit                = 2,
+    StopWithProtection   = 3,
+    StopLimit            = 4,
+};
+
+enum class TimeInForce : uint8_t {
+    Day = 0,
+    GTC = 1,  // Good Till Cancel
+    FAK = 3,  // Fill and Kill (IOC)
+    FOK = 4,  // Fill or Kill
+    GTD = 6,  // Good Till Date
+};
+
+enum class ExecType : uint8_t {
+    New          = static_cast<uint8_t>('0'),
+    Canceled     = static_cast<uint8_t>('4'),
+    Replaced     = static_cast<uint8_t>('5'),
+    Rejected     = static_cast<uint8_t>('8'),
+    Expired      = static_cast<uint8_t>('C'),
+    Trade        = static_cast<uint8_t>('F'),
+    TradeCancel  = static_cast<uint8_t>('H'),
+    Status       = static_cast<uint8_t>('I'),
+};
+
+enum class OrdStatus : uint8_t {
+    New             = static_cast<uint8_t>('0'),
+    PartiallyFilled = static_cast<uint8_t>('1'),
+    Filled          = static_cast<uint8_t>('2'),
+    Canceled        = static_cast<uint8_t>('4'),
+    Rejected        = static_cast<uint8_t>('8'),
+    Expired         = static_cast<uint8_t>('C'),
+    Undefined       = static_cast<uint8_t>('U'),  // CancelReject status
+};
+
+enum class MassActionScope : uint8_t {
+    Instrument    = 1,
+    All           = 7,
+    MarketSegment = 9,
+    ProductGroup  = 10,
+};
+
+enum class ManualOrdInd : uint8_t {
+    Automated = 0,
+    Manual    = 1,
+};
+
+enum class ExecMode : uint8_t {
+    Aggressive = static_cast<uint8_t>('A'),
+    Passive    = static_cast<uint8_t>('P'),
+};
+
+// ---------------------------------------------------------------------------
 // Client -> Exchange: NewOrderSingle (514)
 //
 // blockLength = 116 bytes.  Schema: ilinkbinary.xml line 481.

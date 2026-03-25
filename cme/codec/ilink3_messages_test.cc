@@ -361,5 +361,73 @@ TEST(ILink3TemplateIds, AllMatch) {
     EXPECT_EQ(OrderCancelReject535::TEMPLATE_ID, ORDER_CANCEL_REJECT_ID);
 }
 
+// ---------------------------------------------------------------------------
+// Enum values match schema definitions.
+// ---------------------------------------------------------------------------
+
+TEST(ILink3Enums, Side) {
+    EXPECT_EQ(static_cast<uint8_t>(SideReq::Buy), 1);
+    EXPECT_EQ(static_cast<uint8_t>(SideReq::Sell), 2);
+}
+
+TEST(ILink3Enums, OrdType) {
+    EXPECT_EQ(static_cast<uint8_t>(OrdType::MarketWithProtection), 1);
+    EXPECT_EQ(static_cast<uint8_t>(OrdType::Limit), 2);
+    EXPECT_EQ(static_cast<uint8_t>(OrdType::StopWithProtection), 3);
+    EXPECT_EQ(static_cast<uint8_t>(OrdType::StopLimit), 4);
+}
+
+TEST(ILink3Enums, TimeInForce) {
+    EXPECT_EQ(static_cast<uint8_t>(TimeInForce::Day), 0);
+    EXPECT_EQ(static_cast<uint8_t>(TimeInForce::GTC), 1);
+    EXPECT_EQ(static_cast<uint8_t>(TimeInForce::FAK), 3);
+    EXPECT_EQ(static_cast<uint8_t>(TimeInForce::FOK), 4);
+    EXPECT_EQ(static_cast<uint8_t>(TimeInForce::GTD), 6);
+}
+
+TEST(ILink3Enums, ExecType) {
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::New), '0');
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::Canceled), '4');
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::Replaced), '5');
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::Rejected), '8');
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::Expired), 'C');
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::Trade), 'F');
+    EXPECT_EQ(static_cast<uint8_t>(ExecType::Status), 'I');
+}
+
+TEST(ILink3Enums, OrdStatus) {
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::New), '0');
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::PartiallyFilled), '1');
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::Filled), '2');
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::Canceled), '4');
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::Rejected), '8');
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::Expired), 'C');
+    EXPECT_EQ(static_cast<uint8_t>(OrdStatus::Undefined), 'U');
+}
+
+TEST(ILink3Enums, MassActionScope) {
+    EXPECT_EQ(static_cast<uint8_t>(MassActionScope::Instrument), 1);
+    EXPECT_EQ(static_cast<uint8_t>(MassActionScope::All), 7);
+    EXPECT_EQ(static_cast<uint8_t>(MassActionScope::MarketSegment), 9);
+    EXPECT_EQ(static_cast<uint8_t>(MassActionScope::ProductGroup), 10);
+}
+
+TEST(ILink3Enums, ExecMode) {
+    EXPECT_EQ(static_cast<uint8_t>(ExecMode::Aggressive), 'A');
+    EXPECT_EQ(static_cast<uint8_t>(ExecMode::Passive), 'P');
+}
+
+// Enums fit in uint8_t (single byte on wire)
+TEST(ILink3Enums, AllSingleByte) {
+    EXPECT_EQ(sizeof(SideReq), 1u);
+    EXPECT_EQ(sizeof(OrdType), 1u);
+    EXPECT_EQ(sizeof(TimeInForce), 1u);
+    EXPECT_EQ(sizeof(ExecType), 1u);
+    EXPECT_EQ(sizeof(OrdStatus), 1u);
+    EXPECT_EQ(sizeof(MassActionScope), 1u);
+    EXPECT_EQ(sizeof(ManualOrdInd), 1u);
+    EXPECT_EQ(sizeof(ExecMode), 1u);
+}
+
 }  // namespace
 }  // namespace exchange::cme::sbe::ilink3

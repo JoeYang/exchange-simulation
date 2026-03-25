@@ -94,6 +94,19 @@ cc_test(
     deps = [":tcp_server", "@googletest//:gtest_main"],
 )
 
+# --- Task 22: Pcap Reader ---
+cc_library(
+    name = "pcap_reader",
+    hdrs = ["pcap_reader.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "pcap_reader_test",
+    srcs = ["pcap_reader_test.cc"],
+    deps = [":pcap_reader", "@googletest//:gtest_main"],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
