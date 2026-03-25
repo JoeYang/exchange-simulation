@@ -1,11 +1,15 @@
 #pragma once
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
+#include <functional>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 namespace exchange {
 
@@ -16,90 +20,125 @@ enum class TransportProto : uint8_t {
     kOther = 0,
 };
 
-// A single extracted packet payload with metadata.
+// A parsed packet with zero-copy pointers into the mmap'd pcap file.
+// No heap allocation — payload is a view, not a copy.
 struct PcapPacket {
-    uint32_t ts_sec;         // Capture timestamp (seconds since epoch).
-    uint32_t ts_usec;        // Sub-second portion (microseconds or nanoseconds).
+    uint64_t ts_ns;          // Capture timestamp in nanoseconds since epoch.
     TransportProto proto;    // TCP or UDP.
     uint32_t src_ip;         // Source IP (network byte order).
     uint32_t dst_ip;         // Destination IP (network byte order).
     uint16_t src_port;       // Source port (host byte order).
     uint16_t dst_port;       // Destination port (host byte order).
-    std::vector<uint8_t> payload;  // Transport-layer payload (after UDP/TCP header).
+    const uint8_t* payload;  // Pointer into mmap'd region (zero-copy).
+    size_t payload_len;      // Payload length in bytes.
 };
 
-// Reads pcap (classic) and pcapng files, extracting UDP and TCP payloads.
-//
-// Usage:
-//   PcapReader reader("capture.pcap");
-//   PcapPacket pkt;
-//   while (reader.next(pkt)) {
-//       // pkt.payload contains the transport payload
-//   }
+// Callback signature for forEachPacket.
+using PcapCallback = std::function<void(const PcapPacket& pkt)>;
+
+// Memory-mapped pcap/pcapng reader. Zero-copy: packet payloads are pointers
+// directly into the mmap'd file — no per-packet allocation.
 //
 // Supports:
-//   - Classic pcap: both native and swapped byte order
-//   - Pcapng: Section Header Block + Interface Description Block + Enhanced
-//     Packet Block (the standard tcpdump/wireshark output format)
-//   - Ethernet (link type 1) + IPv4 only; other link types are skipped
+//   - Classic pcap: native (0xa1b2c3d4) and swapped (0xd4c3b2a1) byte order
+//   - Classic pcap nanosecond variants (0xa1b23c4d / 0x4d3cb2a1)
+//   - Pcapng: SHB + IDB + Enhanced Packet Blocks
+//   - Ethernet (link type 1) + IPv4 + TCP/UDP
 //
 // Limitations:
 //   - IPv6 not supported (packets skipped)
 //   - VLAN tags not supported (packets skipped)
-//   - IP options are handled (IHL field), TCP data offset is handled
-//   - Fragmented IP packets are not reassembled (first fragment only)
+//   - Fragmented IP packets not reassembled (first fragment only)
 class PcapReader {
 public:
     enum class Format { kClassicPcap, kPcapng };
 
     explicit PcapReader(const std::string& path) {
-        file_.open(path, std::ios::binary);
-        if (!file_) throw std::runtime_error("cannot open pcap file: " + path);
+        fd_ = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd_ < 0) throw std::runtime_error("cannot open pcap file: " + path);
+
+        struct stat st{};
+        if (::fstat(fd_, &st) < 0) { ::close(fd_); throw std::runtime_error("fstat failed"); }
+        file_size_ = static_cast<size_t>(st.st_size);
+
+        if (file_size_ < 4) { ::close(fd_); throw std::runtime_error("pcap file too short"); }
+
+        data_ = static_cast<const uint8_t*>(
+            ::mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd_, 0));
+        if (data_ == MAP_FAILED) {
+            data_ = nullptr; ::close(fd_);
+            throw std::runtime_error("mmap failed");
+        }
+
         detect_format();
     }
 
-    // Returns true if a packet was read, false on EOF.
-    // Skips non-IPv4 and non-TCP/UDP packets automatically.
-    bool next(PcapPacket& pkt) {
-        if (format_ == Format::kClassicPcap) return next_classic(pkt);
-        return next_pcapng(pkt);
+    ~PcapReader() {
+        if (data_) ::munmap(const_cast<uint8_t*>(data_), file_size_);
+        if (fd_ >= 0) ::close(fd_);
     }
+
+    PcapReader(const PcapReader&) = delete;
+    PcapReader& operator=(const PcapReader&) = delete;
+
+    // Iterate all TCP/UDP packets, invoking callback for each.
+    // Zero-copy: PcapPacket::payload points into the mmap'd file.
+    void forEachPacket(const PcapCallback& cb) {
+        pos_ = header_end_;
+        PcapPacket pkt;
+        while (next_internal(pkt)) {
+            cb(pkt);
+        }
+    }
+
+    // Iterator-style: returns true if a packet was read, false on EOF.
+    // Call repeatedly; skips non-IPv4 and non-TCP/UDP automatically.
+    bool next(PcapPacket& pkt) {
+        return next_internal(pkt);
+    }
+
+    // Reset iterator to the first packet.
+    void reset() { pos_ = header_end_; }
 
     Format format() const { return format_; }
     uint32_t link_type() const { return link_type_; }
 
 private:
-    std::ifstream file_;
+    int fd_{-1};
+    const uint8_t* data_{nullptr};
+    size_t file_size_{0};
+    size_t pos_{0};          // Current read position.
+    size_t header_end_{0};   // Offset past the file/section headers.
     Format format_{};
-    bool swapped_{false};   // Classic pcap: byte-swapped magic.
-    uint32_t link_type_{0}; // Data link type (1 = Ethernet).
+    bool swapped_{false};
+    bool nano_{false};       // Nanosecond-resolution pcap.
+    uint32_t link_type_{0};
 
-    // --- I/O helpers ---
+    // --- Byte-order helpers ---
 
-    bool read_bytes(void* dst, size_t n) {
-        file_.read(reinterpret_cast<char*>(dst), static_cast<std::streamsize>(n));
-        return file_.good();
+    uint16_t rd16(const uint8_t* p) const {
+        uint16_t v;
+        std::memcpy(&v, p, 2);
+        if (swapped_) v = static_cast<uint16_t>((v >> 8) | (v << 8));
+        return v;
     }
 
-    bool skip_bytes(size_t n) {
-        file_.seekg(static_cast<std::streamoff>(n), std::ios::cur);
-        return file_.good();
+    uint32_t rd32(const uint8_t* p) const {
+        uint32_t v;
+        std::memcpy(&v, p, 4);
+        if (swapped_) v = __builtin_bswap32(v);
+        return v;
     }
 
-    uint16_t swap16(uint16_t v) const {
-        return swapped_ ? static_cast<uint16_t>((v >> 8) | (v << 8)) : v;
-    }
-
-    uint32_t swap32(uint32_t v) const {
-        if (!swapped_) return v;
-        return ((v >> 24) & 0xFF) | ((v >> 8) & 0xFF00) |
-               ((v << 8) & 0xFF0000) | ((v << 24) & 0xFF000000);
-    }
-
-    // Read a little-endian uint32 (for pcapng, which is always LE in practice).
+    // Always little-endian (pcapng on LE hosts, which is the common case).
     static uint32_t le32(const uint8_t* p) {
         uint32_t v;
         std::memcpy(&v, p, 4);
+        return v;
+    }
+    static uint16_t le16(const uint8_t* p) {
+        uint16_t v;
+        std::memcpy(&v, p, 2);
         return v;
     }
 
@@ -107,28 +146,33 @@ private:
         return static_cast<uint16_t>((p[0] << 8) | p[1]);
     }
 
+    bool has(size_t n) const { return pos_ + n <= file_size_; }
+
     // --- Format detection ---
 
     void detect_format() {
         uint32_t magic;
-        if (!read_bytes(&magic, 4))
-            throw std::runtime_error("pcap file too short");
+        std::memcpy(&magic, data_, 4);
 
-        if (magic == 0xa1b2c3d4 || magic == 0xa1b23c4d) {
-            // Classic pcap, native byte order.
-            // 0xa1b23c4d = nanosecond-resolution variant.
-            swapped_ = false;
+        if (magic == 0xa1b2c3d4) {
+            swapped_ = false; nano_ = false;
             format_ = Format::kClassicPcap;
             parse_classic_header();
-        } else if (magic == 0xd4c3b2a1 || magic == 0x4d3cb2a1) {
-            // Classic pcap, swapped byte order.
-            swapped_ = true;
+        } else if (magic == 0xa1b23c4d) {
+            swapped_ = false; nano_ = true;
+            format_ = Format::kClassicPcap;
+            parse_classic_header();
+        } else if (magic == 0xd4c3b2a1) {
+            swapped_ = true; nano_ = false;
+            format_ = Format::kClassicPcap;
+            parse_classic_header();
+        } else if (magic == 0x4d3cb2a1) {
+            swapped_ = true; nano_ = true;
             format_ = Format::kClassicPcap;
             parse_classic_header();
         } else if (magic == 0x0a0d0d0a) {
-            // Pcapng Section Header Block.
             format_ = Format::kPcapng;
-            parse_pcapng_shb();
+            parse_pcapng_headers();
         } else {
             throw std::runtime_error("unrecognized pcap magic");
         }
@@ -137,193 +181,167 @@ private:
     // --- Classic pcap ---
 
     void parse_classic_header() {
-        // We already read 4 bytes (magic). Read remaining 20 bytes of the
-        // global header: version_major(2) + version_minor(2) + thiszone(4) +
-        // sigfigs(4) + snaplen(4) + link_type(4) = 20 bytes.
-        uint8_t hdr[20];
-        if (!read_bytes(hdr, 20))
-            throw std::runtime_error("truncated pcap global header");
-        uint32_t lt;
-        std::memcpy(&lt, hdr + 16, 4);
-        link_type_ = swap32(lt);
+        // Global header: magic(4) + ver_major(2) + ver_minor(2) + thiszone(4) +
+        // sigfigs(4) + snaplen(4) + link_type(4) = 24 bytes.
+        if (file_size_ < 24) throw std::runtime_error("truncated pcap global header");
+        link_type_ = rd32(data_ + 20);
+        pos_ = 24;
+        header_end_ = 24;
     }
 
-    bool next_classic(PcapPacket& pkt) {
-        // Packet header: ts_sec(4) + ts_usec(4) + incl_len(4) + orig_len(4).
-        uint8_t phdr[16];
-        if (!read_bytes(phdr, 16)) return false;
+    bool next_classic_packet(PcapPacket& pkt) {
+        while (has(16)) {
+            // Packet header: ts_sec(4) + ts_usec(4) + incl_len(4) + orig_len(4).
+            uint32_t ts_sec = rd32(data_ + pos_);
+            uint32_t ts_frac = rd32(data_ + pos_ + 4);
+            uint32_t incl_len = rd32(data_ + pos_ + 8);
+            pos_ += 16;
 
-        uint32_t ts_sec, ts_usec, incl_len;
-        std::memcpy(&ts_sec, phdr, 4);
-        std::memcpy(&ts_usec, phdr + 4, 4);
-        std::memcpy(&incl_len, phdr + 8, 4);
-        ts_sec = swap32(ts_sec);
-        ts_usec = swap32(ts_usec);
-        incl_len = swap32(incl_len);
+            if (!has(incl_len)) return false;  // Truncated file.
 
-        if (incl_len > 65535) return false;  // Sanity check.
+            const uint8_t* frame = data_ + pos_;
+            pos_ += incl_len;
 
-        std::vector<uint8_t> raw(incl_len);
-        if (!read_bytes(raw.data(), incl_len)) return false;
-
-        if (parse_ethernet_ipv4(raw.data(), incl_len, pkt)) {
-            pkt.ts_sec = ts_sec;
-            pkt.ts_usec = ts_usec;
-            return true;
+            if (parse_ethernet_ipv4(frame, incl_len, pkt)) {
+                // Convert to nanoseconds.
+                pkt.ts_ns = static_cast<uint64_t>(ts_sec) * 1000000000ULL +
+                            (nano_ ? ts_frac
+                                   : static_cast<uint64_t>(ts_frac) * 1000ULL);
+                return true;
+            }
+            // Skip non-IPv4/non-TCP/UDP, continue to next packet.
         }
-        // Skip non-IPv4/non-TCP/UDP and try next packet.
-        return next_classic(pkt);
+        return false;
     }
 
     // --- Pcapng ---
 
-    void parse_pcapng_shb() {
-        // We already read 4 bytes (block type = 0x0a0d0d0a).
-        // SHB: block_total_length(4) + byte_order_magic(4) + ...
-        uint8_t buf[8];
-        if (!read_bytes(buf, 8))
-            throw std::runtime_error("truncated pcapng SHB");
+    void parse_pcapng_headers() {
+        // SHB: type(4) + block_len(4) + bom(4) + ...
+        if (file_size_ < 12) throw std::runtime_error("truncated pcapng SHB");
+        uint32_t shb_len = le32(data_ + 4);
+        uint32_t bom = le32(data_ + 8);
+        if (bom != 0x1a2b3c4d) throw std::runtime_error("unsupported pcapng byte order");
 
-        uint32_t block_len = le32(buf);
-        uint32_t bom = le32(buf + 4);
-        if (bom != 0x1a2b3c4d)
-            throw std::runtime_error("unsupported pcapng byte order");
+        pos_ = shb_len;
 
-        // Skip rest of SHB (we already read 4+8=12 bytes, block_len includes
-        // the type field too).
-        if (block_len > 12) skip_bytes(block_len - 12);
+        // IDB: type(4) + block_len(4) + link_type(2) + reserved(2) + snap_len(4) + ...
+        if (!has(8)) throw std::runtime_error("truncated pcapng IDB");
+        uint32_t idb_type = le32(data_ + pos_);
+        uint32_t idb_len = le32(data_ + pos_ + 4);
+        if (idb_type != 1) throw std::runtime_error("expected pcapng IDB");
+        if (!has(12)) throw std::runtime_error("truncated pcapng IDB body");
+        link_type_ = le16(data_ + pos_ + 8);
 
-        // Next block should be Interface Description Block (type 0x00000001).
-        parse_pcapng_idb();
+        pos_ += idb_len;
+        header_end_ = pos_;
     }
 
-    void parse_pcapng_idb() {
-        uint8_t bhdr[8];
-        if (!read_bytes(bhdr, 8))
-            throw std::runtime_error("truncated pcapng IDB");
+    bool next_pcapng_packet(PcapPacket& pkt) {
+        while (has(8)) {
+            uint32_t btype = le32(data_ + pos_);
+            uint32_t blen = le32(data_ + pos_ + 4);
 
-        uint32_t btype = le32(bhdr);
-        uint32_t blen = le32(bhdr + 4);
-        if (btype != 1)
-            throw std::runtime_error("expected pcapng IDB, got block type " +
-                                     std::to_string(btype));
+            if (blen < 12 || !has(blen)) return false;
 
-        // IDB body: link_type(2) + reserved(2) + snap_len(4) + options...
-        uint8_t body[4];
-        if (!read_bytes(body, 4))
-            throw std::runtime_error("truncated pcapng IDB body");
+            if (btype == 6) {
+                // Enhanced Packet Block.
+                // body: iface_id(4) + ts_high(4) + ts_low(4) +
+                //       cap_len(4) + orig_len(4) + data...
+                if (blen < 32) { pos_ += blen; continue; }
+                uint32_t ts_high = le32(data_ + pos_ + 12);
+                uint32_t ts_low = le32(data_ + pos_ + 16);
+                uint32_t cap_len = le32(data_ + pos_ + 20);
 
-        uint16_t lt;
-        std::memcpy(&lt, body, 2);
-        link_type_ = lt;
+                const uint8_t* frame = data_ + pos_ + 28;
+                size_t frame_avail = blen - 32;  // Exclude header + trailing len.
+                if (cap_len > frame_avail) cap_len = static_cast<uint32_t>(frame_avail);
 
-        // Skip rest of IDB. Already read 8 (header) + 4 (body) = 12 bytes.
-        if (blen > 12) skip_bytes(blen - 12);
-    }
+                size_t block_end = pos_ + blen;
+                pos_ = block_end;
 
-    bool next_pcapng(PcapPacket& pkt) {
-        uint8_t bhdr[8];
-        if (!read_bytes(bhdr, 8)) return false;
-
-        uint32_t btype = le32(bhdr);
-        uint32_t blen = le32(bhdr + 4);
-
-        if (blen < 12) return false;  // Minimum block size.
-
-        // Enhanced Packet Block (type 6).
-        if (btype == 6) {
-            // EPB body: interface_id(4) + ts_high(4) + ts_low(4) +
-            //           captured_len(4) + original_len(4) + packet_data...
-            uint8_t epb[20];
-            if (!read_bytes(epb, 20)) return false;
-
-            uint32_t ts_high = le32(epb + 4);
-            uint32_t ts_low = le32(epb + 8);
-            uint32_t cap_len = le32(epb + 12);
-
-            if (cap_len > 65535) return false;
-
-            std::vector<uint8_t> raw(cap_len);
-            if (!read_bytes(raw.data(), cap_len)) return false;
-
-            // Skip padding + trailing block length.
-            size_t consumed = 8 + 20 + cap_len;
-            if (blen > consumed) skip_bytes(blen - consumed);
-
-            if (parse_ethernet_ipv4(raw.data(), cap_len, pkt)) {
-                // pcapng timestamps are in interface-defined units
-                // (default: microseconds since epoch as 64-bit value).
-                uint64_t ts = (static_cast<uint64_t>(ts_high) << 32) | ts_low;
-                pkt.ts_sec = static_cast<uint32_t>(ts / 1000000);
-                pkt.ts_usec = static_cast<uint32_t>(ts % 1000000);
-                return true;
+                if (parse_ethernet_ipv4(frame, cap_len, pkt)) {
+                    // Default pcapng timestamp unit is microseconds.
+                    uint64_t ts_us = (static_cast<uint64_t>(ts_high) << 32) | ts_low;
+                    pkt.ts_ns = ts_us * 1000ULL;
+                    return true;
+                }
+                continue;
             }
-            // Not an IPv4 TCP/UDP packet, try next block.
-            return next_pcapng(pkt);
-        }
 
-        // Skip unknown block types.
-        if (blen > 8) skip_bytes(blen - 8);
-        return next_pcapng(pkt);
+            // Skip non-EPB blocks.
+            pos_ += blen;
+        }
+        return false;
+    }
+
+    // --- Dispatch ---
+
+    bool next_internal(PcapPacket& pkt) {
+        if (format_ == Format::kClassicPcap) return next_classic_packet(pkt);
+        return next_pcapng_packet(pkt);
     }
 
     // --- Packet parsing ---
 
-    // Parse Ethernet + IPv4 + TCP/UDP. Returns false if not applicable.
-    bool parse_ethernet_ipv4(const uint8_t* data, size_t len, PcapPacket& pkt) {
-        if (link_type_ != 1) return false;  // Ethernet only.
-        if (len < 14) return false;         // Ethernet header.
-
-        // EtherType at offset 12.
+    static bool parse_ethernet_ipv4(const uint8_t* data, size_t len, PcapPacket& pkt) {
+        if (len < 14) return false;
         uint16_t ethertype = be16(data + 12);
         if (ethertype != 0x0800) return false;  // IPv4 only.
 
         const uint8_t* ip = data + 14;
-        size_t ip_len = len - 14;
+        size_t ip_avail = len - 14;
 
-        if (ip_len < 20) return false;  // Minimum IPv4 header.
-        uint8_t version_ihl = ip[0];
-        if ((version_ihl >> 4) != 4) return false;  // IPv4.
+        if (ip_avail < 20) return false;
+        if ((ip[0] >> 4) != 4) return false;
 
-        uint8_t ihl = (version_ihl & 0x0F) * 4;  // Header length in bytes.
-        if (ihl < 20 || ip_len < ihl) return false;
+        uint8_t ihl = (ip[0] & 0x0F) * 4;
+        if (ihl < 20 || ip_avail < ihl) return false;
 
         uint8_t protocol = ip[9];
         std::memcpy(&pkt.src_ip, ip + 12, 4);
         std::memcpy(&pkt.dst_ip, ip + 16, 4);
 
         const uint8_t* transport = ip + ihl;
-        size_t transport_len = ip_len - ihl;
+        size_t transport_len = ip_avail - ihl;
 
         if (protocol == 17) {
-            // UDP: src_port(2) + dst_port(2) + length(2) + checksum(2) = 8.
+            // UDP header: 8 bytes.
             if (transport_len < 8) return false;
             pkt.proto = TransportProto::kUdp;
             pkt.src_port = be16(transport);
             pkt.dst_port = be16(transport + 2);
             uint16_t udp_len = be16(transport + 4);
-            if (udp_len < 8 || transport_len < udp_len) return false;
-            size_t payload_len = udp_len - 8;
-            pkt.payload.assign(transport + 8, transport + 8 + payload_len);
+            if (udp_len < 8) return false;
+            size_t payload_len = (transport_len < udp_len)
+                                     ? transport_len - 8  // Truncated by snaplen.
+                                     : udp_len - 8;
+            pkt.payload = transport + 8;
+            pkt.payload_len = payload_len;
             return true;
         }
 
         if (protocol == 6) {
-            // TCP: need at least 20 bytes for header.
+            // TCP header: minimum 20 bytes.
             if (transport_len < 20) return false;
             pkt.proto = TransportProto::kTcp;
             pkt.src_port = be16(transport);
             pkt.dst_port = be16(transport + 2);
             uint8_t tcp_hdr_len = ((transport[12] >> 4) & 0x0F) * 4;
             if (tcp_hdr_len < 20 || transport_len < tcp_hdr_len) return false;
-            size_t payload_len = transport_len - tcp_hdr_len;
-            pkt.payload.assign(transport + tcp_hdr_len,
-                               transport + tcp_hdr_len + payload_len);
+            pkt.payload = transport + tcp_hdr_len;
+            pkt.payload_len = transport_len - tcp_hdr_len;
             return true;
         }
 
-        return false;  // Not TCP or UDP.
+        return false;
     }
 };
+
+// Convenience: open a pcap/pcapng file and invoke callback for each packet.
+inline void forEachPacket(const std::string& path, const PcapCallback& cb) {
+    PcapReader reader(path);
+    reader.forEachPacket(cb);
+}
 
 }  // namespace exchange
