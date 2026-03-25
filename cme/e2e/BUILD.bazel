@@ -32,3 +32,17 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "e2e_journal_test",
+    srcs = ["e2e_journal_test.cc"],
+    data = [
+        "//test-journals:e2e_journals",
+        "//test-journals:cme_journals",
+    ],
+    deps = [
+        ":e2e_test_runner",
+        "//test-harness:journal_parser",
+        "@googletest//:gtest_main",
+    ],
+)
