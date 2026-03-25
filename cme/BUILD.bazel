@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
@@ -137,5 +138,30 @@ cc_test(
         "//test-harness:recording_listener",
         "@googletest//:gtest_main",
     ],
+)
+
+# --- Task 21: Sim Config ---
+cc_library(
+    name = "sim_config",
+    hdrs = ["sim_config.h"],
+    visibility = ["//visibility:public"],
+)
+
+# --- Task 20: CME Live Simulator Binary ---
+cc_binary(
+    name = "cme-sim",
+    srcs = ["cme_sim_runner.cc"],
+    deps = [
+        ":cme_products",
+        ":cme_simulator",
+        ":ilink3_gateway",
+        ":ilink3_report_publisher",
+        ":mdp3_feed_publisher",
+        ":sim_config",
+        "//cme/codec:ilink3_decoder",
+        "//tools:tcp_server",
+        "//tools:udp_multicast",
+    ],
+    visibility = ["//visibility:public"],
 )
 
