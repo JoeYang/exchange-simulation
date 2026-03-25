@@ -13,8 +13,9 @@
 
 namespace exchange {
 
-// 4-byte little-endian sequence header prepended to every datagram.
-// Allows receivers to detect gaps without parsing the payload.
+// 4-byte sequence header prepended to every datagram.
+// Wire format is native byte order (little-endian on x86).
+// Receivers must use the same byte order convention.
 struct McastSeqHeader {
     uint32_t seq_num;
 } __attribute__((packed));
@@ -84,11 +85,12 @@ public:
     UdpMulticastPublisher(const UdpMulticastPublisher&) = delete;
     UdpMulticastPublisher& operator=(const UdpMulticastPublisher&) = delete;
     UdpMulticastPublisher(UdpMulticastPublisher&& o) noexcept
-        : fd_(o.fd_), dest_(o.dest_), seq_(o.seq_) { o.fd_ = -1; }
+        : fd_(o.fd_), dest_(o.dest_), seq_(o.seq_) { o.fd_ = -1; o.seq_ = 0; }
     UdpMulticastPublisher& operator=(UdpMulticastPublisher&& o) noexcept {
         if (this != &o) {
             if (fd_ >= 0) ::close(fd_);
-            fd_ = o.fd_; dest_ = o.dest_; seq_ = o.seq_; o.fd_ = -1;
+            fd_ = o.fd_; dest_ = o.dest_; seq_ = o.seq_;
+            o.fd_ = -1; o.seq_ = 0;
         }
         return *this;
     }
