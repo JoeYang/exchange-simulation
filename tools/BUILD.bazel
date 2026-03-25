@@ -180,6 +180,27 @@ cc_binary(
     visibility = ["//visibility:public"],
 )
 
+# --- Task 24: iLink3 Replayer ---
+cc_library(
+    name = "ilink3_replayer",
+    hdrs = ["ilink3_replayer.h"],
+    deps = [
+        ":pcap_reader",
+        "//cme/codec:ilink3_decoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ilink3_replayer_test",
+    srcs = ["ilink3_replayer_test.cc"],
+    deps = [
+        ":ilink3_replayer",
+        "//cme/codec:ilink3_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
