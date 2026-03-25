@@ -95,6 +95,7 @@ inline DecodeResult decode_security_status_30(
     DecodedSecurityStatus30& out)
 {
     if (len < hdr.block_length) return DecodeResult::kBufferTooShort;
+    if (hdr.block_length < sizeof(out.root)) return DecodeResult::kBadBlockLength;
     std::memcpy(&out.root, buf, sizeof(out.root));
     return DecodeResult::kOk;
 }
@@ -105,6 +106,7 @@ inline DecodeResult decode_refresh_book_46(
     DecodedRefreshBook46& out)
 {
     if (len < hdr.block_length) return DecodeResult::kBufferTooShort;
+    if (hdr.block_length < sizeof(out.root)) return DecodeResult::kBadBlockLength;
 
     // Root block.
     std::memcpy(&out.root, buf, sizeof(out.root));
@@ -118,6 +120,8 @@ inline DecodeResult decode_refresh_book_46(
     remaining -= sizeof(GroupHeader);
 
     if (gh.num_in_group > MAX_MD_ENTRIES) return DecodeResult::kGroupOverflow;
+    if (gh.num_in_group > 0 && gh.block_length < sizeof(RefreshBookEntry))
+        return DecodeResult::kBadBlockLength;
     out.num_md_entries = gh.num_in_group;
 
     for (uint8_t i = 0; i < gh.num_in_group; ++i) {
@@ -134,6 +138,8 @@ inline DecodeResult decode_refresh_book_46(
     remaining -= sizeof(GroupHeader8Byte);
 
     if (gh8.num_in_group > MAX_ORDER_ENTRIES) return DecodeResult::kGroupOverflow;
+    if (gh8.num_in_group > 0 && gh8.block_length < sizeof(RefreshBookOrderEntry))
+        return DecodeResult::kBadBlockLength;
     out.num_order_entries = gh8.num_in_group;
 
     for (uint8_t i = 0; i < gh8.num_in_group; ++i) {
@@ -152,6 +158,7 @@ inline DecodeResult decode_trade_summary_48(
     DecodedTradeSummary48& out)
 {
     if (len < hdr.block_length) return DecodeResult::kBufferTooShort;
+    if (hdr.block_length < sizeof(out.root)) return DecodeResult::kBadBlockLength;
 
     // Root block.
     std::memcpy(&out.root, buf, sizeof(out.root));
@@ -165,6 +172,8 @@ inline DecodeResult decode_trade_summary_48(
     remaining -= sizeof(GroupHeader);
 
     if (gh.num_in_group > MAX_MD_ENTRIES) return DecodeResult::kGroupOverflow;
+    if (gh.num_in_group > 0 && gh.block_length < sizeof(TradeSummaryEntry))
+        return DecodeResult::kBadBlockLength;
     out.num_md_entries = gh.num_in_group;
 
     for (uint8_t i = 0; i < gh.num_in_group; ++i) {
@@ -181,6 +190,8 @@ inline DecodeResult decode_trade_summary_48(
     remaining -= sizeof(GroupHeader8Byte);
 
     if (gh8.num_in_group > MAX_ORDER_ENTRIES) return DecodeResult::kGroupOverflow;
+    if (gh8.num_in_group > 0 && gh8.block_length < sizeof(TradeSummaryOrderEntry))
+        return DecodeResult::kBadBlockLength;
     out.num_order_entries = gh8.num_in_group;
 
     for (uint8_t i = 0; i < gh8.num_in_group; ++i) {
@@ -199,6 +210,7 @@ inline DecodeResult decode_snapshot_53(
     DecodedSnapshot53& out)
 {
     if (len < hdr.block_length) return DecodeResult::kBufferTooShort;
+    if (hdr.block_length < sizeof(out.root)) return DecodeResult::kBadBlockLength;
 
     std::memcpy(&out.root, buf, sizeof(out.root));
     const char* p = buf + hdr.block_length;
@@ -211,6 +223,8 @@ inline DecodeResult decode_snapshot_53(
     remaining -= sizeof(GroupHeader);
 
     if (gh.num_in_group > MAX_SNAPSHOT_ENTRIES) return DecodeResult::kGroupOverflow;
+    if (gh.num_in_group > 0 && gh.block_length < sizeof(SnapshotOrderBookEntry))
+        return DecodeResult::kBadBlockLength;
     out.num_md_entries = gh.num_in_group;
 
     for (uint16_t i = 0; i < gh.num_in_group; ++i) {
@@ -229,6 +243,7 @@ inline DecodeResult decode_instrument_def_54(
     DecodedInstrumentDef54& out)
 {
     if (len < hdr.block_length) return DecodeResult::kBufferTooShort;
+    if (hdr.block_length < sizeof(out.root)) return DecodeResult::kBadBlockLength;
 
     std::memcpy(&out.root, buf, sizeof(out.root));
     const char* p = buf + hdr.block_length;
@@ -243,6 +258,8 @@ inline DecodeResult decode_instrument_def_54(
         remaining -= sizeof(GroupHeader);
 
         if (gh.num_in_group > max_entries) return DecodeResult::kGroupOverflow;
+        if (gh.num_in_group > 0 && gh.block_length < entry_size)
+            return DecodeResult::kBadBlockLength;
         count = gh.num_in_group;
 
         for (uint8_t i = 0; i < gh.num_in_group; ++i) {
