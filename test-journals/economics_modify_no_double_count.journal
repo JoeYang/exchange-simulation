@@ -1,0 +1,27 @@
+# economics_modify_no_double_count.journal
+# Verify modify (cancel-replace) doesn't double-count or lose quantity.
+# Buy 10 lots -> modify to 15 lots -> sell 15 lots.
+# Fill quantity = 150000 (exactly 15 lots, not 10 or 25).
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000 max_orders=1000 max_levels=100 max_order_ids=10000 price_band_low=0 price_band_high=0
+
+ACTION NEW_ORDER ts=1000 cl_ord_id=1 account_id=1 side=BUY price=1000000 qty=100000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=1000 cl_ord_id=1 ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=1000 action=ADD qty=100000 price=1000000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=1000 action=ADD count=1 qty=100000 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=1000 ask_qty=0 ask=0 bid_qty=100000 bid=1000000
+
+ACTION MODIFY ts=2000 ord_id=1 cl_ord_id=2 new_price=1000000 new_qty=150000
+EXPECT ORDER_MODIFIED new_qty=150000 ts=2000 new_price=1000000 cl_ord_id=2 ord_id=1
+EXPECT ORDER_BOOK_ACTION ts=2000 action=CANCEL qty=100000 price=1000000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=2000 action=REMOVE count=0 qty=0 price=1000000 side=BUY
+EXPECT ORDER_BOOK_ACTION ts=2000 action=ADD qty=150000 price=1000000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=2000 action=ADD count=1 qty=150000 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=2000 ask_qty=0 ask=0 bid_qty=150000 bid=1000000
+
+ACTION NEW_ORDER ts=3000 cl_ord_id=3 account_id=2 side=SELL price=1000000 qty=150000 type=LIMIT tif=GTC
+EXPECT ORDER_ACCEPTED ts=3000 cl_ord_id=3 ord_id=2
+EXPECT ORDER_FILLED ts=3000 qty=150000 price=1000000 resting=1 aggressor=2
+EXPECT TRADE ts=3000 aggressor_side=SELL resting=1 aggressor=2 qty=150000 price=1000000
+EXPECT ORDER_BOOK_ACTION ts=3000 action=FILL qty=150000 price=1000000 side=BUY ord_id=1
+EXPECT DEPTH_UPDATE ts=3000 action=REMOVE count=0 qty=0 price=1000000 side=BUY
+EXPECT TOP_OF_BOOK ts=3000 ask_qty=0 ask=0 bid_qty=0 bid=0

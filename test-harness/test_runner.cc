@@ -180,6 +180,14 @@ void JournalTestRunner::execute_action(EngineT& engine,
                                  : 0;
         }
 
+        // display_qty is optional (default 0 = fully visible, no iceberg).
+        {
+            auto it = action.fields.find("display_qty");
+            req.display_qty = (it != action.fields.end())
+                                  ? static_cast<Quantity>(std::stoll(it->second))
+                                  : 0;
+        }
+
         engine.new_order(req);
         break;
     }
