@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <vector>
 
 #include "exchange-core/events.h"
 #include "exchange-core/intrusive_list.h"
@@ -47,6 +50,16 @@ struct ModifyRequest {
     Price new_price;
     Quantity new_quantity;
     Timestamp timestamp;
+};
+
+// --- Auction result ---
+
+struct AuctionResult {
+    Price price{0};
+    Quantity matched_volume{0};
+    Quantity buy_surplus{0};   // unfilled buy qty at auction price
+    Quantity sell_surplus{0};  // unfilled sell qty at auction price
+    bool has_price{false};     // false if book is empty or no crossing
 };
 
 // --- Matching Engine ---
@@ -129,6 +142,14 @@ public:
             && req.stop_price <= 0)
             { reject(RejectReason::InvalidPrice); return; }
 
+        // Reject all orders in Closed state
+        if (current_state_ == SessionState::Closed)
+            { reject(RejectReason::ExchangeSpecific); return; }
+
+        // Phase validation (exchange-specific per-phase rules)
+        if (!derived().is_order_allowed_in_phase(req, current_state_))
+            { reject(RejectReason::InvalidTif); return; }
+
         if (next_order_id_ >= MaxOrderIds)
             { reject(RejectReason::PoolExhausted); return; }
 
@@ -180,7 +201,28 @@ public:
             return;
         }
 
-        // 12. Match the order and trigger stop cascade
+        // 12. Auction collection phases: insert into book without matching
+        bool is_collection_phase =
+            (current_state_ == SessionState::PreOpen ||
+             current_state_ == SessionState::PreClose ||
+             current_state_ == SessionState::VolatilityAuction);
+
+        if (is_collection_phase) {
+            if (req.type == OrderType::Limit) {
+                insert_into_book(order, req.timestamp);
+                fire_top_of_book(req.timestamp);
+            } else {
+                // Market orders in collection phase: cancel remainder
+                OrderId oid = order->id;
+                order_index_[oid] = nullptr;
+                order_listener_.on_order_cancelled(OrderCancelled{
+                    oid, req.timestamp, CancelReason::IOCRemainder});
+                order_pool_.deallocate(order);
+            }
+            return;
+        }
+
+        // 13. Normal continuous matching and stop cascade
         match_order(order, req.timestamp);
         check_and_trigger_stops(req.timestamp);
     }
@@ -188,6 +230,13 @@ public:
     // cancel_order -- remove order from book/stop book, fire callbacks
 
     void cancel_order(OrderId id, Timestamp ts) {
+        // Reject cancel in Closed state
+        if (current_state_ == SessionState::Closed) {
+            order_listener_.on_order_cancel_rejected(
+                OrderCancelRejected{id, 0, ts, RejectReason::ExchangeSpecific});
+            return;
+        }
+
         if (id == 0 || id >= MaxOrderIds || order_index_[id] == nullptr) {
             order_listener_.on_order_cancel_rejected(
                 OrderCancelRejected{id, 0, ts, RejectReason::UnknownOrder});
@@ -205,6 +254,10 @@ public:
                 OrderModifyRejected{req.order_id, req.client_order_id,
                                     req.timestamp, r});
         };
+
+        // Reject modify in Closed state
+        if (current_state_ == SessionState::Closed)
+            { mod_reject(RejectReason::ExchangeSpecific); return; }
 
         if (req.order_id == 0 || req.order_id >= MaxOrderIds ||
             order_index_[req.order_id] == nullptr)
@@ -362,6 +415,93 @@ public:
         md_listener_.on_market_status(MarketStatus{.state = new_state, .ts = ts});
     }
 
+    // calculate_auction_price -- find the equilibrium price for uncrossing.
+    //
+    // Walks all price levels on both sides, considers each price level as a
+    // candidate auction price, and selects the price that:
+    //   1. Maximizes matched volume   (primary)
+    //   2. Minimizes order imbalance  (secondary tiebreak)
+    //   3. Is closest to reference_price (tertiary tiebreak)
+    //   4. Is highest price among remaining ties (convention)
+    //
+    // This is the standard uncrossing algorithm used by major exchanges.
+    // O(n^2) in the number of price levels -- acceptable for auction path.
+
+    AuctionResult calculate_auction_price(Price reference_price) const {
+        AuctionResult best{};
+
+        // Collect all candidate prices from every price level on both sides.
+        std::vector<Price> candidates;
+        for (const PriceLevel* lv = book_.best_bid(); lv; lv = lv->next) {
+            candidates.push_back(lv->price);
+        }
+        for (const PriceLevel* lv = book_.best_ask(); lv; lv = lv->next) {
+            candidates.push_back(lv->price);
+        }
+
+        if (candidates.empty()) return best;
+
+        // Sort ascending and deduplicate.
+        std::sort(candidates.begin(), candidates.end());
+        candidates.erase(
+            std::unique(candidates.begin(), candidates.end()),
+            candidates.end());
+
+        // Track best imbalance separately so we can compare correctly.
+        Quantity best_imbalance = 0;
+        Price best_ref_dist = 0;
+
+        for (Price p : candidates) {
+            // Cumulative buy volume: all bids at price >= p.
+            Quantity buy_vol = 0;
+            for (const PriceLevel* lv = book_.best_bid(); lv; lv = lv->next) {
+                if (lv->price >= p) buy_vol += lv->total_quantity;
+            }
+
+            // Cumulative sell volume: all asks at price <= p.
+            Quantity sell_vol = 0;
+            for (const PriceLevel* lv = book_.best_ask(); lv; lv = lv->next) {
+                if (lv->price <= p) sell_vol += lv->total_quantity;
+            }
+
+            Quantity matched = std::min(buy_vol, sell_vol);
+            if (matched == 0) continue;
+
+            Quantity imbalance = std::abs(buy_vol - sell_vol);
+            Price ref_dist = std::abs(p - reference_price);
+
+            bool is_better = false;
+            if (!best.has_price) {
+                is_better = true;
+            } else if (matched > best.matched_volume) {
+                is_better = true;
+            } else if (matched == best.matched_volume) {
+                if (imbalance < best_imbalance) {
+                    is_better = true;
+                } else if (imbalance == best_imbalance) {
+                    if (ref_dist < best_ref_dist) {
+                        is_better = true;
+                    } else if (ref_dist == best_ref_dist) {
+                        // Tiebreak 4: higher price wins (convention).
+                        if (p > best.price) is_better = true;
+                    }
+                }
+            }
+
+            if (is_better) {
+                best.price = p;
+                best.matched_volume = matched;
+                best.buy_surplus = buy_vol - matched;
+                best.sell_surplus = sell_vol - matched;
+                best.has_price = true;
+                best_imbalance = imbalance;
+                best_ref_dist = ref_dist;
+            }
+        }
+
+        return best;
+    }
+
     // Status queries
 
     size_t active_order_count() const {
@@ -414,6 +554,7 @@ public:
 
 protected:
     EngineConfig config_;
+    SessionState current_state_{SessionState::Continuous};  // backward compatible
     OrderBook book_;
     StopBook stop_book_;
     ObjectPool<Order, MaxOrders> order_pool_;
