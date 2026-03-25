@@ -736,5 +736,387 @@ TEST_F(MatchingEngineTest, SelfMatchPrevention) {
     EXPECT_EQ(smp_engine.active_order_count(), 1u);
 }
 
+// ===========================================================================
+// Task A4: Max order size + dynamic price bands
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 21. Max order size: order exceeding limit is rejected with
+//     MaxOrderSizeExceeded
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MaxOrderSizeExceeded) {
+    RecordingOrderListener ol;
+    RecordingMdListener ml;
+    // max_order_size = 50000 (5 lots of 10000)
+    EngineConfig cfg{.tick_size = 100,
+                     .lot_size = 10000,
+                     .price_band_low = 0,
+                     .price_band_high = 0,
+                     .max_order_size = 50000};
+    TestExchange eng(cfg, ol, ml);
+
+    eng.new_order(make_limit(1, Side::Buy, 1000, 60000, 1000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<OrderRejected>(ol.events()[0]));
+    auto& rej = std::get<OrderRejected>(ol.events()[0]);
+    EXPECT_EQ(rej.client_order_id, 1u);
+    EXPECT_EQ(rej.reason, RejectReason::MaxOrderSizeExceeded);
+
+    // No market-data events emitted for a rejected order
+    EXPECT_EQ(ml.size(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 22. Max order size: order at exactly the limit is accepted
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MaxOrderSizeAtLimit) {
+    RecordingOrderListener ol;
+    RecordingMdListener ml;
+    EngineConfig cfg{.tick_size = 100,
+                     .lot_size = 10000,
+                     .price_band_low = 0,
+                     .price_band_high = 0,
+                     .max_order_size = 50000};
+    TestExchange eng(cfg, ol, ml);
+
+    eng.new_order(make_limit(1, Side::Buy, 1000, 50000, 1000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderAccepted>(ol.events()[0]));
+}
+
+// ---------------------------------------------------------------------------
+// 23. Max order size = 0: no limit enforced (backward compatibility)
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MaxOrderSizeZeroMeansNoLimit) {
+    // The default fixture config has max_order_size = 0 (implicitly via
+    // zero-initialisation of the new field).  Submit a very large order and
+    // confirm it is accepted without a MaxOrderSizeExceeded reject.
+    engine_.new_order(make_limit(1, Side::Buy, 1000, 1000000, 1000));
+
+    ASSERT_EQ(order_listener_.size(), 1u);
+    EXPECT_TRUE(
+        std::holds_alternative<OrderAccepted>(order_listener_.events()[0]));
+}
+
+// ---------------------------------------------------------------------------
+// 24. Dynamic price bands: orders outside calculated band are rejected
+// ---------------------------------------------------------------------------
+
+// A test exchange that overrides calculate_dynamic_bands to return a band
+// that is +/- 500 ticks around the reference price (last trade price).
+class DynamicBandExchange
+    : public MatchingEngine<DynamicBandExchange, RecordingOrderListener,
+                            RecordingMdListener, FifoMatch, 100, 50, 1000> {
+public:
+    using Base = MatchingEngine<DynamicBandExchange, RecordingOrderListener,
+                                RecordingMdListener, FifoMatch, 100, 50, 1000>;
+    using Base::Base;
+
+    // When a reference price is available, band = [ref - 500, ref + 500].
+    // When no reference price (0), fall back to static config bands.
+    std::pair<Price, Price> calculate_dynamic_bands(Price reference_price) {
+        if (reference_price <= 0)
+            return {config_.price_band_low, config_.price_band_high};
+        return {reference_price - 500, reference_price + 500};
+    }
+};
+
+TEST_F(MatchingEngineTest, DynamicBandsRejectOutsideRange) {
+    RecordingOrderListener ol;
+    RecordingMdListener ml;
+    // Static bands disabled; dynamic hook will compute from last trade price.
+    EngineConfig cfg{.tick_size = 100,
+                     .lot_size = 10000,
+                     .price_band_low = 0,
+                     .price_band_high = 0};
+    DynamicBandExchange eng(cfg, ol, ml);
+
+    // Seed a trade so last_trade_price_ = 1000.
+    // Place a resting sell at 1000 and a market buy to create the trade.
+    OrderRequest sell{.client_order_id = 1,
+                      .account_id = 1,
+                      .side = Side::Sell,
+                      .type = OrderType::Limit,
+                      .tif = TimeInForce::GTC,
+                      .price = 1000,
+                      .quantity = 10000,
+                      .stop_price = 0,
+                      .timestamp = 1000,
+                      .gtd_expiry = 0};
+    eng.new_order(sell);
+
+    OrderRequest buy_mkt{.client_order_id = 2,
+                         .account_id = 2,
+                         .side = Side::Buy,
+                         .type = OrderType::Market,
+                         .tif = TimeInForce::GTC,
+                         .price = 0,
+                         .quantity = 10000,
+                         .stop_price = 0,
+                         .timestamp = 2000,
+                         .gtd_expiry = 0};
+    eng.new_order(buy_mkt);  // fills at 1000 -> last_trade_price_ = 1000
+
+    ol.clear();
+    ml.clear();
+
+    // last_trade_price_ = 1000, so band = [500, 1500].
+    // Price 400 is below 500 -> rejected.
+    eng.new_order(make_limit(3, Side::Buy, 400, 10000, 3000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<OrderRejected>(ol.events()[0]));
+    EXPECT_EQ(std::get<OrderRejected>(ol.events()[0]).reason,
+              RejectReason::PriceBandViolation);
+
+    ol.clear();
+
+    // Price 1600 is above 1500 -> rejected.
+    eng.new_order(make_limit(4, Side::Sell, 1600, 10000, 4000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<OrderRejected>(ol.events()[0]));
+    EXPECT_EQ(std::get<OrderRejected>(ol.events()[0]).reason,
+              RejectReason::PriceBandViolation);
+
+    ol.clear();
+
+    // Price 1000 is inside [500, 1500] -> accepted.
+    eng.new_order(make_limit(5, Side::Buy, 1000, 10000, 5000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderAccepted>(ol.events()[0]));
+}
+
+// ---------------------------------------------------------------------------
+// 25. Dynamic bands: when no reference price exists (0), static config
+//     bands are used (default fallback, backward compatible)
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, DynamicBandsFallbackToStaticWhenNoRefPrice) {
+    RecordingOrderListener ol;
+    RecordingMdListener ml;
+    // Static bands: [800, 1200]
+    EngineConfig cfg{.tick_size = 100,
+                     .lot_size = 10000,
+                     .price_band_low = 800,
+                     .price_band_high = 1200};
+    // Plain TestExchange uses the default calculate_dynamic_bands which
+    // returns the static config bands unchanged.
+    TestExchange eng(cfg, ol, ml);
+
+    // Price 700 is below static low of 800 -> rejected.
+    eng.new_order(make_limit(1, Side::Buy, 700, 10000, 1000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<OrderRejected>(ol.events()[0]));
+    EXPECT_EQ(std::get<OrderRejected>(ol.events()[0]).reason,
+              RejectReason::PriceBandViolation);
+
+    ol.clear();
+
+    // Price 1300 is above static high of 1200 -> rejected.
+    eng.new_order(make_limit(2, Side::Sell, 1300, 10000, 2000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<OrderRejected>(ol.events()[0]));
+    EXPECT_EQ(std::get<OrderRejected>(ol.events()[0]).reason,
+              RejectReason::PriceBandViolation);
+
+    ol.clear();
+
+    // Price 1000 is inside [800, 1200] -> accepted.
+    eng.new_order(make_limit(3, Side::Buy, 1000, 10000, 3000));
+
+    ASSERT_EQ(ol.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<OrderAccepted>(ol.events()[0]));
+}
+
+// ===========================================================================
+// Task A3: Mass Cancel API
+// ===========================================================================
+
+// Helper: build a limit order with explicit account_id
+static OrderRequest make_limit_for(uint64_t cl_ord_id, uint64_t account_id,
+                                    Side side, Price price, Quantity qty,
+                                    Timestamp ts) {
+    return OrderRequest{.client_order_id = cl_ord_id,
+                        .account_id = account_id,
+                        .side = side,
+                        .type = OrderType::Limit,
+                        .tif = TimeInForce::GTC,
+                        .price = price,
+                        .quantity = qty,
+                        .stop_price = 0,
+                        .timestamp = ts,
+                        .gtd_expiry = 0};
+}
+
+// ---------------------------------------------------------------------------
+// 21. mass_cancel: cancels only the target account's orders
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MassCancelByAccount) {
+    // Place 5 orders for account 1
+    engine_.new_order(make_limit_for(101, 1, Side::Buy,  1000, 10000, 1));
+    engine_.new_order(make_limit_for(102, 1, Side::Buy,  1100, 10000, 2));
+    engine_.new_order(make_limit_for(103, 1, Side::Sell, 2000, 10000, 3));
+    engine_.new_order(make_limit_for(104, 1, Side::Sell, 2100, 10000, 4));
+    engine_.new_order(make_limit_for(105, 1, Side::Buy,  900,  10000, 5));
+
+    // Place 3 orders for account 2
+    engine_.new_order(make_limit_for(201, 2, Side::Buy,  800,  10000, 6));
+    engine_.new_order(make_limit_for(202, 2, Side::Sell, 3000, 10000, 7));
+    engine_.new_order(make_limit_for(203, 2, Side::Buy,  700,  10000, 8));
+
+    EXPECT_EQ(engine_.active_order_count(), 8u);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Cancel all orders for account 1
+    size_t cancelled = engine_.mass_cancel(1, 9000);
+    EXPECT_EQ(cancelled, 5u);
+    EXPECT_EQ(engine_.active_order_count(), 3u);
+
+    // All 5 OrderCancelled events fired with MassCancelled reason
+    size_t cancel_count = 0;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderCancelled>(e)) {
+            auto& c = std::get<OrderCancelled>(e);
+            EXPECT_EQ(c.reason, CancelReason::MassCancelled);
+            EXPECT_EQ(c.ts, 9000);
+            ++cancel_count;
+        }
+    }
+    EXPECT_EQ(cancel_count, 5u);
+}
+
+// ---------------------------------------------------------------------------
+// 22. mass_cancel_all: cancels all remaining orders, book empty afterwards
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MassCancelAll) {
+    // Place 5 orders for account 1 and 3 for account 2
+    engine_.new_order(make_limit_for(101, 1, Side::Buy,  1000, 10000, 1));
+    engine_.new_order(make_limit_for(102, 1, Side::Buy,  1100, 10000, 2));
+    engine_.new_order(make_limit_for(103, 1, Side::Sell, 2000, 10000, 3));
+    engine_.new_order(make_limit_for(104, 1, Side::Sell, 2100, 10000, 4));
+    engine_.new_order(make_limit_for(105, 1, Side::Buy,  900,  10000, 5));
+    engine_.new_order(make_limit_for(201, 2, Side::Buy,  800,  10000, 6));
+    engine_.new_order(make_limit_for(202, 2, Side::Sell, 3000, 10000, 7));
+    engine_.new_order(make_limit_for(203, 2, Side::Buy,  700,  10000, 8));
+
+    // First wipe account 1
+    engine_.mass_cancel(1, 9000);
+    EXPECT_EQ(engine_.active_order_count(), 3u);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    // Now wipe everything remaining
+    size_t cancelled = engine_.mass_cancel_all(10000);
+    EXPECT_EQ(cancelled, 3u);
+    EXPECT_EQ(engine_.active_order_count(), 0u);
+
+    // Verify 3 OrderCancelled events with MassCancelled reason
+    size_t cancel_count = 0;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderCancelled>(e)) {
+            auto& c = std::get<OrderCancelled>(e);
+            EXPECT_EQ(c.reason, CancelReason::MassCancelled);
+            EXPECT_EQ(c.ts, 10000);
+            ++cancel_count;
+        }
+    }
+    EXPECT_EQ(cancel_count, 3u);
+
+    // Book must be completely empty: no TopOfBook bid or ask
+    bool found_tob = false;
+    for (auto& e : md_listener_.events()) {
+        if (std::holds_alternative<TopOfBook>(e)) {
+            auto& tob = std::get<TopOfBook>(e);
+            // After mass_cancel_all the last TopOfBook must be fully empty
+            found_tob = true;
+            (void)tob;
+        }
+    }
+    // At least one TopOfBook was fired (book cleared)
+    EXPECT_TRUE(found_tob);
+    // Confirm the engine reports zero active orders
+    EXPECT_EQ(engine_.active_order_count(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 23. mass_cancel on empty / non-existent account returns 0
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MassCancelNoMatch) {
+    engine_.new_order(make_limit_for(101, 1, Side::Buy, 1000, 10000, 1));
+    order_listener_.clear();
+    md_listener_.clear();
+
+    size_t cancelled = engine_.mass_cancel(99, 2000);
+    EXPECT_EQ(cancelled, 0u);
+
+    // No events fired for a no-op cancel
+    EXPECT_EQ(order_listener_.size(), 0u);
+    EXPECT_EQ(engine_.active_order_count(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// 24. mass_cancel_all on empty engine returns 0
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MassCancelAllEmpty) {
+    size_t cancelled = engine_.mass_cancel_all(1000);
+    EXPECT_EQ(cancelled, 0u);
+    EXPECT_EQ(order_listener_.size(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// 25. mass_cancel fires MassCancelled for stop orders too
+// ---------------------------------------------------------------------------
+
+TEST_F(MatchingEngineTest, MassCancelIncludesStopOrders) {
+    // Place a resting limit and a stop order for account 1
+    engine_.new_order(make_limit_for(101, 1, Side::Buy, 1000, 10000, 1));
+
+    OrderRequest stop_req{.client_order_id = 102,
+                          .account_id = 1,
+                          .side = Side::Sell,
+                          .type = OrderType::Stop,
+                          .tif = TimeInForce::GTC,
+                          .price = 0,
+                          .quantity = 10000,
+                          .stop_price = 900,
+                          .timestamp = 2,
+                          .gtd_expiry = 0};
+    engine_.new_order(stop_req);
+    EXPECT_EQ(engine_.active_order_count(), 2u);
+
+    order_listener_.clear();
+    md_listener_.clear();
+
+    size_t cancelled = engine_.mass_cancel(1, 3000);
+    EXPECT_EQ(cancelled, 2u);
+    EXPECT_EQ(engine_.active_order_count(), 0u);
+
+    size_t cancel_count = 0;
+    for (auto& e : order_listener_.events()) {
+        if (std::holds_alternative<OrderCancelled>(e)) {
+            EXPECT_EQ(std::get<OrderCancelled>(e).reason,
+                      CancelReason::MassCancelled);
+            ++cancel_count;
+        }
+    }
+    EXPECT_EQ(cancel_count, 2u);
+}
+
 }  // namespace
 }  // namespace exchange

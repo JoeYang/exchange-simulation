@@ -103,8 +103,9 @@ TEST(TypesTest, RejectReasonEnumCoversAllValues) {
             case RejectReason::InvalidSide:        return;
             case RejectReason::UnknownOrder:       return;
             case RejectReason::PriceBandViolation: return;
-            case RejectReason::LevelPoolExhausted: return;
-            case RejectReason::ExchangeSpecific:   return;
+            case RejectReason::LevelPoolExhausted:   return;
+            case RejectReason::MaxOrderSizeExceeded: return;
+            case RejectReason::ExchangeSpecific:     return;
         }
     };
     check(RejectReason::PoolExhausted);
@@ -115,6 +116,7 @@ TEST(TypesTest, RejectReasonEnumCoversAllValues) {
     check(RejectReason::UnknownOrder);
     check(RejectReason::PriceBandViolation);
     check(RejectReason::LevelPoolExhausted);
+    check(RejectReason::MaxOrderSizeExceeded);
     check(RejectReason::ExchangeSpecific);
 }
 
@@ -127,6 +129,7 @@ TEST(TypesTest, CancelReasonEnumCoversAllValues) {
             case CancelReason::Expired:             return;
             case CancelReason::SelfMatchPrevention: return;
             case CancelReason::LevelPoolExhausted:  return;
+            case CancelReason::MassCancelled:       return;
         }
     };
     check(CancelReason::UserRequested);
@@ -135,6 +138,7 @@ TEST(TypesTest, CancelReasonEnumCoversAllValues) {
     check(CancelReason::Expired);
     check(CancelReason::SelfMatchPrevention);
     check(CancelReason::LevelPoolExhausted);
+    check(CancelReason::MassCancelled);
 }
 
 TEST(TypesTest, OrderDefaultConstruction) {

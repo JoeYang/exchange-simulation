@@ -18,10 +18,11 @@ namespace exchange {
 // --- Engine configuration ---
 
 struct EngineConfig {
-    Price tick_size;           // minimum price increment
-    Quantity lot_size;         // minimum quantity increment
-    Price price_band_low;     // reject orders below this (0 = no band)
-    Price price_band_high;    // reject orders above this (0 = no band)
+    Price tick_size;              // minimum price increment
+    Quantity lot_size;            // minimum quantity increment
+    Price price_band_low;         // reject orders below this (0 = no band)
+    Price price_band_high;        // reject orders above this (0 = no band)
+    Quantity max_order_size{0};   // maximum single-order quantity (0 = no limit)
 };
 
 // --- Request structs ---
@@ -37,6 +38,7 @@ struct OrderRequest {
     Price stop_price;         // only for Stop/StopLimit
     Timestamp timestamp;
     Timestamp gtd_expiry;     // only for GTD
+    Quantity display_qty{0};  // 0 = fully visible, > 0 = iceberg display size
 };
 
 struct ModifyRequest {
@@ -92,15 +94,33 @@ public:
         if (config_.lot_size > 0 && (req.quantity % config_.lot_size) != 0)
             { reject(RejectReason::InvalidQuantity); return; }
 
+        // Iceberg display_qty validation
+        if (req.display_qty > 0) {
+            if (req.display_qty > req.quantity)
+                { reject(RejectReason::InvalidQuantity); return; }
+            if (config_.lot_size > 0 &&
+                (req.display_qty % config_.lot_size) != 0)
+                { reject(RejectReason::InvalidQuantity); return; }
+            Quantity min_display = derived().get_min_display_qty(req);
+            if (min_display > 0 && req.display_qty < min_display)
+                { reject(RejectReason::InvalidQuantity); return; }
+        }
+
+        // Max order size check (0 = no limit)
+        if (config_.max_order_size > 0 && req.quantity > config_.max_order_size)
+            { reject(RejectReason::MaxOrderSizeExceeded); return; }
+
         // Price validation for Limit and StopLimit
         if (req.type == OrderType::Limit || req.type == OrderType::StopLimit) {
             if (req.price <= 0)
                 { reject(RejectReason::InvalidPrice); return; }
             if (config_.tick_size > 0 && (req.price % config_.tick_size) != 0)
                 { reject(RejectReason::InvalidPrice); return; }
-            if (config_.price_band_low > 0 && req.price < config_.price_band_low)
+            auto [band_low, band_high] =
+                derived().calculate_dynamic_bands(last_trade_price_);
+            if (band_low > 0 && req.price < band_low)
                 { reject(RejectReason::PriceBandViolation); return; }
-            if (config_.price_band_high > 0 && req.price > config_.price_band_high)
+            if (band_high > 0 && req.price > band_high)
                 { reject(RejectReason::PriceBandViolation); return; }
         }
 
@@ -130,9 +150,16 @@ public:
         order->tif                = req.tif;
         order->timestamp          = req.timestamp;
         order->gtd_expiry         = req.gtd_expiry;
+        order->display_qty        = req.display_qty;
+        order->total_qty          = req.quantity;
         order->prev               = nullptr;
         order->next               = nullptr;
         order->level              = nullptr;
+
+        // Iceberg: only show first tranche in the book
+        if (req.display_qty > 0) {
+            order->remaining_quantity = req.display_qty;
+        }
 
         order_index_[order->id] = order;
 
@@ -289,6 +316,36 @@ public:
         }
     }
 
+    // mass_cancel -- cancel all resting orders for a specific account.
+    // O(n) linear scan of order_index_. Returns count of cancelled orders.
+
+    size_t mass_cancel(uint64_t account_id, Timestamp ts) {
+        size_t count = 0;
+        for (size_t i = 1; i < next_order_id_; ++i) {
+            Order* order = order_index_[i];
+            if (order && order->account_id == account_id) {
+                cancel_active_order(order, ts, CancelReason::MassCancelled);
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    // mass_cancel_all -- cancel all active orders.
+    // O(n) linear scan of order_index_. Returns count of cancelled orders.
+
+    size_t mass_cancel_all(Timestamp ts) {
+        size_t count = 0;
+        for (size_t i = 1; i < next_order_id_; ++i) {
+            Order* order = order_index_[i];
+            if (order) {
+                cancel_active_order(order, ts, CancelReason::MassCancelled);
+                ++count;
+            }
+        }
+        return count;
+    }
+
     // Status queries
 
     size_t active_order_count() const {
@@ -310,6 +367,15 @@ public:
     bool is_self_match(const Order&, const Order&) { return false; }
     SmpAction get_smp_action() { return SmpAction::CancelNewest; }
     ModifyPolicy get_modify_policy() { return ModifyPolicy::CancelReplace; }
+    Quantity get_min_display_qty(const OrderRequest&) { return 0; }
+
+    // Dynamic price band hook.  Default: return static bands from config.
+    // Override in derived class to compute bands relative to a reference price
+    // (e.g. last trade price, reference price from circuit-breaker logic).
+    std::pair<Price, Price> calculate_dynamic_bands(Price /*reference_price*/) {
+        return {config_.price_band_low, config_.price_band_high};
+    }
+
     bool should_trigger_stop(Price last_trade, const Order& stop) {
         if (stop.side == Side::Buy) {
             return last_trade >= stop.level->price;

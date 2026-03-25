@@ -29,14 +29,28 @@ enum class ModifyPolicy : uint8_t {
     CancelReplace, AmendDown, RejectModify
 };
 
+enum class SessionState : uint8_t {
+    Closed,
+    PreOpen,
+    OpeningAuction,
+    Continuous,
+    PreClose,
+    ClosingAuction,
+    Halt,
+    VolatilityAuction,
+};
+
 enum class RejectReason : uint8_t {
     PoolExhausted, InvalidPrice, InvalidQuantity, InvalidTif, InvalidSide,
-    UnknownOrder, PriceBandViolation, LevelPoolExhausted, ExchangeSpecific
+    UnknownOrder, PriceBandViolation, LevelPoolExhausted,
+    MaxOrderSizeExceeded,  // quantity exceeds EngineConfig::max_order_size
+    ExchangeSpecific
 };
 
 enum class CancelReason : uint8_t {
     UserRequested, IOCRemainder, FOKFailed, Expired,
-    SelfMatchPrevention, LevelPoolExhausted
+    SelfMatchPrevention, LevelPoolExhausted,
+    MassCancelled
 };
 
 // --- Core structs ---
@@ -55,6 +69,10 @@ struct Order {
     TimeInForce tif{TimeInForce::GTC};
     Timestamp timestamp{0};
     Timestamp gtd_expiry{0};
+
+    // Iceberg fields (0 = fully visible, no iceberg)
+    Quantity display_qty{0};    // visible quantity (0 = fully visible, no iceberg)
+    Quantity total_qty{0};      // original total including hidden (same as quantity for non-iceberg)
 
     // Intrusive doubly-linked list hooks (within a price level)
     Order* prev{nullptr};
