@@ -1,0 +1,11 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+cc_binary(
+    name = "exchange_benchmark",
+    srcs = ["exchange_benchmark.cc"],
+    deps = [
+        "//exchange-core:matching_engine",
+        "//test-harness:recording_listener",
+    ],
+    copts = ["-O3", "-DNDEBUG", "-march=native"],
+)
