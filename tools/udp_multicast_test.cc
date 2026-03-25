@@ -4,7 +4,6 @@
 
 #include <cstring>
 #include <string>
-#include <thread>
 
 #include "gtest/gtest.h"
 
@@ -26,8 +25,15 @@ void SetRecvTimeout(int fd, int ms) {
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
+// Extract the sequence header from a received buffer.
+McastSeqHeader ExtractSeqHeader(const char* buf) {
+    McastSeqHeader hdr;
+    std::memcpy(&hdr, buf, sizeof(hdr));
+    return hdr;
+}
+
 // ---------------------------------------------------------------------------
-// Basic send and receive
+// Basic send and receive (with sequence header)
 // ---------------------------------------------------------------------------
 
 TEST(UdpMulticastTest, SendAndReceive) {
@@ -40,20 +46,27 @@ TEST(UdpMulticastTest, SendAndReceive) {
     UdpMulticastPublisher publisher(kTestGroup, port);
 
     const std::string msg = "hello multicast";
-    ASSERT_EQ(publisher.send(msg.data(), msg.size()),
-              static_cast<ssize_t>(msg.size()));
+    ASSERT_EQ(publisher.send(msg.data(), msg.size()), SendResult::kOk);
 
     char buf[256]{};
     ssize_t n = receiver.receive(buf, sizeof(buf));
-    ASSERT_GT(n, 0);
-    EXPECT_EQ(std::string(buf, static_cast<size_t>(n)), msg);
+    ASSERT_EQ(n, static_cast<ssize_t>(sizeof(McastSeqHeader) + msg.size()));
+
+    // Verify sequence header.
+    auto hdr = ExtractSeqHeader(buf);
+    EXPECT_EQ(hdr.seq_num, 0u);
+
+    // Verify payload after header.
+    EXPECT_EQ(std::string(buf + sizeof(McastSeqHeader),
+                          static_cast<size_t>(n) - sizeof(McastSeqHeader)),
+              msg);
 }
 
 // ---------------------------------------------------------------------------
-// Multiple messages preserve content
+// Multiple messages: sequence numbers increment, content preserved
 // ---------------------------------------------------------------------------
 
-TEST(UdpMulticastTest, MultipleMessages) {
+TEST(UdpMulticastTest, MultipleMessagesWithSequenceNumbers) {
     constexpr uint16_t port = kBasePort + 2;
 
     UdpMulticastReceiver receiver;
@@ -61,20 +74,28 @@ TEST(UdpMulticastTest, MultipleMessages) {
     SetRecvTimeout(receiver.fd(), 2000);
 
     UdpMulticastPublisher publisher(kTestGroup, port);
+    EXPECT_EQ(publisher.sequence_number(), 0u);
 
     constexpr int kCount = 10;
     for (int i = 0; i < kCount; ++i) {
         std::string msg = "msg-" + std::to_string(i);
-        ASSERT_EQ(publisher.send(msg.data(), msg.size()),
-                  static_cast<ssize_t>(msg.size()));
+        ASSERT_EQ(publisher.send(msg.data(), msg.size()), SendResult::kOk);
     }
+    EXPECT_EQ(publisher.sequence_number(), static_cast<uint32_t>(kCount));
 
     for (int i = 0; i < kCount; ++i) {
         char buf[256]{};
         ssize_t n = receiver.receive(buf, sizeof(buf));
-        ASSERT_GT(n, 0) << "failed to receive message " << i;
+        ASSERT_GT(n, static_cast<ssize_t>(sizeof(McastSeqHeader)))
+            << "failed to receive message " << i;
+
+        auto hdr = ExtractSeqHeader(buf);
+        EXPECT_EQ(hdr.seq_num, static_cast<uint32_t>(i));
+
         std::string expected = "msg-" + std::to_string(i);
-        EXPECT_EQ(std::string(buf, static_cast<size_t>(n)), expected);
+        EXPECT_EQ(std::string(buf + sizeof(McastSeqHeader),
+                              static_cast<size_t>(n) - sizeof(McastSeqHeader)),
+                  expected);
     }
 }
 
@@ -95,13 +116,13 @@ TEST(UdpMulticastTest, BinaryPayloadIntegrity) {
     char payload[256];
     for (int i = 0; i < 256; ++i) payload[i] = static_cast<char>(i);
 
-    ASSERT_EQ(publisher.send(payload, sizeof(payload)),
-              static_cast<ssize_t>(sizeof(payload)));
+    ASSERT_EQ(publisher.send(payload, sizeof(payload)), SendResult::kOk);
 
     char buf[512]{};
     ssize_t n = receiver.receive(buf, sizeof(buf));
-    ASSERT_EQ(n, static_cast<ssize_t>(sizeof(payload)));
-    EXPECT_EQ(std::memcmp(payload, buf, sizeof(payload)), 0);
+    ASSERT_EQ(n, static_cast<ssize_t>(sizeof(McastSeqHeader) + sizeof(payload)));
+    EXPECT_EQ(std::memcmp(payload, buf + sizeof(McastSeqHeader),
+                          sizeof(payload)), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -141,20 +162,21 @@ TEST(UdpMulticastTest, RejoinAfterLeave) {
 
     UdpMulticastPublisher publisher(kTestGroup, port);
     const std::string msg = "after-rejoin";
-    ASSERT_EQ(publisher.send(msg.data(), msg.size()),
-              static_cast<ssize_t>(msg.size()));
+    ASSERT_EQ(publisher.send(msg.data(), msg.size()), SendResult::kOk);
 
     char buf[256]{};
     ssize_t n = receiver.receive(buf, sizeof(buf));
-    ASSERT_GT(n, 0);
-    EXPECT_EQ(std::string(buf, static_cast<size_t>(n)), msg);
+    ASSERT_GT(n, static_cast<ssize_t>(sizeof(McastSeqHeader)));
+    EXPECT_EQ(std::string(buf + sizeof(McastSeqHeader),
+                          static_cast<size_t>(n) - sizeof(McastSeqHeader)),
+              msg);
 }
 
 // ---------------------------------------------------------------------------
-// Publisher move constructor
+// Publisher move constructor preserves sequence number
 // ---------------------------------------------------------------------------
 
-TEST(UdpMulticastTest, PublisherMoveConstruct) {
+TEST(UdpMulticastTest, PublisherMoveConstructPreservesSeq) {
     constexpr uint16_t port = kBasePort + 6;
 
     UdpMulticastReceiver receiver;
@@ -162,19 +184,38 @@ TEST(UdpMulticastTest, PublisherMoveConstruct) {
     SetRecvTimeout(receiver.fd(), 2000);
 
     UdpMulticastPublisher pub1(kTestGroup, port);
+    // Send 3 messages to advance the sequence counter.
+    for (int i = 0; i < 3; ++i) {
+        ASSERT_EQ(pub1.send("x", 1), SendResult::kOk);
+    }
+    EXPECT_EQ(pub1.sequence_number(), 3u);
+
     UdpMulticastPublisher pub2(std::move(pub1));
 
     // pub1 should be invalidated.
     EXPECT_EQ(pub1.fd(), -1);
+    // pub2 inherits the sequence number.
+    EXPECT_EQ(pub2.sequence_number(), 3u);
 
     const std::string msg = "moved";
-    ASSERT_EQ(pub2.send(msg.data(), msg.size()),
-              static_cast<ssize_t>(msg.size()));
+    ASSERT_EQ(pub2.send(msg.data(), msg.size()), SendResult::kOk);
+    EXPECT_EQ(pub2.sequence_number(), 4u);
 
+    // Drain the 3 warmup messages.
+    for (int i = 0; i < 3; ++i) {
+        char discard[64]{};
+        receiver.receive(discard, sizeof(discard));
+    }
+
+    // Receive the "moved" message and verify seq=3.
     char buf[256]{};
     ssize_t n = receiver.receive(buf, sizeof(buf));
-    ASSERT_GT(n, 0);
-    EXPECT_EQ(std::string(buf, static_cast<size_t>(n)), msg);
+    ASSERT_GT(n, static_cast<ssize_t>(sizeof(McastSeqHeader)));
+    auto hdr = ExtractSeqHeader(buf);
+    EXPECT_EQ(hdr.seq_num, 3u);
+    EXPECT_EQ(std::string(buf + sizeof(McastSeqHeader),
+                          static_cast<size_t>(n) - sizeof(McastSeqHeader)),
+              msg);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +235,26 @@ TEST(UdpMulticastTest, DestructorClosesSocket) {
         EXPECT_GE(recv_fd, 0);
     }
     // After destruction, the file descriptors should be closed.
-    // Attempting to get socket options on a closed fd should fail.
     int optval = 0;
     socklen_t optlen = sizeof(optval);
     EXPECT_EQ(::getsockopt(pub_fd, SOL_SOCKET, SO_TYPE, &optval, &optlen), -1);
     EXPECT_EQ(::getsockopt(recv_fd, SOL_SOCKET, SO_TYPE, &optval, &optlen), -1);
+}
+
+// ---------------------------------------------------------------------------
+// Sequence number starts at zero and increments
+// ---------------------------------------------------------------------------
+
+TEST(UdpMulticastTest, SequenceNumberIncrement) {
+    constexpr uint16_t port = kBasePort + 8;
+
+    UdpMulticastPublisher publisher(kTestGroup, port);
+    EXPECT_EQ(publisher.sequence_number(), 0u);
+
+    for (uint32_t i = 0; i < 5; ++i) {
+        ASSERT_EQ(publisher.send("x", 1), SendResult::kOk);
+        EXPECT_EQ(publisher.sequence_number(), i + 1);
+    }
 }
 
 }  // namespace

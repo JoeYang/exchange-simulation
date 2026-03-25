@@ -1,22 +1,43 @@
 #pragma once
 #include <arpa/inet.h>
+#include <cerrno>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
 namespace exchange {
 
+// 4-byte little-endian sequence header prepended to every datagram.
+// Allows receivers to detect gaps without parsing the payload.
+struct McastSeqHeader {
+    uint32_t seq_num;
+} __attribute__((packed));
+static_assert(sizeof(McastSeqHeader) == 4);
+
+enum class SendResult : uint8_t {
+    kOk,          // Datagram sent successfully.
+    kWouldBlock,  // Socket buffer full (EAGAIN/EWOULDBLOCK). Retry later.
+    kError,       // Unrecoverable send error.
+};
+
 // UdpMulticastPublisher sends datagrams to a multicast group:port.
+//
+// Each send() prepends a 4-byte sequence header (zero-copy via sendmsg/iovec).
+// The socket is non-blocking; send() returns SendResult::kWouldBlock when the
+// kernel buffer is full rather than blocking the caller.
+//
 // RAII: socket is closed on destruction.
 // Non-copyable, movable.
 class UdpMulticastPublisher {
     int fd_{-1};
     struct sockaddr_in dest_{};
+    uint32_t seq_{0};
 
 public:
     // Opens a UDP socket configured for multicast sending.
@@ -26,7 +47,7 @@ public:
     // loopback: if true, sender can receive its own messages (needed for tests)
     UdpMulticastPublisher(const char* group, uint16_t port,
                           int ttl = 1, bool loopback = true) {
-        fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+        fd_ = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
         if (fd_ < 0) throw std::runtime_error("socket() failed");
 
         // Set multicast TTL.
@@ -60,22 +81,45 @@ public:
     UdpMulticastPublisher(const UdpMulticastPublisher&) = delete;
     UdpMulticastPublisher& operator=(const UdpMulticastPublisher&) = delete;
     UdpMulticastPublisher(UdpMulticastPublisher&& o) noexcept
-        : fd_(o.fd_), dest_(o.dest_) { o.fd_ = -1; }
+        : fd_(o.fd_), dest_(o.dest_), seq_(o.seq_) { o.fd_ = -1; }
     UdpMulticastPublisher& operator=(UdpMulticastPublisher&& o) noexcept {
         if (this != &o) {
             if (fd_ >= 0) ::close(fd_);
-            fd_ = o.fd_; dest_ = o.dest_; o.fd_ = -1;
+            fd_ = o.fd_; dest_ = o.dest_; seq_ = o.seq_; o.fd_ = -1;
         }
         return *this;
     }
 
-    // Send a datagram. Returns bytes sent, or -1 on error.
-    ssize_t send(const char* data, size_t len) {
-        return ::sendto(fd_, data, len, 0,
-                        reinterpret_cast<const struct sockaddr*>(&dest_),
-                        sizeof(dest_));
+    // Send a datagram with a 4-byte sequence header prepended.
+    // Zero-copy: uses sendmsg with scatter/gather (iovec) so the payload
+    // pointer is passed directly to the kernel — no memcpy.
+    // Sequence number increments only on successful send.
+    SendResult send(const char* data, size_t len) {
+        McastSeqHeader hdr{seq_};
+        struct iovec iov[2];
+        iov[0].iov_base = &hdr;
+        iov[0].iov_len = sizeof(hdr);
+        iov[1].iov_base = const_cast<char*>(data);
+        iov[1].iov_len = len;
+
+        struct msghdr msg{};
+        msg.msg_name = &dest_;
+        msg.msg_namelen = sizeof(dest_);
+        msg.msg_iov = iov;
+        msg.msg_iovlen = 2;
+
+        ssize_t sent = ::sendmsg(fd_, &msg, MSG_DONTWAIT);
+        if (sent >= 0) {
+            ++seq_;
+            return SendResult::kOk;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return SendResult::kWouldBlock;
+        }
+        return SendResult::kError;
     }
 
+    uint32_t sequence_number() const { return seq_; }
     int fd() const { return fd_; }
 };
 
