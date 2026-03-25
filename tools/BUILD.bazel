@@ -151,6 +151,28 @@ cc_test(
     ],
 )
 
+# --- Task 23: MDP3 Replayer ---
+cc_library(
+    name = "mdp3_replayer",
+    hdrs = ["mdp3_replayer.h"],
+    deps = [
+        ":pcap_reader",
+        ":udp_multicast",
+        "//cme/codec:mdp3_decoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "mdp3_replayer_test",
+    srcs = ["mdp3_replayer_test.cc"],
+    deps = [
+        ":mdp3_replayer",
+        "//cme/codec:mdp3_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
