@@ -68,6 +68,30 @@ cc_test(
 )
 
 cc_library(
+    name = "ilink3_gateway",
+    hdrs = ["ilink3_gateway.h"],
+    deps = [
+        "//cme/codec:ilink3_decoder",
+        "//cme/codec:ilink3_messages",
+        "//exchange-core:matching_engine",
+        "//exchange-sim:exchange_simulator",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ilink3_gateway_test",
+    srcs = ["ilink3_gateway_test.cc"],
+    deps = [
+        ":ilink3_gateway",
+        ":cme_simulator",
+        "//cme/codec:ilink3_encoder",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "ilink3_report_publisher",
     hdrs = ["ilink3_report_publisher.h"],
     deps = [
