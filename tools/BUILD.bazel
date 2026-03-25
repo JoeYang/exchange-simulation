@@ -107,6 +107,34 @@ cc_test(
     deps = [":pcap_reader", "@googletest//:gtest_main"],
 )
 
+# --- Task 25: Enhanced Dashboard ---
+cc_binary(
+    name = "exchange-dashboard",
+    srcs = ["exchange_dashboard.cc"],
+    deps = [
+        ":orderbook_state",
+        ":shm_transport",
+        "//exchange-core:ohlcv",
+        "//test-harness:recorded_event",
+        "@ftxui//:component",
+        "@ftxui//:dom",
+        "@ftxui//:screen",
+    ],
+    linkopts = ["-lrt"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "exchange_dashboard_test",
+    srcs = ["exchange_dashboard_test.cc"],
+    deps = [
+        ":orderbook_state",
+        "//exchange-core:ohlcv",
+        "//test-harness:recorded_event",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Task 33: TUI Renderer ---
 cc_library(
     name = "tui_renderer",
