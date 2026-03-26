@@ -1,0 +1,18 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "gtbpr_match",
+    hdrs = ["gtbpr_match.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "gtbpr_match_test",
+    srcs = ["gtbpr_match_test.cc"],
+    deps = [
+        ":gtbpr_match",
+        "@googletest//:gtest_main",
+    ],
+)
