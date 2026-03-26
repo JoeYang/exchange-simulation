@@ -1,0 +1,17 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "impact_messages",
+    hdrs = ["impact_messages.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "impact_messages_test",
+    srcs = ["impact_messages_test.cc"],
+    deps = [
+        ":impact_messages",
+        "@googletest//:gtest_main",
+    ],
+)
