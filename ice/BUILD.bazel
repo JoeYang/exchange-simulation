@@ -16,3 +16,20 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "ice_exchange",
+    hdrs = ["ice_exchange.h"],
+    deps = ["//exchange-core:matching_engine"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_exchange_test",
+    srcs = ["ice_exchange_test.cc"],
+    deps = [
+        ":ice_exchange",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
