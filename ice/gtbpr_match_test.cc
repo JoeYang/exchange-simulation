@@ -10,7 +10,7 @@ namespace {
 // Helpers — mirrors exchange-core/match_algo_test.cc conventions
 // ---------------------------------------------------------------------------
 
-static Order make_order(OrderId id, Quantity qty, Timestamp ts = 0) {
+Order make_order(OrderId id, Quantity qty, Timestamp ts = 0) {
     Order o{};
     o.id                 = id;
     o.quantity           = qty;
@@ -23,7 +23,7 @@ static Order make_order(OrderId id, Quantity qty, Timestamp ts = 0) {
     return o;
 }
 
-static void build_level(PriceLevel& level, Order** orders, size_t n) {
+void build_level(PriceLevel& level, Order** orders, size_t n) {
     level.head           = nullptr;
     level.tail           = nullptr;
     level.order_count    = 0;
@@ -49,7 +49,7 @@ static void build_level(PriceLevel& level, Order** orders, size_t n) {
 constexpr Timestamp SEC = 1'000'000'000LL;
 
 // Default config used by most tests.
-static GtbprMatch::Config default_cfg() {
+GtbprMatch::Config default_cfg() {
     return {.collar = 50000, .cap = 200000, .time_weight_factor = 0.1};
 }
 
@@ -452,6 +452,110 @@ TEST(GtbprMatchTest, AggressorExceedsLevel) {
     EXPECT_EQ(results[0].quantity, 50000);
     EXPECT_EQ(results[0].resting_remaining, 0);
     EXPECT_EQ(remaining, 150000);  // leftover for next level
+}
+
+// ---------------------------------------------------------------------------
+// Aggressor qty < collar with a priority-eligible order present.
+// The priority order still gets priority; aggressor qty is the limiting factor.
+// ---------------------------------------------------------------------------
+TEST(GtbprMatchTest, AggressorSmallerThanCollarWithEligibleOrder) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    // o1 qualifies for priority (100000 >= collar 50000).
+    Order o1 = make_order(1, 100000, 0);
+    Order o2 = make_order(2, 100000, 1 * SEC);
+    Order* orders[] = {&o1, &o2};
+    build_level(level, orders, 2);
+
+    auto cfg = default_cfg();  // collar=50000, cap=200000
+    // Aggressor wants only 30000 — less than collar.
+    Quantity remaining = 30000;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    GtbprMatch::match(level, remaining, results, count, 2 * SEC, cfg);
+
+    // Priority fill = min(cap=200000, pool=30000, remaining_qty=100000) = 30000
+    // Pool exhausted after priority. No pro-rata phase.
+    Quantity o1_total = 0, o2_total = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (results[i].resting_order == &o1) o1_total += results[i].quantity;
+        if (results[i].resting_order == &o2) o2_total += results[i].quantity;
+    }
+    EXPECT_EQ(o1_total, 30000);  // all to priority order
+    EXPECT_EQ(o2_total, 0);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// resting_remaining is correct after pure pro-rata fill (no priority phase).
+// All orders below collar, so no priority — pure time-weighted pro-rata.
+// ---------------------------------------------------------------------------
+TEST(GtbprMatchTest, RestingRemainingAfterPureProRata) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    // Both below collar (50000), so no priority.
+    Order o1 = make_order(1, 40000, 0);
+    Order o2 = make_order(2, 40000, 0);
+    Order* orders[] = {&o1, &o2};
+    build_level(level, orders, 2);
+
+    auto cfg = default_cfg();
+    Quantity remaining = 20000;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    GtbprMatch::match(level, remaining, results, count, 0, cfg);
+
+    // Equal weight (same qty, same age, tw=1.0).
+    // Each gets floor(1/2 * 20000) = 10000. No remainder.
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(results[0].resting_order, &o1);
+    EXPECT_EQ(results[0].quantity, 10000);
+    EXPECT_EQ(results[0].resting_remaining, 30000);  // 40000 - 10000
+
+    EXPECT_EQ(results[1].resting_order, &o2);
+    EXPECT_EQ(results[1].quantity, 10000);
+    EXPECT_EQ(results[1].resting_remaining, 30000);  // 40000 - 10000
+
+    EXPECT_EQ(o1.remaining_quantity, 30000);
+    EXPECT_EQ(o2.remaining_quantity, 30000);
+    EXPECT_EQ(remaining, 0);
+}
+
+// ---------------------------------------------------------------------------
+// time_weight_factor = 0.0 boundary: age has no effect, pure quantity pro-rata.
+// ---------------------------------------------------------------------------
+TEST(GtbprMatchTest, ZeroTimeWeightFactorPureQuantityProRata) {
+    PriceLevel level{};
+    level.price = 1000000;
+
+    // Different ages but factor=0 → age should have no effect.
+    Order o1 = make_order(1, 30000, 0);          // age=10s
+    Order o2 = make_order(2, 30000, 5 * SEC);    // age=5s
+    Order* orders[] = {&o1, &o2};
+    build_level(level, orders, 2);
+
+    GtbprMatch::Config cfg{.collar = 50000, .cap = 200000,
+                           .time_weight_factor = 0.0};
+    Quantity remaining = 30000;
+    FillResult results[16]{};
+    size_t count = 0;
+
+    GtbprMatch::match(level, remaining, results, count, 10 * SEC, cfg);
+
+    // factor=0 → tw=1.0 for both, regardless of age.
+    // Equal qty → equal weights → each gets 15000.
+    Quantity o1_total = 0, o2_total = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (results[i].resting_order == &o1) o1_total += results[i].quantity;
+        if (results[i].resting_order == &o2) o2_total += results[i].quantity;
+    }
+    EXPECT_EQ(o1_total, 15000);
+    EXPECT_EQ(o2_total, 15000);
+    EXPECT_EQ(remaining, 0);
 }
 
 }  // namespace

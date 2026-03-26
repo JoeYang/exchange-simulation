@@ -17,18 +17,37 @@ namespace ice {
 //      whose remaining_quantity >= collar. If found, fill it up to cap.
 //   2. Distribute remaining quantity pro-rata across ALL resting orders,
 //      weighted by: remaining_quantity * time_weight(age, time_weight_factor)
-//      where time_weight = 1.0 + factor * (age_ns / 1e9).
+//      where time_weight = 1.0 + factor * (age_ns / NS_PER_SEC).
 //   3. Remainder after integer truncation goes to the oldest order (FIFO).
 //
 // The priority order participates in the pro-rata phase as well (on its
 // post-priority remaining quantity).
+//
+// NOTE: Unlike FifoMatch and ProRataMatch (which take 4 parameters),
+// GtbprMatch::match() takes 6 parameters — the additional `now` and `cfg`
+// are required for time-weighted allocation and per-product priority
+// configuration. This means GtbprMatch is NOT a drop-in replacement in
+// contexts that call MatchAlgoT::match with the 4-parameter signature.
+// IceExchange handles this by calling match() directly with the extended
+// signature for STIR products.
+
+constexpr double NS_PER_SEC = 1e9;
+
 struct GtbprMatch {
     struct Config {
-        Quantity collar{50000};         // min size for priority (e.g. 5 lots)
-        Quantity cap{2000000};          // max priority fill quantity
+        // All quantities are in internal Quantity units (fixed-point,
+        // PRICE_SCALE=10000). To convert from lots: lots * PRICE_SCALE.
+        // e.g. collar=50000 means 5 lots, cap=2000000 means 200 lots.
+        Quantity collar{50000};         // min size for priority (5 lots * 10000)
+        Quantity cap{2000000};          // max priority fill (200 lots * 10000)
         double time_weight_factor{0.1}; // age bonus: 1.0 + factor * age_seconds
     };
 
+    // Match aggressor against resting orders at a single price level using
+    // the GTBPR algorithm.
+    //
+    // Caller contract: `results` must have capacity for at least
+    // level.order_count entries beyond the current `count` index.
     static void match(PriceLevel& level, Quantity& remaining,
                       FillResult* results, size_t& count,
                       Timestamp now, const Config& cfg) {
@@ -69,6 +88,11 @@ struct GtbprMatch {
         if (pool > 0) {
             // Compute weighted sizes for all orders (using post-priority qty
             // for the priority order).
+            //
+            // The weight computation is intentionally duplicated across the
+            // total_weight pass and the allocation pass below. This avoids
+            // a scratch buffer allocation on the hot path — we trade ~N
+            // extra floating-point multiplies for zero dynamic allocation.
             double total_weight = 0.0;
 
             for (Order* o = level.head; o != nullptr; o = o->next) {
@@ -78,7 +102,8 @@ struct GtbprMatch {
                 }
                 if (effective_qty <= 0) continue;
 
-                double age_s = static_cast<double>(now - o->timestamp) / 1e9;
+                double age_s = static_cast<double>(now - o->timestamp)
+                               / NS_PER_SEC;
                 if (age_s < 0.0) age_s = 0.0;
                 double tw = 1.0 + cfg.time_weight_factor * age_s;
                 double w = static_cast<double>(effective_qty) * tw;
@@ -95,7 +120,8 @@ struct GtbprMatch {
                     }
                     if (effective_qty <= 0) continue;
 
-                    double age_s = static_cast<double>(now - o->timestamp) / 1e9;
+                    double age_s = static_cast<double>(now - o->timestamp)
+                                   / NS_PER_SEC;
                     if (age_s < 0.0) age_s = 0.0;
                     double tw = 1.0 + cfg.time_weight_factor * age_s;
                     double w = static_cast<double>(effective_qty) * tw;
