@@ -43,7 +43,7 @@ TEST(ImpactPublisherTest, ConstructionWithInstrumentId) {
 }
 
 // ---------------------------------------------------------------------------
-// DepthUpdate -> AddModifyOrder
+// DepthUpdate -> PriceLevel
 // ---------------------------------------------------------------------------
 
 TEST(ImpactPublisherTest, DepthUpdateAdd) {
@@ -67,11 +67,12 @@ TEST(ImpactPublisherTest, DepthUpdateAdd) {
     EXPECT_EQ(bs.message_count, 1u);
     EXPECT_EQ(bs.timestamp, 1000000000);
 
-    auto msg = decode_inner<AddModifyOrder>(pub.packets()[0]);
+    auto msg = decode_inner<PriceLevel>(pub.packets()[0]);
     EXPECT_EQ(msg.instrument_id, 100);
     EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Buy));
     EXPECT_EQ(msg.price, 45000000);
     EXPECT_EQ(msg.quantity, 5u);  // 50000 / 10000
+    EXPECT_EQ(msg.order_count, 3u);
 }
 
 TEST(ImpactPublisherTest, DepthUpdateRemove) {
@@ -89,11 +90,12 @@ TEST(ImpactPublisherTest, DepthUpdateRemove) {
 
     ASSERT_EQ(pub.packet_count(), 1u);
 
-    auto msg = decode_inner<OrderWithdrawal>(pub.packets()[0]);
+    auto msg = decode_inner<PriceLevel>(pub.packets()[0]);
     EXPECT_EQ(msg.instrument_id, 100);
     EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Sell));
     EXPECT_EQ(msg.price, 45010000);
     EXPECT_EQ(msg.quantity, 0u);
+    EXPECT_EQ(msg.order_count, 0u);
 }
 
 // ---------------------------------------------------------------------------

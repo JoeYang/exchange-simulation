@@ -54,16 +54,16 @@ inline uint8_t encode_trading_status(SessionState state) {
 
 struct ImpactEncodeContext {
     int32_t  instrument_id{0};
-    uint32_t seq_num{0};       // block sequence number (bundles)
-    uint32_t order_seq{0};     // per-message sequence counter
-    int64_t  next_deal_id{1};  // monotonic deal ID generator
+    uint32_t seq_num{0};              // block sequence number (bundles)
+    uint32_t sequence_within_msg{0};  // per-message sequence counter
+    int64_t  next_deal_id{1};         // monotonic deal ID generator
 };
 
 // ---------------------------------------------------------------------------
 // Maximum buffer size for any single encoded iMpact bundle.
 //
 // Largest single-event bundle:
-//   BundleStart(3+14) + AddModifyOrder(3+39) + BundleEnd(3+4) = 66
+//   BundleStart(3+14) + DealTrade(3+33) + BundleEnd(3+4) = 60
 // Provide headroom for future multi-message bundles.
 // ---------------------------------------------------------------------------
 
@@ -91,10 +91,10 @@ inline char* write_bundle_end(char* buf, size_t buf_len, uint32_t seq_num) {
 }
 
 // ---------------------------------------------------------------------------
-// Encode DepthUpdate -> bundled AddModifyOrder.
+// Encode DepthUpdate -> bundled PriceLevel.
 //
-// DepthUpdate with action Add/Update maps to AddModifyOrder.
-// DepthUpdate with action Remove maps to OrderWithdrawal.
+// DepthUpdate is aggregated MBP data — maps to PriceLevel, not per-order
+// AddModifyOrder. For Remove action: PriceLevel with qty=0, order_count=0.
 // Returns total bytes written, or 0 on failure.
 // ---------------------------------------------------------------------------
 
@@ -107,30 +107,15 @@ inline size_t encode_depth_update(
     char* p = write_bundle_start(buf, buf_len, seq, 1, evt.ts);
     if (!p) return 0;
 
-    if (evt.action == DepthUpdate::Remove) {
-        OrderWithdrawal msg{};
-        std::memset(&msg, 0, sizeof(msg));
-        msg.instrument_id      = ctx.instrument_id;
-        msg.order_id           = 0;  // aggregated level, no specific order
-        msg.sequence_within_msg = ++ctx.order_seq;
-        msg.side               = encode_side(evt.side);
-        msg.price              = engine_price_to_wire(evt.price);
-        msg.quantity           = engine_qty_to_wire(evt.total_qty);
-        p = encode(p, buf_len - static_cast<size_t>(p - buf), msg);
-    } else {
-        AddModifyOrder msg{};
-        std::memset(&msg, 0, sizeof(msg));
-        msg.instrument_id        = ctx.instrument_id;
-        msg.order_id             = 0;  // aggregated level, no specific order
-        msg.sequence_within_msg  = ++ctx.order_seq;
-        msg.side                 = encode_side(evt.side);
-        msg.price                = engine_price_to_wire(evt.price);
-        msg.quantity             = engine_qty_to_wire(evt.total_qty);
-        msg.is_implied           = static_cast<uint8_t>(YesNo::No);
-        msg.is_rfq               = static_cast<uint8_t>(YesNo::No);
-        msg.order_entry_date_time = evt.ts;
-        p = encode(p, buf_len - static_cast<size_t>(p - buf), msg);
-    }
+    PriceLevel msg{};
+    std::memset(&msg, 0, sizeof(msg));
+    msg.instrument_id = ctx.instrument_id;
+    msg.side          = encode_side(evt.side);
+    msg.price         = engine_price_to_wire(evt.price);
+    msg.quantity      = engine_qty_to_wire(evt.total_qty);
+    msg.order_count   = static_cast<uint16_t>(evt.order_count);
+
+    p = encode(p, buf_len - static_cast<size_t>(p - buf), msg);
     if (!p) return 0;
 
     p = write_bundle_end(p, buf_len - static_cast<size_t>(p - buf), seq);
@@ -160,7 +145,7 @@ inline size_t encode_order_cancelled(
     std::memset(&msg, 0, sizeof(msg));
     msg.instrument_id      = ctx.instrument_id;
     msg.order_id           = static_cast<int64_t>(evt.id);
-    msg.sequence_within_msg = ++ctx.order_seq;
+    msg.sequence_within_msg = ++ctx.sequence_within_msg;
     msg.side               = encode_side(side);
     msg.price              = engine_price_to_wire(price);
     msg.quantity           = engine_qty_to_wire(quantity);

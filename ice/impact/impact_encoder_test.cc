@@ -83,7 +83,7 @@ TEST(ImpactEncoderTest, TradingStatusEncoding) {
 }
 
 // ---------------------------------------------------------------------------
-// DepthUpdate -> AddModifyOrder (Add/Update action)
+// DepthUpdate -> PriceLevel (Add/Update action)
 // ---------------------------------------------------------------------------
 
 TEST(ImpactEncoderTest, EncodeDepthUpdateAdd) {
@@ -99,8 +99,8 @@ TEST(ImpactEncoderTest, EncodeDepthUpdateAdd) {
     evt.ts = 1000000000;
 
     size_t n = encode_depth_update(buf, sizeof(buf), evt, ctx);
-    // BundleStart(3+14) + AddModifyOrder(3+39) + BundleEnd(3+4) = 66
-    EXPECT_EQ(n, 66u);
+    // BundleStart(3+14) + PriceLevel(3+19) + BundleEnd(3+4) = 46
+    EXPECT_EQ(n, 46u);
 
     // Verify BundleStart.
     auto bs = decode_bundle_start(buf);
@@ -108,19 +108,16 @@ TEST(ImpactEncoderTest, EncodeDepthUpdateAdd) {
     EXPECT_EQ(bs.message_count, 1u);
     EXPECT_EQ(bs.timestamp, 1000000000);
 
-    // Verify AddModifyOrder.
+    // Verify PriceLevel.
     const char* p = buf + wire_size<BundleStart>();
-    AddModifyOrder msg{};
+    PriceLevel msg{};
     auto* after = decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
     ASSERT_NE(after, nullptr);
     EXPECT_EQ(msg.instrument_id, 12345);
     EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Buy));
     EXPECT_EQ(msg.price, 45002500);
     EXPECT_EQ(msg.quantity, 10u);
-    EXPECT_EQ(msg.is_implied, static_cast<uint8_t>(YesNo::No));
-    EXPECT_EQ(msg.is_rfq, static_cast<uint8_t>(YesNo::No));
-    EXPECT_EQ(msg.order_entry_date_time, 1000000000);
-    EXPECT_EQ(msg.sequence_within_msg, 1u);
+    EXPECT_EQ(msg.order_count, 5u);
 
     // Verify BundleEnd.
     auto be = decode_bundle_end(after);
@@ -128,7 +125,6 @@ TEST(ImpactEncoderTest, EncodeDepthUpdateAdd) {
 
     // Context updated.
     EXPECT_EQ(ctx.seq_num, 1u);
-    EXPECT_EQ(ctx.order_seq, 1u);
 }
 
 TEST(ImpactEncoderTest, EncodeDepthUpdateSellUpdate) {
@@ -144,18 +140,19 @@ TEST(ImpactEncoderTest, EncodeDepthUpdateSellUpdate) {
     evt.ts = 2000000000;
 
     size_t n = encode_depth_update(buf, sizeof(buf), evt, ctx);
-    EXPECT_EQ(n, 66u);  // same size: AddModifyOrder
+    EXPECT_EQ(n, 46u);  // same size: PriceLevel
 
     const char* p = buf + wire_size<BundleStart>();
-    AddModifyOrder msg{};
+    PriceLevel msg{};
     decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
     EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Sell));
     EXPECT_EQ(msg.price, 45010000);
     EXPECT_EQ(msg.quantity, 5u);
+    EXPECT_EQ(msg.order_count, 3u);
 }
 
 // ---------------------------------------------------------------------------
-// DepthUpdate -> OrderWithdrawal (Remove action)
+// DepthUpdate -> PriceLevel (Remove action: qty=0, order_count=0)
 // ---------------------------------------------------------------------------
 
 TEST(ImpactEncoderTest, EncodeDepthUpdateRemove) {
@@ -171,17 +168,18 @@ TEST(ImpactEncoderTest, EncodeDepthUpdateRemove) {
     evt.ts = 3000000000;
 
     size_t n = encode_depth_update(buf, sizeof(buf), evt, ctx);
-    // BundleStart(17) + OrderWithdrawal(3+29=32) + BundleEnd(7) = 56
-    EXPECT_EQ(n, 56u);
+    // BundleStart(17) + PriceLevel(3+19=22) + BundleEnd(7) = 46
+    EXPECT_EQ(n, 46u);
 
     const char* p = buf + wire_size<BundleStart>();
-    OrderWithdrawal msg{};
+    PriceLevel msg{};
     auto* after = decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
     ASSERT_NE(after, nullptr);
     EXPECT_EQ(msg.instrument_id, 12345);
     EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Buy));
     EXPECT_EQ(msg.price, 44990000);
     EXPECT_EQ(msg.quantity, 0u);
+    EXPECT_EQ(msg.order_count, 0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,11 +386,19 @@ TEST(ImpactEncoderTest, SeqNumIncrementsAcrossCalls) {
     encode_trade(buf, sizeof(buf), t, ctx);
     EXPECT_EQ(ctx.seq_num, 2u);
 
+    OrderCancelled oc{};
+    oc.id = 99;
+    oc.ts = 3;
+    oc.reason = CancelReason::UserRequested;
+    encode_order_cancelled(buf, sizeof(buf), oc,
+                           exchange::Side::Buy, 45000000, 10000, ctx);
+    EXPECT_EQ(ctx.seq_num, 3u);
+
     exchange::MarketStatus ms{};
     ms.state = SessionState::Halt;
-    ms.ts = 3;
+    ms.ts = 4;
     encode_market_status(buf, sizeof(buf), ms, ctx);
-    EXPECT_EQ(ctx.seq_num, 3u);
+    EXPECT_EQ(ctx.seq_num, 4u);
 }
 
 // ---------------------------------------------------------------------------
