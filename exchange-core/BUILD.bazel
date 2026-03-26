@@ -192,6 +192,22 @@ cc_test(
 )
 
 cc_library(
+    name = "trade_registry",
+    hdrs = ["trade_registry.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "trade_registry_test",
+    srcs = ["trade_registry_test.cc"],
+    deps = [
+        ":trade_registry",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "matching_engine",
     hdrs = ["matching_engine.h"],
     deps = [

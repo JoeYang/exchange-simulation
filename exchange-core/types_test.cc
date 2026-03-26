@@ -105,6 +105,9 @@ TEST(TypesTest, RejectReasonEnumCoversAllValues) {
             case RejectReason::PriceBandViolation: return;
             case RejectReason::LevelPoolExhausted:   return;
             case RejectReason::MaxOrderSizeExceeded: return;
+            case RejectReason::RateThrottled:        return;
+            case RejectReason::LockLimitUp:          return;
+            case RejectReason::LockLimitDown:        return;
             case RejectReason::ExchangeSpecific:     return;
         }
     };
@@ -117,6 +120,9 @@ TEST(TypesTest, RejectReasonEnumCoversAllValues) {
     check(RejectReason::PriceBandViolation);
     check(RejectReason::LevelPoolExhausted);
     check(RejectReason::MaxOrderSizeExceeded);
+    check(RejectReason::RateThrottled);
+    check(RejectReason::LockLimitUp);
+    check(RejectReason::LockLimitDown);
     check(RejectReason::ExchangeSpecific);
 }
 
@@ -221,6 +227,7 @@ TEST(TypesTest, SessionStateEnumCoversAllValues) {
             case SessionState::ClosingAuction:    return;
             case SessionState::Halt:              return;
             case SessionState::VolatilityAuction: return;
+            case SessionState::LockLimit:         return;
         }
     };
     check(SessionState::Closed);
@@ -231,6 +238,7 @@ TEST(TypesTest, SessionStateEnumCoversAllValues) {
     check(SessionState::ClosingAuction);
     check(SessionState::Halt);
     check(SessionState::VolatilityAuction);
+    check(SessionState::LockLimit);
 }
 
 TEST(TypesTest, SessionStateUnderlyingType) {

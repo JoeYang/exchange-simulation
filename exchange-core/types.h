@@ -8,6 +8,7 @@ namespace exchange {
 using Price     = int64_t;   // fixed-point, 4 decimal places (100.5000 = 1005000)
 using Quantity  = int64_t;   // fixed-point, 4 decimal places (1.0000 = 10000)
 using OrderId   = uint64_t;  // engine-assigned, sequential starting at 1
+using TradeId   = uint64_t;  // engine-assigned, sequential starting at 1
 using Timestamp = int64_t;   // epoch nanoseconds
 
 constexpr int64_t PRICE_SCALE = 10000;
@@ -38,12 +39,16 @@ enum class SessionState : uint8_t {
     ClosingAuction,
     Halt,
     VolatilityAuction,
+    LockLimit,
 };
 
 enum class RejectReason : uint8_t {
     PoolExhausted, InvalidPrice, InvalidQuantity, InvalidTif, InvalidSide,
     UnknownOrder, PriceBandViolation, LevelPoolExhausted,
     MaxOrderSizeExceeded,  // quantity exceeds EngineConfig::max_order_size
+    RateThrottled,         // per-account message rate limit exceeded
+    LockLimitUp,           // order price at/above upper daily limit (locked)
+    LockLimitDown,         // order price at/below lower daily limit (locked)
     ExchangeSpecific
 };
 
@@ -51,6 +56,13 @@ enum class CancelReason : uint8_t {
     UserRequested, IOCRemainder, FOKFailed, Expired,
     SelfMatchPrevention, LevelPoolExhausted,
     MassCancelled
+};
+
+enum class BustReason : uint8_t {
+    ErroneousTrade,   // price or quantity was clearly erroneous
+    SystemError,      // exchange system malfunction
+    Regulatory,       // regulatory directive to bust
+    ExchangeSpecific  // exchange-defined reason
 };
 
 // --- Core structs ---
