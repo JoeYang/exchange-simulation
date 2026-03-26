@@ -262,6 +262,14 @@ void JournalTestRunner::execute_action(EngineT& engine,
             "iLink3 actions require the E2E test runner, "
             "not the unit-test JournalTestRunner");
 
+    // ICE FIX E2E actions — handled by the ICE E2E test runner.
+    case ParsedAction::IceFixNewOrder:
+    case ParsedAction::IceFixCancel:
+    case ParsedAction::IceFixReplace:
+    case ParsedAction::IceFixMassCancel:
+        throw std::runtime_error(
+            "ICE FIX actions require the ICE E2E test runner");
+
     // E2E session lifecycle actions — handled by E2E test runner.
     case ParsedAction::SessionStart:
     case ParsedAction::SessionOpen:

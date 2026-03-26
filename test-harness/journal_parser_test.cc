@@ -688,4 +688,152 @@ TEST(JournalParserTest, ParseSessionClose) {
     EXPECT_EQ(j.entries[0].action.get_int("ts"), 86400000);
 }
 
+// ---------------------------------------------------------------------------
+// ICE FIX ACTION parsing (E2E extension)
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, ParseIceFixNewOrder) {
+    const std::string content =
+        "ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=CL cl_ord_id=1 "
+        "account=HEDGE_A side=BUY price=72500000 qty=10000 type=LIMIT tif=DAY\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::IceFixNewOrder);
+    EXPECT_EQ(a.get_int("ts"), 1000);
+    EXPECT_EQ(a.get_str("instrument"), "CL");
+    EXPECT_EQ(a.get_int("cl_ord_id"), 1);
+    EXPECT_EQ(a.get_str("account"), "HEDGE_A");
+    EXPECT_EQ(a.get_str("side"), "BUY");
+    EXPECT_EQ(a.get_int("price"), 72500000);
+    EXPECT_EQ(a.get_int("qty"), 10000);
+    EXPECT_EQ(a.get_str("type"), "LIMIT");
+    EXPECT_EQ(a.get_str("tif"), "DAY");
+}
+
+TEST(JournalParserTest, ParseIceFixCancel) {
+    const std::string content =
+        "ACTION ICE_FIX_CANCEL ts=2000 instrument=CL cl_ord_id=2 "
+        "orig_cl_ord_id=1 side=BUY\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::IceFixCancel);
+    EXPECT_EQ(a.get_int("ts"), 2000);
+    EXPECT_EQ(a.get_str("instrument"), "CL");
+    EXPECT_EQ(a.get_int("cl_ord_id"), 2);
+    EXPECT_EQ(a.get_int("orig_cl_ord_id"), 1);
+    EXPECT_EQ(a.get_str("side"), "BUY");
+}
+
+TEST(JournalParserTest, ParseIceFixReplace) {
+    const std::string content =
+        "ACTION ICE_FIX_REPLACE ts=3000 instrument=CL cl_ord_id=3 "
+        "orig_cl_ord_id=1 price=73000000 qty=20000 side=BUY\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::IceFixReplace);
+    EXPECT_EQ(a.get_int("ts"), 3000);
+    EXPECT_EQ(a.get_int("cl_ord_id"), 3);
+    EXPECT_EQ(a.get_int("orig_cl_ord_id"), 1);
+    EXPECT_EQ(a.get_int("price"), 73000000);
+    EXPECT_EQ(a.get_int("qty"), 20000);
+}
+
+TEST(JournalParserTest, ParseIceFixMassCancel) {
+    const std::string content =
+        "ACTION ICE_FIX_MASS_CANCEL ts=4000 instrument=CL account=HEDGE_A\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 1u);
+    const ParsedAction& a = j.entries[0].action;
+    EXPECT_EQ(a.type, ParsedAction::IceFixMassCancel);
+    EXPECT_EQ(a.get_int("ts"), 4000);
+    EXPECT_EQ(a.get_str("instrument"), "CL");
+    EXPECT_EQ(a.get_str("account"), "HEDGE_A");
+}
+
+// ---------------------------------------------------------------------------
+// ICE EXPECT types parsing
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, ParseIceExecExpects) {
+    const std::string content =
+        "ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=CL cl_ord_id=1 "
+        "account=HEDGE_A side=BUY price=72500000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT ICE_EXEC_NEW ord_id=1 cl_ord_id=1 instrument=CL\n"
+        "EXPECT ICE_EXEC_FILL ord_id=1 cl_ord_id=1 fill_price=72500000 fill_qty=10000\n"
+        "EXPECT ICE_EXEC_CANCELLED ord_id=1 cl_ord_id=1\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 3u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "ICE_EXEC_NEW");
+    EXPECT_EQ(j.entries[0].expectations[0].get_int("ord_id"), 1);
+    EXPECT_EQ(j.entries[0].expectations[1].event_type, "ICE_EXEC_FILL");
+    EXPECT_EQ(j.entries[0].expectations[1].get_int("fill_price"), 72500000);
+    EXPECT_EQ(j.entries[0].expectations[2].event_type, "ICE_EXEC_CANCELLED");
+}
+
+TEST(JournalParserTest, ParseIceMdExpects) {
+    const std::string content =
+        "ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=CL cl_ord_id=1 "
+        "account=HEDGE_A side=BUY price=72500000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT ICE_MD_ADD instrument=CL side=BUY price=72500000 qty=10000\n"
+        "EXPECT ICE_MD_REMOVE instrument=CL side=BUY price=72500000\n"
+        "EXPECT ICE_MD_TRADE instrument=CL price=72500000 qty=10000 aggressor_side=SELL\n"
+        "EXPECT ICE_MD_STATUS instrument=CL state=CONTINUOUS\n";
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries[0].expectations.size(), 4u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "ICE_MD_ADD");
+    EXPECT_EQ(j.entries[0].expectations[0].get_str("side"), "BUY");
+    EXPECT_EQ(j.entries[0].expectations[1].event_type, "ICE_MD_REMOVE");
+    EXPECT_EQ(j.entries[0].expectations[2].event_type, "ICE_MD_TRADE");
+    EXPECT_EQ(j.entries[0].expectations[2].get_int("qty"), 10000);
+    EXPECT_EQ(j.entries[0].expectations[3].event_type, "ICE_MD_STATUS");
+    EXPECT_EQ(j.entries[0].expectations[3].get_str("state"), "CONTINUOUS");
+}
+
+// ---------------------------------------------------------------------------
+// ICE FIX full scenario
+// ---------------------------------------------------------------------------
+
+TEST(JournalParserTest, IceFixFullScenario) {
+    const std::string content =
+        "CONFIG match_algo=FIFO tick_size=100 lot_size=10000\n"
+        "\n"
+        "ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=CL cl_ord_id=1 "
+        "account=HEDGE_A side=BUY price=72500000 qty=10000 type=LIMIT tif=DAY\n"
+        "EXPECT ICE_EXEC_NEW ord_id=1 cl_ord_id=1 instrument=CL\n"
+        "EXPECT ICE_MD_ADD instrument=CL side=BUY price=72500000 qty=10000 num_orders=1\n"
+        "\n"
+        "ACTION ICE_FIX_REPLACE ts=2000 instrument=CL cl_ord_id=2 "
+        "orig_cl_ord_id=1 price=73000000 qty=10000 side=BUY\n"
+        "EXPECT ICE_EXEC_NEW ord_id=1 cl_ord_id=2\n"
+        "\n"
+        "ACTION ICE_FIX_CANCEL ts=3000 instrument=CL cl_ord_id=3 "
+        "orig_cl_ord_id=1 side=BUY\n"
+        "EXPECT ICE_EXEC_CANCELLED ord_id=1 cl_ord_id=3\n"
+        "EXPECT ICE_MD_REMOVE instrument=CL side=BUY price=73000000\n"
+        "\n"
+        "ACTION ICE_FIX_MASS_CANCEL ts=4000 instrument=CL account=HEDGE_A\n";
+
+    Journal j = JournalParser::parse_string(content);
+    ASSERT_EQ(j.entries.size(), 4u);
+
+    EXPECT_EQ(j.entries[0].action.type, ParsedAction::IceFixNewOrder);
+    ASSERT_EQ(j.entries[0].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "ICE_EXEC_NEW");
+    EXPECT_EQ(j.entries[0].expectations[1].event_type, "ICE_MD_ADD");
+
+    EXPECT_EQ(j.entries[1].action.type, ParsedAction::IceFixReplace);
+    ASSERT_EQ(j.entries[1].expectations.size(), 1u);
+
+    EXPECT_EQ(j.entries[2].action.type, ParsedAction::IceFixCancel);
+    ASSERT_EQ(j.entries[2].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[2].expectations[0].event_type, "ICE_EXEC_CANCELLED");
+    EXPECT_EQ(j.entries[2].expectations[1].event_type, "ICE_MD_REMOVE");
+
+    EXPECT_EQ(j.entries[3].action.type, ParsedAction::IceFixMassCancel);
+    EXPECT_EQ(j.entries[3].expectations.size(), 0u);
+}
+
 }  // namespace exchange

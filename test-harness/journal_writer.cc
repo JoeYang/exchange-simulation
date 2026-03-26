@@ -124,6 +124,10 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::ILink3Cancel:      os << "ILINK3_CANCEL";     break;
         case ParsedAction::ILink3Replace:     os << "ILINK3_REPLACE";    break;
         case ParsedAction::ILink3MassCancel:  os << "ILINK3_MASS_CANCEL"; break;
+        case ParsedAction::IceFixNewOrder:    os << "ICE_FIX_NEW_ORDER";  break;
+        case ParsedAction::IceFixCancel:      os << "ICE_FIX_CANCEL";    break;
+        case ParsedAction::IceFixReplace:     os << "ICE_FIX_REPLACE";   break;
+        case ParsedAction::IceFixMassCancel:  os << "ICE_FIX_MASS_CANCEL"; break;
         case ParsedAction::SessionStart:      os << "SESSION_START";      break;
         case ParsedAction::SessionOpen:       os << "SESSION_OPEN";       break;
         case ParsedAction::SessionClose:      os << "SESSION_CLOSE";      break;
@@ -231,6 +235,46 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
             emit("account");
             break;
 
+        case ParsedAction::IceFixNewOrder:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("account");
+            emit("side");
+            emit("price");
+            emit("qty");
+            emit("type");
+            emit("tif");
+            emit("display_qty");
+            emit("originator_user_id");
+            emit("account_code");
+            emit("memo");
+            break;
+
+        case ParsedAction::IceFixCancel:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("orig_cl_ord_id");
+            emit("side");
+            break;
+
+        case ParsedAction::IceFixReplace:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("orig_cl_ord_id");
+            emit("price");
+            emit("qty");
+            emit("side");
+            break;
+
+        case ParsedAction::IceFixMassCancel:
+            emit("ts");
+            emit("instrument");
+            emit("account");
+            break;
+
         case ParsedAction::SessionStart:
             emit("ts");
             emit("state");
@@ -274,6 +318,15 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "price", "qty"};
     static const std::vector<std::string> known_ilink3_mass_cancel =
         {"ts", "instrument", "account"};
+    static const std::vector<std::string> known_ice_fix_new_order =
+        {"ts", "instrument", "cl_ord_id", "account", "side", "price", "qty",
+         "type", "tif", "display_qty", "originator_user_id", "account_code", "memo"};
+    static const std::vector<std::string> known_ice_fix_cancel =
+        {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "side"};
+    static const std::vector<std::string> known_ice_fix_replace =
+        {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "price", "qty", "side"};
+    static const std::vector<std::string> known_ice_fix_mass_cancel =
+        {"ts", "instrument", "account"};
     static const std::vector<std::string> known_session_start =
         {"ts", "state"};
     static const std::vector<std::string> known_session_open =
@@ -296,6 +349,10 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::ILink3Cancel:      known = &known_ilink3_cancel;      break;
         case ParsedAction::ILink3Replace:     known = &known_ilink3_replace;     break;
         case ParsedAction::ILink3MassCancel:  known = &known_ilink3_mass_cancel; break;
+        case ParsedAction::IceFixNewOrder:    known = &known_ice_fix_new_order;  break;
+        case ParsedAction::IceFixCancel:      known = &known_ice_fix_cancel;     break;
+        case ParsedAction::IceFixReplace:     known = &known_ice_fix_replace;    break;
+        case ParsedAction::IceFixMassCancel:  known = &known_ice_fix_mass_cancel; break;
         case ParsedAction::SessionStart:      known = &known_session_start;      break;
         case ParsedAction::SessionOpen:       known = &known_session_open;       break;
         case ParsedAction::SessionClose:      known = &known_session_close;      break;

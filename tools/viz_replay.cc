@@ -187,6 +187,14 @@ void dispatch_action(EngineT& engine, const ParsedAction& action) {
             "iLink3 actions require the E2E test runner, "
             "not the viz replay tool");
 
+    // ICE FIX E2E actions are not supported by the viz replay tool.
+    case ParsedAction::IceFixNewOrder:
+    case ParsedAction::IceFixCancel:
+    case ParsedAction::IceFixReplace:
+    case ParsedAction::IceFixMassCancel:
+        throw std::runtime_error(
+            "ICE FIX actions require the ICE E2E test runner");
+
     case ParsedAction::SessionStart:
     case ParsedAction::SessionOpen:
     case ParsedAction::SessionClose:

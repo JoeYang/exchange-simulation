@@ -33,6 +33,8 @@ struct ParsedAction {
                 MassCancel, MassCancelAll,
                 // iLink3 E2E action types (client-side order entry)
                 ILink3NewOrder, ILink3Cancel, ILink3Replace, ILink3MassCancel,
+                // ICE FIX E2E action types (client-side order entry)
+                IceFixNewOrder, IceFixCancel, IceFixReplace, IceFixMassCancel,
                 // E2E session lifecycle actions
                 SessionStart, SessionOpen, SessionClose };
 

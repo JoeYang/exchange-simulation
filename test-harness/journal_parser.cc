@@ -156,6 +156,14 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::ILink3Replace;
             } else if (type_str == "ILINK3_MASS_CANCEL") {
                 atype = ParsedAction::ILink3MassCancel;
+            } else if (type_str == "ICE_FIX_NEW_ORDER") {
+                atype = ParsedAction::IceFixNewOrder;
+            } else if (type_str == "ICE_FIX_CANCEL") {
+                atype = ParsedAction::IceFixCancel;
+            } else if (type_str == "ICE_FIX_REPLACE") {
+                atype = ParsedAction::IceFixReplace;
+            } else if (type_str == "ICE_FIX_MASS_CANCEL") {
+                atype = ParsedAction::IceFixMassCancel;
             } else if (type_str == "SESSION_START") {
                 atype = ParsedAction::SessionStart;
             } else if (type_str == "SESSION_OPEN") {

@@ -908,4 +908,151 @@ TEST(JournalWriterTest, ILink3RoundTripThroughParser) {
     EXPECT_EQ(j.entries[2].expectations.size(), 0u);
 }
 
+// ---------------------------------------------------------------------------
+// ICE FIX ACTION serialization (E2E extension)
+// ---------------------------------------------------------------------------
+
+static ParsedAction make_ice_fix_new_order(int64_t ts, const std::string& instrument,
+                                            int64_t cl_ord_id, const std::string& account,
+                                            const std::string& side, int64_t price,
+                                            int64_t qty, const std::string& type,
+                                            const std::string& tif) {
+    ParsedAction a;
+    a.type = ParsedAction::IceFixNewOrder;
+    a.fields["ts"]         = std::to_string(ts);
+    a.fields["instrument"] = instrument;
+    a.fields["cl_ord_id"]  = std::to_string(cl_ord_id);
+    a.fields["account"]    = account;
+    a.fields["side"]       = side;
+    a.fields["price"]      = std::to_string(price);
+    a.fields["qty"]        = std::to_string(qty);
+    a.fields["type"]       = type;
+    a.fields["tif"]        = tif;
+    return a;
+}
+
+static ParsedAction make_ice_fix_cancel(int64_t ts, const std::string& instrument,
+                                         int64_t cl_ord_id, int64_t orig_cl_ord_id,
+                                         const std::string& side) {
+    ParsedAction a;
+    a.type = ParsedAction::IceFixCancel;
+    a.fields["ts"]              = std::to_string(ts);
+    a.fields["instrument"]      = instrument;
+    a.fields["cl_ord_id"]       = std::to_string(cl_ord_id);
+    a.fields["orig_cl_ord_id"]  = std::to_string(orig_cl_ord_id);
+    a.fields["side"]            = side;
+    return a;
+}
+
+static ParsedAction make_ice_fix_replace(int64_t ts, const std::string& instrument,
+                                          int64_t cl_ord_id, int64_t orig_cl_ord_id,
+                                          int64_t price, int64_t qty,
+                                          const std::string& side) {
+    ParsedAction a;
+    a.type = ParsedAction::IceFixReplace;
+    a.fields["ts"]              = std::to_string(ts);
+    a.fields["instrument"]      = instrument;
+    a.fields["cl_ord_id"]       = std::to_string(cl_ord_id);
+    a.fields["orig_cl_ord_id"]  = std::to_string(orig_cl_ord_id);
+    a.fields["price"]           = std::to_string(price);
+    a.fields["qty"]             = std::to_string(qty);
+    a.fields["side"]            = side;
+    return a;
+}
+
+static ParsedAction make_ice_fix_mass_cancel(int64_t ts, const std::string& instrument,
+                                              const std::string& account) {
+    ParsedAction a;
+    a.type = ParsedAction::IceFixMassCancel;
+    a.fields["ts"]         = std::to_string(ts);
+    a.fields["instrument"] = instrument;
+    a.fields["account"]    = account;
+    return a;
+}
+
+TEST(JournalWriterTest, IceFixNewOrderActionLine) {
+    ParsedAction a = make_ice_fix_new_order(1000, "CL", 1, "HEDGE_A",
+                                             "BUY", 72500000, 10000, "LIMIT", "DAY");
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ICE_FIX_NEW_ORDER"), std::string::npos);
+    EXPECT_NE(line.find("ts=1000"), std::string::npos);
+    EXPECT_NE(line.find("instrument=CL"), std::string::npos);
+    EXPECT_NE(line.find("cl_ord_id=1"), std::string::npos);
+    EXPECT_NE(line.find("account=HEDGE_A"), std::string::npos);
+    EXPECT_NE(line.find("side=BUY"), std::string::npos);
+    EXPECT_NE(line.find("price=72500000"), std::string::npos);
+    EXPECT_NE(line.find("qty=10000"), std::string::npos);
+}
+
+TEST(JournalWriterTest, IceFixCancelActionLine) {
+    ParsedAction a = make_ice_fix_cancel(2000, "CL", 2, 1, "BUY");
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ICE_FIX_CANCEL"), std::string::npos);
+    EXPECT_NE(line.find("orig_cl_ord_id=1"), std::string::npos);
+    EXPECT_NE(line.find("side=BUY"), std::string::npos);
+}
+
+TEST(JournalWriterTest, IceFixReplaceActionLine) {
+    ParsedAction a = make_ice_fix_replace(3000, "CL", 3, 1, 73000000, 20000, "BUY");
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ICE_FIX_REPLACE"), std::string::npos);
+    EXPECT_NE(line.find("price=73000000"), std::string::npos);
+    EXPECT_NE(line.find("qty=20000"), std::string::npos);
+}
+
+TEST(JournalWriterTest, IceFixMassCancelActionLine) {
+    ParsedAction a = make_ice_fix_mass_cancel(4000, "CL", "HEDGE_A");
+    std::string line = JournalWriter::action_to_action_line(a);
+    EXPECT_NE(line.find("ACTION ICE_FIX_MASS_CANCEL"), std::string::npos);
+    EXPECT_NE(line.find("account=HEDGE_A"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// ICE FIX round-trip: writer -> parser
+// ---------------------------------------------------------------------------
+
+TEST(JournalWriterTest, IceFixRoundTripThroughParser) {
+    ParsedConfig cfg = default_config();
+
+    JournalEntry e1;
+    e1.action = make_ice_fix_new_order(1000, "CL", 1, "HEDGE_A",
+                                        "BUY", 72500000, 10000, "LIMIT", "DAY");
+    e1.expectations.push_back(ParsedExpectation{
+        "ICE_EXEC_NEW", {{"ord_id", "1"}, {"cl_ord_id", "1"}, {"instrument", "CL"}}});
+    e1.expectations.push_back(ParsedExpectation{
+        "ICE_MD_ADD", {{"instrument", "CL"}, {"side", "BUY"},
+                       {"price", "72500000"}, {"qty", "10000"}, {"num_orders", "1"}}});
+
+    JournalEntry e2;
+    e2.action = make_ice_fix_cancel(2000, "CL", 2, 1, "BUY");
+    e2.expectations.push_back(ParsedExpectation{
+        "ICE_EXEC_CANCELLED", {{"ord_id", "1"}, {"cl_ord_id", "2"}}});
+    e2.expectations.push_back(ParsedExpectation{
+        "ICE_MD_REMOVE", {{"instrument", "CL"}, {"side", "BUY"},
+                          {"price", "72500000"}}});
+
+    JournalEntry e3;
+    e3.action = make_ice_fix_mass_cancel(5000, "CL", "HEDGE_A");
+
+    std::vector<JournalEntry> entries = {e1, e2, e3};
+    std::string out = JournalWriter::to_string(cfg, entries);
+    Journal j = JournalParser::parse_string(out);
+
+    ASSERT_EQ(j.entries.size(), 3u);
+    EXPECT_EQ(j.entries[0].action.type, ParsedAction::IceFixNewOrder);
+    EXPECT_EQ(j.entries[0].action.get_str("instrument"), "CL");
+    EXPECT_EQ(j.entries[0].action.get_int("cl_ord_id"), 1);
+    ASSERT_EQ(j.entries[0].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[0].expectations[0].event_type, "ICE_EXEC_NEW");
+    EXPECT_EQ(j.entries[0].expectations[1].event_type, "ICE_MD_ADD");
+
+    EXPECT_EQ(j.entries[1].action.type, ParsedAction::IceFixCancel);
+    ASSERT_EQ(j.entries[1].expectations.size(), 2u);
+    EXPECT_EQ(j.entries[1].expectations[0].event_type, "ICE_EXEC_CANCELLED");
+    EXPECT_EQ(j.entries[1].expectations[1].event_type, "ICE_MD_REMOVE");
+
+    EXPECT_EQ(j.entries[2].action.type, ParsedAction::IceFixMassCancel);
+    EXPECT_EQ(j.entries[2].expectations.size(), 0u);
+}
+
 }  // namespace exchange
