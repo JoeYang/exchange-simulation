@@ -1,0 +1,42 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "ice_e2e_test_runner",
+    hdrs = ["ice_e2e_test_runner.h"],
+    srcs = ["ice_e2e_test_runner.cc"],
+    deps = [
+        "//exchange-core:composite_listener",
+        "//ice:ice_simulator",
+        "//ice/fix:fix_encoder",
+        "//ice/fix:ice_fix_exec_publisher",
+        "//ice/fix:ice_fix_gateway",
+        "//ice/fix:fix_parser",
+        "//ice/impact:impact_decoder",
+        "//ice/impact:impact_messages",
+        "//ice/impact:impact_publisher",
+        "//test-harness:journal_parser",
+        "//test-harness:recording_listener",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_e2e_test_runner_test",
+    srcs = ["ice_e2e_test_runner_test.cc"],
+    deps = [
+        ":ice_e2e_test_runner",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ice_e2e_journal_test",
+    srcs = ["ice_e2e_journal_test.cc"],
+    data = ["//test-journals:ice_journals"],
+    deps = [
+        ":ice_e2e_test_runner",
+        "//test-harness:journal_parser",
+        "@googletest//:gtest_main",
+    ],
+)
