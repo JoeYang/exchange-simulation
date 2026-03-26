@@ -176,6 +176,22 @@ cc_test(
 )
 
 cc_library(
+    name = "rate_tracker",
+    hdrs = ["rate_tracker.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "rate_tracker_test",
+    srcs = ["rate_tracker_test.cc"],
+    deps = [
+        ":rate_tracker",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "matching_engine",
     hdrs = ["matching_engine.h"],
     deps = [
@@ -217,6 +233,22 @@ cc_test(
     deps = [
         ":matching_engine",
         "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "order_persistence",
+    hdrs = ["order_persistence.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "order_persistence_test",
+    srcs = ["order_persistence_test.cc"],
+    deps = [
+        ":order_persistence",
         "@googletest//:gtest_main",
     ],
 )
