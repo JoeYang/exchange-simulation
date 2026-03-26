@@ -1,0 +1,10 @@
+# ICE E2E: Brent basic limit order lifecycle
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=B cl_ord_id=1 account=1 side=BUY price=800000 qty=10000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=1
+
+ACTION ICE_FIX_NEW_ORDER ts=2000 instrument=B cl_ord_id=2 account=2 side=SELL price=800000 qty=10000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=2
+EXPECT ICE_MD_TRADE price=800000 qty=1 aggressor=BUY

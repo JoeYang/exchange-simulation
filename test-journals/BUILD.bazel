@@ -19,6 +19,15 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "ice_journals",
+    srcs = glob(
+        ["ice/*.journal"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
 cc_test(
     name = "journal_test",
     srcs = ["journal_test.cc"],
@@ -105,6 +114,21 @@ cc_binary(
         "//cme/codec:mdp3_messages",
         "//cme/codec:sbe_header",
         "//exchange-core:composite_listener",
+        "//test-harness:recording_listener",
+    ],
+)
+
+cc_binary(
+    name = "generate_ice_journals",
+    srcs = ["generate_ice_journals.cc"],
+    deps = [
+        "//exchange-core:composite_listener",
+        "//ice:ice_simulator",
+        "//ice/fix:fix_encoder",
+        "//ice/fix:fix_parser",
+        "//ice/fix:ice_fix_exec_publisher",
+        "//ice/impact:impact_decoder",
+        "//ice/impact:impact_publisher",
         "//test-harness:recording_listener",
     ],
 )

@@ -1,0 +1,9 @@
+# ICE E2E: Place and cancel order on Brent
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=B cl_ord_id=1 account=1 side=BUY price=800000 qty=10000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=1
+
+ACTION ICE_FIX_CANCEL ts=2000 instrument=B cl_ord_id=2 orig_cl_ord_id=1
+EXPECT ICE_EXEC_CANCELLED cl_ord_id=1
