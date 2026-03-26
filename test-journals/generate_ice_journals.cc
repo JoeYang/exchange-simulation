@@ -475,6 +475,170 @@ void gen_ice_session_lifecycle(const std::string& dir) {
     write_journal(dir + "/ice_e2e_session_lifecycle.journal", j.str());
 }
 
+void gen_ice_iceberg(const std::string& dir) {
+    IcePipeline p; IceJournalBuilder j;
+    j.comment("ICE E2E: Iceberg order — display qty partially visible");
+    j.blank();
+    j.session_start(0, "CONTINUOUS"); j.blank();
+    p.start_continuous(0);
+
+    // Iceberg sell: total 30000, display 10000
+    p.clear_output();
+    p.switch_instrument("B");
+    OrderRequest iceberg{};
+    iceberg.client_order_id = 1;
+    iceberg.account_id = 1;
+    iceberg.side = Side::Sell;
+    iceberg.type = OrderType::Limit;
+    iceberg.tif = TimeInForce::GTC;
+    iceberg.price = 800000;
+    iceberg.quantity = 30000;
+    iceberg.display_qty = 10000;
+    iceberg.timestamp = 1000;
+    p.exec_pub.register_order(1, 1, 800000, 30000, Side::Sell);
+    p.sim.new_order(1, iceberg);
+    for (const auto& evt : p.recording_ol.events()) {
+        auto* acc = std::get_if<OrderAccepted>(&evt);
+        if (acc) p.cl_to_exch[acc->client_order_id] = acc->id;
+    }
+    p.recording_ol.clear(); p.recording_ml.clear();
+
+    j.out << "ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=B cl_ord_id=1"
+          << " account=1 side=SELL price=800000 qty=30000 type=LIMIT"
+          << " tif=GTC display_qty=10000\n";
+    j.expects(p.all_expects()); j.blank();
+
+    // Buy 10000 — fills first tranche
+    j.new_order("B", 2000, 2, 2, Side::Buy, 800000, 10000);
+    p.new_order("B", 2000, 2, 2, Side::Buy, 800000, 10000);
+    j.expects(p.all_expects());
+
+    write_journal(dir + "/ice_e2e_iceberg.journal", j.str());
+}
+
+void gen_ice_mass_cancel(const std::string& dir) {
+    IcePipeline p; IceJournalBuilder j;
+    j.comment("ICE E2E: Mass cancel by account across multiple orders");
+    j.blank();
+    j.session_start(0, "CONTINUOUS"); j.blank();
+    p.start_continuous(0);
+
+    // Place 3 orders from account 42
+    j.new_order("B", 1000, 1, 42, Side::Buy, 790000, 10000);
+    p.new_order("B", 1000, 1, 42, Side::Buy, 790000, 10000);
+    j.expects(p.all_expects()); j.blank();
+
+    j.new_order("B", 2000, 2, 42, Side::Buy, 800000, 10000);
+    p.new_order("B", 2000, 2, 42, Side::Buy, 800000, 10000);
+    j.expects(p.all_expects()); j.blank();
+
+    j.new_order("B", 3000, 3, 42, Side::Buy, 810000, 10000);
+    p.new_order("B", 3000, 3, 42, Side::Buy, 810000, 10000);
+    j.expects(p.all_expects()); j.blank();
+
+    // Mass cancel account 42
+    p.clear_output();
+    p.switch_instrument("B");
+    auto* engine = p.sim.get_fifo_engine(1);
+    if (engine) engine->mass_cancel(42, 4000);
+    p.recording_ol.clear(); p.recording_ml.clear();
+
+    j.out << "ACTION ICE_FIX_MASS_CANCEL ts=4000 instrument=B account=42\n";
+    j.expects(p.all_expects());
+
+    write_journal(dir + "/ice_e2e_mass_cancel.journal", j.str());
+}
+
+// ---------------------------------------------------------------------------
+// GTBPR-specific scenarios (Euribor — STIR products)
+// ---------------------------------------------------------------------------
+
+void gen_ice_euribor_gtbpr(const std::string& dir) {
+    IcePipeline p; IceJournalBuilder j;
+    j.comment("ICE E2E: Euribor GTBPR — priority order + pro-rata allocation");
+    j.blank();
+    j.session_start(0, "CONTINUOUS"); j.blank();
+    p.start_continuous(0);
+
+    // Euribor (I): tick=50, lot=10000
+    // Place two sells: one large (qualifies for priority), one small
+    j.new_order("I", 1000, 1, 1, Side::Sell, 960000, 100000);
+    p.new_order("I", 1000, 1, 1, Side::Sell, 960000, 100000);
+    j.expects(p.all_expects()); j.blank();
+
+    j.new_order("I", 2000, 2, 2, Side::Sell, 960000, 50000);
+    p.new_order("I", 2000, 2, 2, Side::Sell, 960000, 50000);
+    j.expects(p.all_expects()); j.blank();
+
+    // Aggressor buy — triggers GTBPR matching
+    j.new_order("I", 3000, 3, 3, Side::Buy, 960000, 100000);
+    p.new_order("I", 3000, 3, 3, Side::Buy, 960000, 100000);
+    j.expects(p.all_expects());
+
+    write_journal(dir + "/ice_e2e_euribor_gtbpr.journal", j.str());
+}
+
+void gen_ice_gtbpr_no_priority(const std::string& dir) {
+    IcePipeline p; IceJournalBuilder j;
+    j.comment("ICE E2E: GTBPR no priority — all orders below collar, pure pro-rata");
+    j.blank();
+    j.session_start(0, "CONTINUOUS"); j.blank();
+    p.start_continuous(0);
+
+    // Both sells below collar (50000 default) → no priority, pure pro-rata
+    j.new_order("I", 1000, 1, 1, Side::Sell, 960000, 30000);
+    p.new_order("I", 1000, 1, 1, Side::Sell, 960000, 30000);
+    j.expects(p.all_expects()); j.blank();
+
+    j.new_order("I", 2000, 2, 2, Side::Sell, 960000, 30000);
+    p.new_order("I", 2000, 2, 2, Side::Sell, 960000, 30000);
+    j.expects(p.all_expects()); j.blank();
+
+    // Partial aggressor
+    j.new_order("I", 3000, 3, 3, Side::Buy, 960000, 30000);
+    p.new_order("I", 3000, 3, 3, Side::Buy, 960000, 30000);
+    j.expects(p.all_expects());
+
+    write_journal(dir + "/ice_e2e_gtbpr_no_priority.journal", j.str());
+}
+
+void gen_ice_gtbpr_single_order(const std::string& dir) {
+    IcePipeline p; IceJournalBuilder j;
+    j.comment("ICE E2E: GTBPR single resting order — full fill");
+    j.blank();
+    j.session_start(0, "CONTINUOUS"); j.blank();
+    p.start_continuous(0);
+
+    j.new_order("I", 1000, 1, 1, Side::Sell, 960000, 50000);
+    p.new_order("I", 1000, 1, 1, Side::Sell, 960000, 50000);
+    j.expects(p.all_expects()); j.blank();
+
+    j.new_order("I", 2000, 2, 2, Side::Buy, 960000, 50000);
+    p.new_order("I", 2000, 2, 2, Side::Buy, 960000, 50000);
+    j.expects(p.all_expects());
+
+    write_journal(dir + "/ice_e2e_gtbpr_single_order.journal", j.str());
+}
+
+void gen_ice_gtbpr_sonia(const std::string& dir) {
+    IcePipeline p; IceJournalBuilder j;
+    j.comment("ICE E2E: SONIA (GTBPR) — basic limit order on second STIR product");
+    j.blank();
+    j.session_start(0, "CONTINUOUS"); j.blank();
+    p.start_continuous(0);
+
+    // SONIA (SO): tick=100, lot=10000
+    j.new_order("SO", 1000, 1, 1, Side::Sell, 950000, 50000);
+    p.new_order("SO", 1000, 1, 1, Side::Sell, 950000, 50000);
+    j.expects(p.all_expects()); j.blank();
+
+    j.new_order("SO", 2000, 2, 2, Side::Buy, 950000, 50000);
+    p.new_order("SO", 2000, 2, 2, Side::Buy, 950000, 50000);
+    j.expects(p.all_expects());
+
+    write_journal(dir + "/ice_e2e_gtbpr_sonia.journal", j.str());
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -486,13 +650,23 @@ int main() {
 
     std::cout << "Generating ICE E2E journals in " << dir << "\n";
 
+    // Base ICE scenarios (8)
     gen_ice_brent_basic(dir);
     gen_ice_cancel(dir);
     gen_ice_replace(dir);
     gen_ice_smp(dir);
     gen_ice_multi_product(dir);
     gen_ice_session_lifecycle(dir);
+    gen_ice_iceberg(dir);
+    gen_ice_mass_cancel(dir);
 
-    std::cout << "Done — 6 ICE E2E journals generated.\n";
+    // GTBPR scenarios (4)
+    gen_ice_euribor_gtbpr(dir);
+    gen_ice_gtbpr_no_priority(dir);
+    gen_ice_gtbpr_single_order(dir);
+    gen_ice_gtbpr_sonia(dir);
+
+    std::cout << "Done — 12 ICE E2E journals generated"
+              << " (8 base + 4 GTBPR).\n";
     return 0;
 }

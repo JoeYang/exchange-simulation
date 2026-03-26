@@ -1,0 +1,10 @@
+# ICE E2E: GTBPR single resting order — full fill
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=I cl_ord_id=1 account=1 side=SELL price=960000 qty=50000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=1
+
+ACTION ICE_FIX_NEW_ORDER ts=2000 instrument=I cl_ord_id=2 account=2 side=BUY price=960000 qty=50000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=2
+EXPECT ICE_MD_TRADE price=960000 qty=5 aggressor=SELL

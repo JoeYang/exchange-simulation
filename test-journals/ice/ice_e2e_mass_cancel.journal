@@ -1,0 +1,17 @@
+# ICE E2E: Mass cancel by account across multiple orders
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=B cl_ord_id=1 account=42 side=BUY price=790000 qty=10000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=1
+
+ACTION ICE_FIX_NEW_ORDER ts=2000 instrument=B cl_ord_id=2 account=42 side=BUY price=800000 qty=10000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=2
+
+ACTION ICE_FIX_NEW_ORDER ts=3000 instrument=B cl_ord_id=3 account=42 side=BUY price=810000 qty=10000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=3
+
+ACTION ICE_FIX_MASS_CANCEL ts=4000 instrument=B account=42
+EXPECT ICE_EXEC_CANCELLED cl_ord_id=1
+EXPECT ICE_EXEC_CANCELLED cl_ord_id=2
+EXPECT ICE_EXEC_CANCELLED cl_ord_id=3

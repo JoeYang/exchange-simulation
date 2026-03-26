@@ -1,0 +1,10 @@
+# ICE E2E: SONIA (GTBPR) — basic limit order on second STIR product
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=SO cl_ord_id=1 account=1 side=SELL price=950000 qty=50000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=1
+
+ACTION ICE_FIX_NEW_ORDER ts=2000 instrument=SO cl_ord_id=2 account=2 side=BUY price=950000 qty=50000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=2
+EXPECT ICE_MD_TRADE price=950000 qty=5 aggressor=SELL

@@ -1,0 +1,16 @@
+# ICE E2E: GTBPR no priority — all orders below collar, pure pro-rata
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+ACTION ICE_FIX_NEW_ORDER ts=1000 instrument=I cl_ord_id=1 account=1 side=SELL price=960000 qty=30000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=1
+
+ACTION ICE_FIX_NEW_ORDER ts=2000 instrument=I cl_ord_id=2 account=2 side=SELL price=960000 qty=30000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=2
+
+ACTION ICE_FIX_NEW_ORDER ts=3000 instrument=I cl_ord_id=3 account=3 side=BUY price=960000 qty=30000 type=LIMIT tif=GTC
+EXPECT ICE_EXEC_NEW cl_ord_id=3
+EXPECT ICE_EXEC_FILL cl_ord_id=1 fill_price=96.0000 fill_qty=1.5000 status=PARTIAL
+EXPECT ICE_EXEC_FILL cl_ord_id=2 fill_price=96.0000 fill_qty=1.5000 status=PARTIAL
+EXPECT ICE_MD_TRADE price=960000 qty=1 aggressor=SELL
+EXPECT ICE_MD_TRADE price=960000 qty=1 aggressor=SELL
