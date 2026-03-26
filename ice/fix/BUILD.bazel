@@ -1,0 +1,85 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "fix_encoder",
+    hdrs = ["fix_encoder.h"],
+    deps = [
+        "//exchange-core:events",
+        "//exchange-core:types",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "fix_encoder_test",
+    srcs = ["fix_encoder_test.cc"],
+    deps = [
+        ":fix_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "fix_parser",
+    srcs = ["fix_parser.cc"],
+    hdrs = ["fix_parser.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "ice_fix_messages",
+    hdrs = ["ice_fix_messages.h"],
+    deps = [":fix_parser"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "fix_parser_test",
+    srcs = ["fix_parser_test.cc"],
+    deps = [
+        ":fix_parser",
+        ":ice_fix_messages",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "ice_fix_exec_publisher",
+    hdrs = ["ice_fix_exec_publisher.h"],
+    deps = [
+        ":fix_encoder",
+        "//exchange-core:listeners",
+        "//exchange-core:types",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_fix_exec_publisher_test",
+    srcs = ["ice_fix_exec_publisher_test.cc"],
+    deps = [
+        ":ice_fix_exec_publisher",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "ice_fix_gateway",
+    hdrs = ["ice_fix_gateway.h"],
+    deps = [
+        ":fix_parser",
+        ":ice_fix_messages",
+        "//exchange-core:matching_engine",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_fix_gateway_test",
+    srcs = ["ice_fix_gateway_test.cc"],
+    deps = [
+        ":ice_fix_gateway",
+        "@googletest//:gtest_main",
+    ],
+)
