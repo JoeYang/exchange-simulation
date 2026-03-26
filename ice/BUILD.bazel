@@ -33,3 +33,19 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "ice_products",
+    hdrs = ["ice_products.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_products_test",
+    srcs = ["ice_products_test.cc"],
+    deps = [
+        ":ice_products",
+        "@googletest//:gtest_main",
+    ],
+)
