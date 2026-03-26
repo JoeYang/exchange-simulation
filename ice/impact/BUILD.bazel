@@ -70,3 +70,13 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "impact_codec_test",
+    srcs = ["impact_codec_test.cc"],
+    deps = [
+        ":impact_decoder",
+        ":impact_encoder",
+        "@googletest//:gtest_main",
+    ],
+)

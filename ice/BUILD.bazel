@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
@@ -50,6 +51,17 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "gtbpr_integration_test",
+    srcs = ["gtbpr_integration_test.cc"],
+    deps = [
+        ":gtbpr_match",
+        ":ice_exchange",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "ice_simulator",
     hdrs = ["ice_simulator.h"],
@@ -84,5 +96,26 @@ cc_test(
     deps = [
         ":ice_sim_config",
         "@googletest//:gtest_main",
+    ],
+)
+
+# --- ICE Live Simulator Binary ---
+cc_binary(
+    name = "ice-sim",
+    srcs = ["ice_sim_runner.cc"],
+    deps = [
+        ":ice_products",
+        ":ice_sim_config",
+        ":ice_simulator",
+        "//exchange-core:composite_listener",
+        "//ice/fix:fix_parser",
+        "//ice/fix:ice_fix_exec_publisher",
+        "//ice/fix:ice_fix_gateway",
+        "//ice/fix:ice_fix_messages",
+        "//ice/impact:impact_publisher",
+        "//tools:shm_listener",
+        "//tools:shm_transport",
+        "//tools:tcp_server",
+        "//tools:udp_multicast",
     ],
 )

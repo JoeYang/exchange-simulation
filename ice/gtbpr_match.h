@@ -43,6 +43,15 @@ struct GtbprMatch {
         double time_weight_factor{0.1}; // age bonus: 1.0 + factor * age_seconds
     };
 
+    // 4-parameter overload: compatible with MatchingEngine's MatchAlgoT::match
+    // call site. Delegates to the full 6-parameter version with default config
+    // and now=0 (time weighting disabled when timestamp is unavailable).
+    static void match(PriceLevel& level, Quantity& remaining,
+                      FillResult* results, size_t& count) {
+        static const Config default_cfg{};
+        match(level, remaining, results, count, 0, default_cfg);
+    }
+
     // Match aggressor against resting orders at a single price level using
     // the GTBPR algorithm.
     //
