@@ -34,3 +34,39 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "impact_decoder",
+    hdrs = ["impact_decoder.h"],
+    deps = [":impact_messages"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "impact_decoder_test",
+    srcs = ["impact_decoder_test.cc"],
+    deps = [
+        ":impact_decoder",
+        ":impact_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "impact_publisher",
+    hdrs = ["impact_publisher.h"],
+    deps = [
+        ":impact_encoder",
+        "//exchange-core:listeners",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "impact_publisher_test",
+    srcs = ["impact_publisher_test.cc"],
+    deps = [
+        ":impact_publisher",
+        "@googletest//:gtest_main",
+    ],
+)
