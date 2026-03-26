@@ -214,6 +214,19 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# --- iLink3 Order Sender CLI ---
+cc_binary(
+    name = "ilink3-send-order",
+    srcs = ["ilink3_send_order.cc"],
+    deps = [
+        "//cme/codec:ilink3_encoder",
+        "//cme/codec:ilink3_decoder",
+        "//cme:cme_products",
+        "//exchange-core:matching_engine",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # --- Task 34: Offline journal visualizer ---
 cc_binary(
     name = "exchange-viz-replay",

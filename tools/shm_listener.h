@@ -28,6 +28,7 @@ public:
     void on_depth_update(const DepthUpdate& e) { producer_.publish(RecordedEvent{e}); }
     void on_order_book_action(const OrderBookAction& e) { producer_.publish(RecordedEvent{e}); }
     void on_trade(const Trade& e) { producer_.publish(RecordedEvent{e}); }
+    void on_market_status(const MarketStatus& e) { producer_.publish(RecordedEvent{e}); }
 };
 
 }  // namespace exchange
