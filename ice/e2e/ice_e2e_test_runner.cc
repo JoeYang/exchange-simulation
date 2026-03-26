@@ -158,8 +158,8 @@ bool check_fix_field(const ::ice::fix::FixMessage& msg, int tag,
 // Map ICE_EXEC_* event types to FIX ExecType (tag 150) values.
 std::string expected_exec_type(const std::string& event_type) {
     if (event_type == "ICE_EXEC_NEW") return "0";
-    if (event_type == "ICE_EXEC_FILL") return "F";
-    if (event_type == "ICE_EXEC_PARTIAL") return "1";
+    if (event_type == "ICE_EXEC_FILL") return "2";       // FIX 4.2: Fill
+    if (event_type == "ICE_EXEC_PARTIAL") return "1";   // FIX 4.2: PartialFill
     if (event_type == "ICE_EXEC_CANCELLED") return "4";
     if (event_type == "ICE_EXEC_REJECTED") return "8";
     if (event_type == "ICE_EXEC_REPLACED") return "5";

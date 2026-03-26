@@ -7,5 +7,5 @@ EXPECT ICE_EXEC_NEW cl_ord_id=1
 
 ACTION ICE_FIX_NEW_ORDER ts=2000 instrument=B cl_ord_id=2 account=2 side=BUY price=800000 qty=10000 type=LIMIT tif=GTC
 EXPECT ICE_EXEC_NEW cl_ord_id=2
-EXPECT ICE_EXEC_FILL cl_ord_id=1 fill_price=80.0000 fill_qty=1.0000 status=PARTIAL
+EXPECT ICE_EXEC_PARTIAL cl_ord_id=1 fill_price=80.0000 fill_qty=1.0000 status=1
 EXPECT ICE_MD_TRADE price=800000 qty=1 aggressor=SELL
