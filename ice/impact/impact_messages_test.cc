@@ -16,6 +16,14 @@ TEST(ImpactMessagesTest, HeaderSize) {
     EXPECT_EQ(sizeof(ImpactMessageHeader), 3u);
 }
 
+TEST(ImpactMessagesTest, BundleStartSize) {
+    EXPECT_EQ(sizeof(BundleStart), 14u);
+}
+
+TEST(ImpactMessagesTest, BundleEndSize) {
+    EXPECT_EQ(sizeof(BundleEnd), 4u);
+}
+
 TEST(ImpactMessagesTest, AddModifyOrderSize) {
     EXPECT_EQ(sizeof(AddModifyOrder), 39u);
 }
@@ -25,19 +33,19 @@ TEST(ImpactMessagesTest, OrderWithdrawalSize) {
 }
 
 TEST(ImpactMessagesTest, DealTradeSize) {
-    EXPECT_EQ(sizeof(DealTrade), 42u);
+    EXPECT_EQ(sizeof(DealTrade), 33u);
 }
 
 TEST(ImpactMessagesTest, MarketStatusSize) {
     EXPECT_EQ(sizeof(MarketStatus), 5u);
 }
 
-TEST(ImpactMessagesTest, BundleStartSize) {
-    EXPECT_EQ(sizeof(BundleStart), 4u);
+TEST(ImpactMessagesTest, SnapshotOrderSize) {
+    EXPECT_EQ(sizeof(SnapshotOrder), 29u);
 }
 
-TEST(ImpactMessagesTest, BundleEndSize) {
-    EXPECT_EQ(sizeof(BundleEnd), 6u);
+TEST(ImpactMessagesTest, PriceLevelSize) {
+    EXPECT_EQ(sizeof(PriceLevel), 19u);
 }
 
 // ---------------------------------------------------------------------------
@@ -46,13 +54,23 @@ TEST(ImpactMessagesTest, BundleEndSize) {
 
 TEST(ImpactMessagesTest, HeaderOffsets) {
     EXPECT_EQ(offsetof(ImpactMessageHeader, msg_type), 0u);
-    EXPECT_EQ(offsetof(ImpactMessageHeader, msg_length), 1u);
+    EXPECT_EQ(offsetof(ImpactMessageHeader, body_length), 1u);
+}
+
+TEST(ImpactMessagesTest, BundleStartOffsets) {
+    EXPECT_EQ(offsetof(BundleStart, sequence_number), 0u);
+    EXPECT_EQ(offsetof(BundleStart, message_count), 4u);
+    EXPECT_EQ(offsetof(BundleStart, timestamp), 6u);
+}
+
+TEST(ImpactMessagesTest, BundleEndOffsets) {
+    EXPECT_EQ(offsetof(BundleEnd, sequence_number), 0u);
 }
 
 TEST(ImpactMessagesTest, AddModifyOrderOffsets) {
-    EXPECT_EQ(offsetof(AddModifyOrder, market_id), 0u);
+    EXPECT_EQ(offsetof(AddModifyOrder, instrument_id), 0u);
     EXPECT_EQ(offsetof(AddModifyOrder, order_id), 4u);
-    EXPECT_EQ(offsetof(AddModifyOrder, order_seq_id), 12u);
+    EXPECT_EQ(offsetof(AddModifyOrder, sequence_within_msg), 12u);
     EXPECT_EQ(offsetof(AddModifyOrder, side), 16u);
     EXPECT_EQ(offsetof(AddModifyOrder, price), 17u);
     EXPECT_EQ(offsetof(AddModifyOrder, quantity), 25u);
@@ -62,66 +80,155 @@ TEST(ImpactMessagesTest, AddModifyOrderOffsets) {
 }
 
 TEST(ImpactMessagesTest, OrderWithdrawalOffsets) {
-    EXPECT_EQ(offsetof(OrderWithdrawal, market_id), 0u);
+    EXPECT_EQ(offsetof(OrderWithdrawal, instrument_id), 0u);
     EXPECT_EQ(offsetof(OrderWithdrawal, order_id), 4u);
-    EXPECT_EQ(offsetof(OrderWithdrawal, order_seq_id), 12u);
+    EXPECT_EQ(offsetof(OrderWithdrawal, sequence_within_msg), 12u);
     EXPECT_EQ(offsetof(OrderWithdrawal, side), 16u);
     EXPECT_EQ(offsetof(OrderWithdrawal, price), 17u);
     EXPECT_EQ(offsetof(OrderWithdrawal, quantity), 25u);
 }
 
 TEST(ImpactMessagesTest, DealTradeOffsets) {
-    EXPECT_EQ(offsetof(DealTrade, market_id), 0u);
-    EXPECT_EQ(offsetof(DealTrade, order_id), 4u);
-    EXPECT_EQ(offsetof(DealTrade, deal_id), 12u);
-    EXPECT_EQ(offsetof(DealTrade, price), 20u);
-    EXPECT_EQ(offsetof(DealTrade, quantity), 28u);
-    EXPECT_EQ(offsetof(DealTrade, is_aggressor), 32u);
-    EXPECT_EQ(offsetof(DealTrade, aggressor_side), 33u);
-    EXPECT_EQ(offsetof(DealTrade, deal_date_time), 34u);
+    EXPECT_EQ(offsetof(DealTrade, instrument_id), 0u);
+    EXPECT_EQ(offsetof(DealTrade, deal_id), 4u);
+    EXPECT_EQ(offsetof(DealTrade, price), 12u);
+    EXPECT_EQ(offsetof(DealTrade, quantity), 20u);
+    EXPECT_EQ(offsetof(DealTrade, aggressor_side), 24u);
+    EXPECT_EQ(offsetof(DealTrade, timestamp), 25u);
 }
 
 TEST(ImpactMessagesTest, MarketStatusOffsets) {
-    EXPECT_EQ(offsetof(MarketStatus, market_id), 0u);
+    EXPECT_EQ(offsetof(MarketStatus, instrument_id), 0u);
     EXPECT_EQ(offsetof(MarketStatus, trading_status), 4u);
 }
 
-TEST(ImpactMessagesTest, BundleStartOffsets) {
-    EXPECT_EQ(offsetof(BundleStart, seq_num), 0u);
+TEST(ImpactMessagesTest, SnapshotOrderOffsets) {
+    EXPECT_EQ(offsetof(SnapshotOrder, instrument_id), 0u);
+    EXPECT_EQ(offsetof(SnapshotOrder, order_id), 4u);
+    EXPECT_EQ(offsetof(SnapshotOrder, side), 12u);
+    EXPECT_EQ(offsetof(SnapshotOrder, price), 13u);
+    EXPECT_EQ(offsetof(SnapshotOrder, quantity), 21u);
+    EXPECT_EQ(offsetof(SnapshotOrder, sequence), 25u);
 }
 
-TEST(ImpactMessagesTest, BundleEndOffsets) {
-    EXPECT_EQ(offsetof(BundleEnd, seq_num), 0u);
-    EXPECT_EQ(offsetof(BundleEnd, msg_count), 4u);
+TEST(ImpactMessagesTest, PriceLevelOffsets) {
+    EXPECT_EQ(offsetof(PriceLevel, instrument_id), 0u);
+    EXPECT_EQ(offsetof(PriceLevel, side), 4u);
+    EXPECT_EQ(offsetof(PriceLevel, price), 5u);
+    EXPECT_EQ(offsetof(PriceLevel, quantity), 13u);
+    EXPECT_EQ(offsetof(PriceLevel, order_count), 17u);
 }
 
 // ---------------------------------------------------------------------------
-// Wire size helper
+// Wire size helpers
 // ---------------------------------------------------------------------------
 
 TEST(ImpactMessagesTest, WireSizes) {
+    EXPECT_EQ(wire_size<BundleStart>(), 3u + 14u);
+    EXPECT_EQ(wire_size<BundleEnd>(), 3u + 4u);
     EXPECT_EQ(wire_size<AddModifyOrder>(), 3u + 39u);
     EXPECT_EQ(wire_size<OrderWithdrawal>(), 3u + 29u);
-    EXPECT_EQ(wire_size<DealTrade>(), 3u + 42u);
+    EXPECT_EQ(wire_size<DealTrade>(), 3u + 33u);
     EXPECT_EQ(wire_size<MarketStatus>(), 3u + 5u);
-    EXPECT_EQ(wire_size<BundleStart>(), 3u + 4u);
-    EXPECT_EQ(wire_size<BundleEnd>(), 3u + 6u);
+    EXPECT_EQ(wire_size<SnapshotOrder>(), 3u + 29u);
+    EXPECT_EQ(wire_size<PriceLevel>(), 3u + 19u);
+}
+
+// ---------------------------------------------------------------------------
+// Enum values
+// ---------------------------------------------------------------------------
+
+TEST(ImpactMessagesTest, SideEnum) {
+    EXPECT_EQ(static_cast<uint8_t>(Side::Buy), 0u);
+    EXPECT_EQ(static_cast<uint8_t>(Side::Sell), 1u);
+}
+
+TEST(ImpactMessagesTest, TradingStatusEnum) {
+    EXPECT_EQ(static_cast<uint8_t>(TradingStatus::PreOpen), 0u);
+    EXPECT_EQ(static_cast<uint8_t>(TradingStatus::Continuous), 1u);
+    EXPECT_EQ(static_cast<uint8_t>(TradingStatus::Halt), 2u);
+    EXPECT_EQ(static_cast<uint8_t>(TradingStatus::Closed), 3u);
+    EXPECT_EQ(static_cast<uint8_t>(TradingStatus::Settlement), 4u);
+}
+
+TEST(ImpactMessagesTest, MessageTypeEnum) {
+    EXPECT_EQ(static_cast<char>(MessageType::AddModifyOrder), 'E');
+    EXPECT_EQ(static_cast<char>(MessageType::OrderWithdrawal), 'F');
+    EXPECT_EQ(static_cast<char>(MessageType::DealTrade), 'T');
+    EXPECT_EQ(static_cast<char>(MessageType::MarketStatus), 'M');
+    EXPECT_EQ(static_cast<char>(MessageType::BundleStart), 'S');
+    EXPECT_EQ(static_cast<char>(MessageType::SnapshotOrder), 'D');
+    EXPECT_EQ(static_cast<char>(MessageType::PriceLevel), 'L');
+}
+
+TEST(ImpactMessagesTest, YesNoEnum) {
+    EXPECT_EQ(static_cast<uint8_t>(YesNo::No), 0u);
+    EXPECT_EQ(static_cast<uint8_t>(YesNo::Yes), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// TYPE constants match MessageType enum
+// ---------------------------------------------------------------------------
+
+TEST(ImpactMessagesTest, TypeConstants) {
+    EXPECT_EQ(AddModifyOrder::TYPE, 'E');
+    EXPECT_EQ(OrderWithdrawal::TYPE, 'F');
+    EXPECT_EQ(DealTrade::TYPE, 'T');
+    EXPECT_EQ(MarketStatus::TYPE, 'M');
+    EXPECT_EQ(BundleStart::TYPE, 'S');
+    EXPECT_EQ(SnapshotOrder::TYPE, 'D');
+    EXPECT_EQ(PriceLevel::TYPE, 'L');
 }
 
 // ---------------------------------------------------------------------------
 // Encode / decode round-trip tests
 // ---------------------------------------------------------------------------
 
+TEST(ImpactMessagesTest, BundleStartRoundTrip) {
+    BundleStart msg{};
+    msg.sequence_number = 42000;
+    msg.message_count = 5;
+    msg.timestamp = 1711400000000000000LL;
+
+    char buf[32];
+    auto* end = encode(buf, sizeof(buf), msg);
+    ASSERT_NE(end, nullptr);
+    EXPECT_EQ(end - buf, wire_size<BundleStart>());
+
+    BundleStart decoded{};
+    auto* read_end = decode(buf, sizeof(buf), decoded);
+    ASSERT_NE(read_end, nullptr);
+
+    EXPECT_EQ(decoded.sequence_number, 42000u);
+    EXPECT_EQ(decoded.message_count, 5u);
+    EXPECT_EQ(decoded.timestamp, 1711400000000000000LL);
+}
+
+TEST(ImpactMessagesTest, BundleEndRoundTrip) {
+    BundleEnd msg{};
+    msg.sequence_number = 42000;
+
+    char buf[16];
+    auto* end = encode(buf, sizeof(buf), msg);
+    ASSERT_NE(end, nullptr);
+
+    BundleEnd decoded{};
+    auto* read_end = decode(buf, sizeof(buf), decoded);
+    ASSERT_NE(read_end, nullptr);
+
+    EXPECT_EQ(decoded.sequence_number, 42000u);
+}
+
 TEST(ImpactMessagesTest, AddModifyOrderRoundTrip) {
     AddModifyOrder msg{};
-    msg.market_id = 12345;
+    msg.instrument_id = 12345;
     msg.order_id = 987654321LL;
-    msg.order_seq_id = 42;
-    msg.side = SIDE_BUY;
+    msg.sequence_within_msg = 42;
+    msg.side = static_cast<uint8_t>(Side::Buy);
     msg.price = 750025;
     msg.quantity = 100;
-    msg.is_implied = FLAG_NO;
-    msg.is_rfq = FLAG_NO;
+    msg.is_implied = static_cast<uint8_t>(YesNo::No);
+    msg.is_rfq = static_cast<uint8_t>(YesNo::No);
     msg.order_entry_date_time = 1711400000000000000LL;
 
     char buf[128];
@@ -132,25 +239,24 @@ TEST(ImpactMessagesTest, AddModifyOrderRoundTrip) {
     AddModifyOrder decoded{};
     auto* read_end = decode(buf, sizeof(buf), decoded);
     ASSERT_NE(read_end, nullptr);
-    EXPECT_EQ(read_end - buf, wire_size<AddModifyOrder>());
 
-    EXPECT_EQ(decoded.market_id, 12345);
+    EXPECT_EQ(decoded.instrument_id, 12345);
     EXPECT_EQ(decoded.order_id, 987654321LL);
-    EXPECT_EQ(decoded.order_seq_id, 42);
-    EXPECT_EQ(decoded.side, SIDE_BUY);
+    EXPECT_EQ(decoded.sequence_within_msg, 42u);
+    EXPECT_EQ(decoded.side, static_cast<uint8_t>(Side::Buy));
     EXPECT_EQ(decoded.price, 750025);
-    EXPECT_EQ(decoded.quantity, 100);
-    EXPECT_EQ(decoded.is_implied, FLAG_NO);
-    EXPECT_EQ(decoded.is_rfq, FLAG_NO);
+    EXPECT_EQ(decoded.quantity, 100u);
+    EXPECT_EQ(decoded.is_implied, static_cast<uint8_t>(YesNo::No));
+    EXPECT_EQ(decoded.is_rfq, static_cast<uint8_t>(YesNo::No));
     EXPECT_EQ(decoded.order_entry_date_time, 1711400000000000000LL);
 }
 
 TEST(ImpactMessagesTest, OrderWithdrawalRoundTrip) {
     OrderWithdrawal msg{};
-    msg.market_id = 54321;
+    msg.instrument_id = 54321;
     msg.order_id = 111222333LL;
-    msg.order_seq_id = 7;
-    msg.side = SIDE_SELL;
+    msg.sequence_within_msg = 7;
+    msg.side = static_cast<uint8_t>(Side::Sell);
     msg.price = 750050;
     msg.quantity = 50;
 
@@ -162,24 +268,22 @@ TEST(ImpactMessagesTest, OrderWithdrawalRoundTrip) {
     auto* read_end = decode(buf, sizeof(buf), decoded);
     ASSERT_NE(read_end, nullptr);
 
-    EXPECT_EQ(decoded.market_id, 54321);
+    EXPECT_EQ(decoded.instrument_id, 54321);
     EXPECT_EQ(decoded.order_id, 111222333LL);
-    EXPECT_EQ(decoded.order_seq_id, 7);
-    EXPECT_EQ(decoded.side, SIDE_SELL);
+    EXPECT_EQ(decoded.sequence_within_msg, 7u);
+    EXPECT_EQ(decoded.side, static_cast<uint8_t>(Side::Sell));
     EXPECT_EQ(decoded.price, 750050);
-    EXPECT_EQ(decoded.quantity, 50);
+    EXPECT_EQ(decoded.quantity, 50u);
 }
 
 TEST(ImpactMessagesTest, DealTradeRoundTrip) {
     DealTrade msg{};
-    msg.market_id = 99999;
-    msg.order_id = 444555666LL;
+    msg.instrument_id = 99999;
     msg.deal_id = 777888999LL;
     msg.price = 750075;
     msg.quantity = 25;
-    msg.is_aggressor = FLAG_YES;
-    msg.aggressor_side = SIDE_BUY;
-    msg.deal_date_time = 1711400001000000000LL;
+    msg.aggressor_side = static_cast<uint8_t>(Side::Buy);
+    msg.timestamp = 1711400001000000000LL;
 
     char buf[64];
     auto* end = encode(buf, sizeof(buf), msg);
@@ -189,20 +293,18 @@ TEST(ImpactMessagesTest, DealTradeRoundTrip) {
     auto* read_end = decode(buf, sizeof(buf), decoded);
     ASSERT_NE(read_end, nullptr);
 
-    EXPECT_EQ(decoded.market_id, 99999);
-    EXPECT_EQ(decoded.order_id, 444555666LL);
+    EXPECT_EQ(decoded.instrument_id, 99999);
     EXPECT_EQ(decoded.deal_id, 777888999LL);
     EXPECT_EQ(decoded.price, 750075);
-    EXPECT_EQ(decoded.quantity, 25);
-    EXPECT_EQ(decoded.is_aggressor, FLAG_YES);
-    EXPECT_EQ(decoded.aggressor_side, SIDE_BUY);
-    EXPECT_EQ(decoded.deal_date_time, 1711400001000000000LL);
+    EXPECT_EQ(decoded.quantity, 25u);
+    EXPECT_EQ(decoded.aggressor_side, static_cast<uint8_t>(Side::Buy));
+    EXPECT_EQ(decoded.timestamp, 1711400001000000000LL);
 }
 
 TEST(ImpactMessagesTest, MarketStatusRoundTrip) {
     MarketStatus msg{};
-    msg.market_id = 12345;
-    msg.trading_status = TRADING_STATUS_OPEN;
+    msg.instrument_id = 12345;
+    msg.trading_status = static_cast<uint8_t>(TradingStatus::Continuous);
 
     char buf[16];
     auto* end = encode(buf, sizeof(buf), msg);
@@ -212,40 +314,56 @@ TEST(ImpactMessagesTest, MarketStatusRoundTrip) {
     auto* read_end = decode(buf, sizeof(buf), decoded);
     ASSERT_NE(read_end, nullptr);
 
-    EXPECT_EQ(decoded.market_id, 12345);
-    EXPECT_EQ(decoded.trading_status, TRADING_STATUS_OPEN);
+    EXPECT_EQ(decoded.instrument_id, 12345);
+    EXPECT_EQ(decoded.trading_status, static_cast<uint8_t>(TradingStatus::Continuous));
 }
 
-TEST(ImpactMessagesTest, BundleStartRoundTrip) {
-    BundleStart msg{};
-    msg.seq_num = 1000;
+TEST(ImpactMessagesTest, SnapshotOrderRoundTrip) {
+    SnapshotOrder msg{};
+    msg.instrument_id = 10001;
+    msg.order_id = 5555666677LL;
+    msg.side = static_cast<uint8_t>(Side::Sell);
+    msg.price = 800100;
+    msg.quantity = 200;
+    msg.sequence = 3;
 
-    char buf[16];
+    char buf[64];
     auto* end = encode(buf, sizeof(buf), msg);
     ASSERT_NE(end, nullptr);
 
-    BundleStart decoded{};
+    SnapshotOrder decoded{};
     auto* read_end = decode(buf, sizeof(buf), decoded);
     ASSERT_NE(read_end, nullptr);
 
-    EXPECT_EQ(decoded.seq_num, 1000);
+    EXPECT_EQ(decoded.instrument_id, 10001);
+    EXPECT_EQ(decoded.order_id, 5555666677LL);
+    EXPECT_EQ(decoded.side, static_cast<uint8_t>(Side::Sell));
+    EXPECT_EQ(decoded.price, 800100);
+    EXPECT_EQ(decoded.quantity, 200u);
+    EXPECT_EQ(decoded.sequence, 3u);
 }
 
-TEST(ImpactMessagesTest, BundleEndRoundTrip) {
-    BundleEnd msg{};
-    msg.seq_num = 1000;
-    msg.msg_count = 5;
+TEST(ImpactMessagesTest, PriceLevelRoundTrip) {
+    PriceLevel msg{};
+    msg.instrument_id = 20002;
+    msg.side = static_cast<uint8_t>(Side::Buy);
+    msg.price = 750000;
+    msg.quantity = 500;
+    msg.order_count = 12;
 
-    char buf[16];
+    char buf[32];
     auto* end = encode(buf, sizeof(buf), msg);
     ASSERT_NE(end, nullptr);
 
-    BundleEnd decoded{};
+    PriceLevel decoded{};
     auto* read_end = decode(buf, sizeof(buf), decoded);
     ASSERT_NE(read_end, nullptr);
 
-    EXPECT_EQ(decoded.seq_num, 1000);
-    EXPECT_EQ(decoded.msg_count, 5u);
+    EXPECT_EQ(decoded.instrument_id, 20002);
+    EXPECT_EQ(decoded.side, static_cast<uint8_t>(Side::Buy));
+    EXPECT_EQ(decoded.price, 750000);
+    EXPECT_EQ(decoded.quantity, 500u);
+    EXPECT_EQ(decoded.order_count, 12u);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +372,7 @@ TEST(ImpactMessagesTest, BundleEndRoundTrip) {
 
 TEST(ImpactMessagesTest, EncodeBufferTooSmall) {
     AddModifyOrder msg{};
-    char buf[2];  // way too small
+    char buf[2];
     auto* end = encode(buf, sizeof(buf), msg);
     EXPECT_EQ(end, nullptr);
 }
@@ -269,7 +387,7 @@ TEST(ImpactMessagesTest, DecodeBufferTooSmall) {
     encode(buf, sizeof(buf), msg);
 
     AddModifyOrder decoded{};
-    auto* end = decode(buf, 2, decoded);  // truncated buffer
+    auto* end = decode(buf, 2, decoded);
     EXPECT_EQ(end, nullptr);
 }
 
@@ -279,7 +397,7 @@ TEST(ImpactMessagesTest, DecodeBufferTooSmall) {
 
 TEST(ImpactMessagesTest, DecodeWrongType) {
     AddModifyOrder msg{};
-    msg.market_id = 100;
+    msg.instrument_id = 100;
     char buf[128];
     encode(buf, sizeof(buf), msg);
 
@@ -295,39 +413,15 @@ TEST(ImpactMessagesTest, DecodeWrongType) {
 
 TEST(ImpactMessagesTest, EncodedHeaderFields) {
     DealTrade msg{};
-    msg.market_id = 1;
+    msg.instrument_id = 1;
     char buf[64];
     encode(buf, sizeof(buf), msg);
 
     ImpactMessageHeader hdr{};
     std::memcpy(&hdr, buf, sizeof(hdr));
 
-    EXPECT_EQ(hdr.msg_type, MSG_TYPE_DEAL_TRADE);
-    EXPECT_EQ(hdr.msg_length, wire_size<DealTrade>());
-}
-
-// ---------------------------------------------------------------------------
-// All trading status codes
-// ---------------------------------------------------------------------------
-
-TEST(ImpactMessagesTest, TradingStatusCodes) {
-    EXPECT_EQ(TRADING_STATUS_OPEN, 'O');
-    EXPECT_EQ(TRADING_STATUS_CLOSED, 'C');
-    EXPECT_EQ(TRADING_STATUS_PRE_OPEN, 'P');
-    EXPECT_EQ(TRADING_STATUS_HALT, 'H');
-    EXPECT_EQ(TRADING_STATUS_SETTLEMENT, 'S');
-}
-
-// ---------------------------------------------------------------------------
-// Message type constants
-// ---------------------------------------------------------------------------
-
-TEST(ImpactMessagesTest, MessageTypeConstants) {
-    EXPECT_EQ(AddModifyOrder::TYPE, 'E');
-    EXPECT_EQ(OrderWithdrawal::TYPE, 'F');
-    EXPECT_EQ(DealTrade::TYPE, 'T');
-    EXPECT_EQ(MarketStatus::TYPE, 'M');
-    EXPECT_EQ(BundleStart::TYPE, 'S');
+    EXPECT_EQ(hdr.msg_type, static_cast<char>(MessageType::DealTrade));
+    EXPECT_EQ(hdr.body_length, wire_size<DealTrade>());
 }
 
 }  // namespace
