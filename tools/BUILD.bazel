@@ -244,3 +244,19 @@ cc_binary(
     ],
     visibility = ["//visibility:public"],
 )
+
+# --- Task 20: Structured Event Logger ---
+cc_library(
+    name = "event_logger",
+    hdrs = ["event_logger.h"],
+    deps = [
+        "//exchange-core:listeners",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "event_logger_test",
+    srcs = ["event_logger_test.cc"],
+    deps = [":event_logger", "@googletest//:gtest_main"],
+)
