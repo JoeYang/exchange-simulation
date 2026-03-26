@@ -47,8 +47,14 @@ class IceExchange : public MatchingEngine<
     SmpAction smp_action_{SmpAction::CancelNewest};
 
     // VWAP settlement accumulator.
-    int64_t vwap_volume_{0};       // sum of trade quantities
-    int64_t vwap_price_volume_{0}; // sum of (price * quantity)
+    // Quantities are stored in contract units (divided by PRICE_SCALE) to
+    // avoid int64 overflow when accumulating price * quantity products.
+    // At PRICE_SCALE=10000, raw price*qty for Brent at $80 * 5000 lots
+    // = 800000 * 50000000 = 4e13, which overflows int64 range (~9.2e18)
+    // after only ~230k trades. Dividing qty by PRICE_SCALE keeps values
+    // in a safe range for realistic session volumes.
+    int64_t vwap_volume_{0};       // sum of (qty / PRICE_SCALE)
+    int64_t vwap_price_volume_{0}; // sum of (price * qty / PRICE_SCALE)
 
     // Circuit breaker state.
     bool circuit_breaker_active_{false};
@@ -71,9 +77,11 @@ public:
 
     // Record a trade into the VWAP accumulator.
     // Called externally (e.g. by an MdListener wrapper) on each Trade event.
+    // Divides qty by PRICE_SCALE before accumulating to prevent overflow.
     void record_trade_for_vwap(Price price, Quantity qty) {
-        vwap_price_volume_ += price * qty;
-        vwap_volume_ += qty;
+        Quantity contracts = qty / PRICE_SCALE;
+        vwap_price_volume_ += price * contracts;
+        vwap_volume_ += contracts;
     }
 
     // Calculate VWAP settlement price from accumulated trades.
@@ -121,8 +129,8 @@ public:
     ModifyPolicy get_modify_policy() { return ModifyPolicy::CancelReplace; }
 
     // ICE phase validation:
-    //   PreOpen: reject Market, IOC, FOK
-    //   Closed: reject all (handled by base engine)
+    //   PreOpen / PreClose: reject Market, IOC, FOK
+    //   Closed: reject all
     //   Continuous / Halt / others: allow all
     bool is_order_allowed_in_phase(const OrderRequest& req, SessionState state) {
         switch (state) {

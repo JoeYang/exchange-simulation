@@ -235,14 +235,16 @@ TEST_F(IceExchangeTest, IplBandsDisabledWhenWidthZero) {
 TEST_F(IceExchangeTest, VwapSettlementCalculation) {
     engine_.reset_vwap();
 
-    // Trade 1: 10 lots @ 80.00 (800000 fixed-point)
+    // Trade 1: 10 lots @ 80.00 (800000 fixed-point price, 100000 qty)
+    // Internally: contracts = 100000 / 10000 = 10
     engine_.record_trade_for_vwap(800000, 100000);
-    // Trade 2: 20 lots @ 81.00 (810000 fixed-point)
+    // Trade 2: 20 lots @ 81.00 (810000 fixed-point price, 200000 qty)
+    // Internally: contracts = 200000 / 10000 = 20
     engine_.record_trade_for_vwap(810000, 200000);
 
-    // VWAP = (800000*100000 + 810000*200000) / (100000 + 200000)
-    //      = (80000000000 + 162000000000) / 300000
-    //      = 242000000000 / 300000
+    // VWAP = (800000*10 + 810000*20) / (10 + 20)
+    //      = (8000000 + 16200000) / 30
+    //      = 24200000 / 30
     //      = 806666 (truncated)
     Price vwap = engine_.calculate_settlement_price();
     EXPECT_EQ(vwap, 806666);
