@@ -568,4 +568,148 @@ struct FifoLmmMatch {
     }
 };
 
+// FifoTopLmmMatch -- Top Order + LMM + FIFO.
+//
+// Three-phase priority matching used by CME for certain products:
+//
+//   Phase 1 (Top Order): The first order flagged as `is_top_order` at the
+//            level receives up to TopPct% of the aggressor quantity.
+//   Phase 2 (LMM):       Market maker orders receive up to MmPriorityPct%
+//            of the ORIGINAL aggressor quantity (not the post-top remainder).
+//   Phase 3 (FIFO):      Remaining aggressor quantity is filled across ALL
+//            orders (top, MM, and regular) in FIFO order.
+//
+// Template parameters:
+//   TopPct         -- percentage (0-100) of aggressor qty for the top order.
+//   MmPriorityPct  -- percentage (0-100) of aggressor qty for MM orders.
+
+template <int TopPct, int MmPriorityPct>
+struct FifoTopLmmMatch {
+    static_assert(TopPct >= 0 && TopPct <= 100,
+                  "TopPct must be in [0, 100]");
+    static_assert(MmPriorityPct >= 0 && MmPriorityPct <= 100,
+                  "MmPriorityPct must be in [0, 100]");
+
+    static void match(PriceLevel& level, Quantity& remaining,
+                      FillResult* results, size_t& count) {
+        if (remaining <= 0 || level.head == nullptr) return;
+
+        Quantity original_aggressor = remaining;
+        size_t start_count = count;
+
+        // ---------------------------------------------------------------
+        // Phase 1: Top Order priority
+        // ---------------------------------------------------------------
+        Quantity top_alloc = original_aggressor * TopPct / 100;
+        if (top_alloc > 0) {
+            Order* order = level.head;
+            while (order != nullptr && top_alloc > 0) {
+                if (order->is_top_order) {
+                    Quantity fill = std::min(top_alloc,
+                                             order->remaining_quantity);
+                    results[count].resting_order     = order;
+                    results[count].price             = level.price;
+                    results[count].quantity          = fill;
+
+                    order->filled_quantity    += fill;
+                    order->remaining_quantity -= fill;
+                    remaining                 -= fill;
+
+                    results[count].resting_remaining = order->remaining_quantity;
+                    ++count;
+                    top_alloc -= fill;
+                    break;  // only one top order per level
+                }
+                order = order->next;
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 2: LMM priority (based on original aggressor quantity)
+        // ---------------------------------------------------------------
+        Quantity mm_alloc = original_aggressor * MmPriorityPct / 100;
+        if (mm_alloc > 0 && remaining > 0) {
+            // Compute available MM resting quantity (post-top-fill).
+            Quantity mm_resting = 0;
+            for (Order* o = level.head; o != nullptr; o = o->next) {
+                if (o->is_market_maker) mm_resting += o->remaining_quantity;
+            }
+            mm_alloc = std::min(mm_alloc, mm_resting);
+            mm_alloc = std::min(mm_alloc, remaining);
+
+            Quantity mm_left = mm_alloc;
+            Order* order = level.head;
+            while (order != nullptr && mm_left > 0) {
+                if (order->is_market_maker && order->remaining_quantity > 0) {
+                    Quantity fill = std::min(mm_left,
+                                             order->remaining_quantity);
+                    // Check if this order already has a result (top + MM).
+                    bool found = false;
+                    for (size_t i = start_count; i < count; ++i) {
+                        if (results[i].resting_order == order) {
+                            results[i].quantity      += fill;
+                            order->filled_quantity    += fill;
+                            order->remaining_quantity -= fill;
+                            remaining                 -= fill;
+                            results[i].resting_remaining =
+                                order->remaining_quantity;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        results[count].resting_order     = order;
+                        results[count].price             = level.price;
+                        results[count].quantity          = fill;
+                        order->filled_quantity    += fill;
+                        order->remaining_quantity -= fill;
+                        remaining                 -= fill;
+                        results[count].resting_remaining =
+                            order->remaining_quantity;
+                        ++count;
+                    }
+                    mm_left -= fill;
+                }
+                order = order->next;
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 3: FIFO across all orders
+        // ---------------------------------------------------------------
+        Order* order = level.head;
+        while (order != nullptr && remaining > 0) {
+            if (order->remaining_quantity > 0) {
+                Quantity fill = std::min(remaining,
+                                         order->remaining_quantity);
+                bool found = false;
+                for (size_t i = start_count; i < count; ++i) {
+                    if (results[i].resting_order == order) {
+                        results[i].quantity      += fill;
+                        order->filled_quantity    += fill;
+                        order->remaining_quantity -= fill;
+                        remaining                 -= fill;
+                        results[i].resting_remaining =
+                            order->remaining_quantity;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    results[count].resting_order     = order;
+                    results[count].price             = level.price;
+                    results[count].quantity          = fill;
+                    order->filled_quantity    += fill;
+                    order->remaining_quantity -= fill;
+                    remaining                 -= fill;
+                    results[count].resting_remaining =
+                        order->remaining_quantity;
+                    ++count;
+                }
+            }
+            order = order->next;
+        }
+    }
+};
+
 }  // namespace exchange

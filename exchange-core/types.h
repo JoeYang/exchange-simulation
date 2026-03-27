@@ -90,6 +90,10 @@ struct Order {
     // Market maker (LMM) flag -- set by exchange-specific CRTP hook
     bool is_market_maker{false};
 
+    // Top order flag -- first order to establish a new best price level.
+    // Set by the exchange layer; used by FifoTopLmmMatch for priority.
+    bool is_top_order{false};
+
     // Intrusive doubly-linked list hooks (within a price level)
     Order* prev{nullptr};
     Order* next{nullptr};

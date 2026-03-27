@@ -172,6 +172,16 @@ cc_test(
 )
 
 cc_test(
+    name = "lmm_engine_test",
+    srcs = ["lmm_engine_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "threshold_prorata_test",
     srcs = ["threshold_prorata_test.cc"],
     deps = [
@@ -192,6 +202,15 @@ cc_test(
 cc_test(
     name = "split_match_test",
     srcs = ["split_match_test.cc"],
+    deps = [
+        ":match_algo",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "top_lmm_match_test",
+    srcs = ["top_lmm_match_test.cc"],
     deps = [
         ":match_algo",
         "@googletest//:gtest_main",
@@ -274,6 +293,7 @@ cc_library(
         ":order_persistence",
         ":rate_tracker",
         ":trade_registry",
+        ":position_tracker",
     ],
     visibility = ["//visibility:public"],
 )
@@ -281,6 +301,26 @@ cc_library(
 cc_test(
     name = "trade_bust_test",
     srcs = ["trade_bust_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "position_limit_engine_test",
+    srcs = ["position_limit_engine_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "volatility_auction_test",
+    srcs = ["volatility_auction_test.cc"],
     deps = [
         ":matching_engine",
         "//test-harness:recording_listener",
