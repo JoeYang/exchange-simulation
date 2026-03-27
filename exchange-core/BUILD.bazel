@@ -163,6 +163,15 @@ cc_test(
 )
 
 cc_test(
+    name = "lmm_match_test",
+    srcs = ["lmm_match_test.cc"],
+    deps = [
+        ":match_algo",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "threshold_prorata_test",
     srcs = ["threshold_prorata_test.cc"],
     deps = [
@@ -214,6 +223,22 @@ cc_test(
     srcs = ["rate_tracker_test.cc"],
     deps = [
         ":rate_tracker",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "position_tracker",
+    hdrs = ["position_tracker.h"],
+    deps = [":types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "position_tracker_test",
+    srcs = ["position_tracker_test.cc"],
+    deps = [
+        ":position_tracker",
         "@googletest//:gtest_main",
     ],
 )

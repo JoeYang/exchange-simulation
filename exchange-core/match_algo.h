@@ -467,4 +467,105 @@ struct SplitFifoProRataMatch {
     }
 };
 
+// FifoLmmMatch -- FIFO with Lead Market Maker (LMM) priority.
+//
+// At each price level, designated market maker orders receive a priority
+// allocation before standard FIFO matching. The algorithm:
+//
+//   1. Compute MM allocation = floor(aggressor_remaining * MmPriorityPct / 100),
+//      capped at total MM resting quantity at the level.
+//   2. Match MM orders in FIFO (time priority) order up to the MM allocation.
+//   3. Match remaining aggressor quantity across ALL orders (MM and non-MM)
+//      in FIFO order, skipping any fully-filled MM orders from step 2.
+//
+// When MmPriorityPct == 0, behavior is identical to FifoMatch.
+// When no MM orders exist at the level, behavior is identical to FifoMatch.
+//
+// Template parameter:
+//   MmPriorityPct -- percentage (0-100) of aggressor qty reserved for MMs.
+
+template <int MmPriorityPct>
+struct FifoLmmMatch {
+    static_assert(MmPriorityPct >= 0 && MmPriorityPct <= 100,
+                  "MmPriorityPct must be in [0, 100]");
+
+    static void match(PriceLevel& level, Quantity& remaining,
+                      FillResult* results, size_t& count) {
+        if (remaining <= 0 || level.head == nullptr) return;
+
+        // Compute total MM resting quantity at this level.
+        Quantity mm_resting = 0;
+        for (Order* o = level.head; o != nullptr; o = o->next) {
+            if (o->is_market_maker) mm_resting += o->remaining_quantity;
+        }
+
+        // Phase 1: MM priority allocation
+        // mm_alloc is the maximum qty to allocate to MMs in the priority pass.
+        Quantity mm_alloc = remaining * MmPriorityPct / 100;
+        mm_alloc = std::min(mm_alloc, mm_resting);
+
+        Quantity mm_remaining = mm_alloc;
+        if (mm_remaining > 0) {
+            // FIFO among MM orders only
+            Order* order = level.head;
+            while (order != nullptr && mm_remaining > 0) {
+                if (order->is_market_maker) {
+                    Quantity fill_qty = std::min(mm_remaining,
+                                                 order->remaining_quantity);
+                    results[count].resting_order     = order;
+                    results[count].price             = level.price;
+                    results[count].quantity          = fill_qty;
+
+                    order->filled_quantity    += fill_qty;
+                    order->remaining_quantity -= fill_qty;
+                    remaining                 -= fill_qty;
+
+                    results[count].resting_remaining = order->remaining_quantity;
+                    ++count;
+                    mm_remaining -= fill_qty;
+                }
+                order = order->next;
+            }
+        }
+
+        // Phase 2: FIFO across all orders (including partially-filled MMs)
+        Order* order = level.head;
+        while (order != nullptr && remaining > 0) {
+            if (order->remaining_quantity > 0) {
+                Quantity fill_qty = std::min(remaining,
+                                             order->remaining_quantity);
+
+                // Check if this order already has a result from Phase 1
+                bool found = false;
+                for (size_t i = count; i > 0; --i) {
+                    if (results[i - 1].resting_order == order) {
+                        results[i - 1].quantity      += fill_qty;
+                        order->filled_quantity        += fill_qty;
+                        order->remaining_quantity     -= fill_qty;
+                        remaining                     -= fill_qty;
+                        results[i - 1].resting_remaining =
+                            order->remaining_quantity;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    results[count].resting_order     = order;
+                    results[count].price             = level.price;
+                    results[count].quantity          = fill_qty;
+
+                    order->filled_quantity    += fill_qty;
+                    order->remaining_quantity -= fill_qty;
+                    remaining                 -= fill_qty;
+
+                    results[count].resting_remaining =
+                        order->remaining_quantity;
+                    ++count;
+                }
+            }
+            order = order->next;
+        }
+    }
+};
+
 }  // namespace exchange

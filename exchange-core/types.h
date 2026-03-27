@@ -49,6 +49,7 @@ enum class RejectReason : uint8_t {
     RateThrottled,         // per-account message rate limit exceeded
     LockLimitUp,           // order price at/above upper daily limit (locked)
     LockLimitDown,         // order price at/below lower daily limit (locked)
+    PositionLimitExceeded, // would breach per-account position limit
     ExchangeSpecific
 };
 
@@ -85,6 +86,9 @@ struct Order {
     // Iceberg fields (0 = fully visible, no iceberg)
     Quantity display_qty{0};    // visible quantity (0 = fully visible, no iceberg)
     Quantity total_qty{0};      // original total including hidden (same as quantity for non-iceberg)
+
+    // Market maker (LMM) flag -- set by exchange-specific CRTP hook
+    bool is_market_maker{false};
 
     // Intrusive doubly-linked list hooks (within a price level)
     Order* prev{nullptr};
