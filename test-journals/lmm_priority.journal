@@ -1,0 +1,48 @@
+# LMM (Lead Market Maker) priority matching.
+#
+# Tests FifoLmmMatch behavior: designated market maker orders receive a
+# priority allocation before standard FIFO matching.
+#
+# Requires: FifoLmmMatch engine with MM priority percentage configured.
+# This journal uses the LMM match algo (CONFIG match_algo=FIFO_LMM).
+#
+# NOTE: This is a skeleton -- fill in EXPECT lines once G6-T2 (LMM engine
+# integration) is complete and the exact event sequence is known.
+#
+# Scenario 1: MM order gets priority allocation over older non-MM order.
+#
+#   1. Non-MM places a resting buy at 100.0000 for 5.0000 (ts=1)
+#   2. MM places a resting buy at 100.0000 for 3.0000 (ts=2)
+#   3. Non-MM places a resting buy at 100.0000 for 2.0000 (ts=3)
+#   4. Sell aggressor comes in for 6.0000 at 100.0000
+#   5. MM allocation (e.g. 40% of 6.0000 = 2.4000 -> 2.0000 lots) fills MM first
+#   6. Remaining 4.0000 fills via FIFO: order1 gets 4.0000
+#
+# TODO: Uncomment and adjust once G6-T2 provides:
+#   - CONFIG match_algo=FIFO_LMM mm_priority_pct=40
+#   - account_id-based MM designation or is_market_maker journal field
+#
+# CONFIG match_algo=FIFO_LMM
+#
+# ACTION NEW_ORDER cl_ord_id=1 side=BUY type=LIMIT price=1000000 qty=50000 ts=1
+# EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=1
+#
+# ACTION NEW_ORDER cl_ord_id=2 side=BUY type=LIMIT price=1000000 qty=30000 is_mm=1 ts=2
+# EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=2
+#
+# ACTION NEW_ORDER cl_ord_id=3 side=BUY type=LIMIT price=1000000 qty=20000 ts=3
+# EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=3
+#
+# # Sell aggressor: 60000 qty
+# ACTION NEW_ORDER cl_ord_id=4 side=SELL type=LIMIT price=1000000 qty=60000 ts=4
+# EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=4
+# # MM priority: 40% of 60000 = 24000 -> MM order 2 gets 24000
+# # FIFO remainder: 36000 -> order 1 gets 36000
+# EXPECT ORDER_PARTIALLY_FILLED aggressor=4 resting=2 price=1000000 qty=24000 ...
+# EXPECT ORDER_PARTIALLY_FILLED aggressor=4 resting=1 price=1000000 qty=36000 ...
+#
+# Scenario 2: No MM orders at level -- pure FIFO.
+# (same as standard FIFO behavior, ensures fallback works)
+#
+# Scenario 3: MM fully filled in priority pass -- remainder to FIFO.
+# (MM has less qty than its priority allocation, excess goes to FIFO)
