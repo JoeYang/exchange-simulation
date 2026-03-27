@@ -370,3 +370,8 @@ cc_binary(
     ],
     visibility = ["//visibility:public"],
 )
+
+# --- Simulation Exercise: Integration Test ---
+# Run directly: bash tools/sim_integration_test.sh
+# Requires multicast (loopback); not a Bazel test target.
+# See docs/plans/2026-03-27-exchange-simulation-plan.md section 4.7.
