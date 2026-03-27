@@ -301,6 +301,13 @@ cc_test(
     deps = [":journal_reconciler", "@googletest//:gtest_main"],
 )
 
+cc_binary(
+    name = "journal-reconciler",
+    srcs = ["journal_reconciler.cc"],
+    deps = [":journal_reconciler"],
+    visibility = ["//visibility:public"],
+)
+
 # --- Simulation Exercise: SimClient ---
 cc_library(
     name = "sim_client",
