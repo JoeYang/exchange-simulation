@@ -35,6 +35,10 @@ const char* reject_reason_str(RejectReason r) {
         case RejectReason::PriceBandViolation: return "PriceBandViolation";
         case RejectReason::LevelPoolExhausted:  return "LevelPoolExhausted";
         case RejectReason::MaxOrderSizeExceeded: return "MaxOrderSizeExceeded";
+        case RejectReason::RateThrottled:      return "RateThrottled";
+        case RejectReason::LockLimitUp:        return "LockLimitUp";
+        case RejectReason::LockLimitDown:        return "LockLimitDown";
+        case RejectReason::PositionLimitExceeded: return "PositionLimitExceeded";
         case RejectReason::ExchangeSpecific:   return "ExchangeSpecific";
     }
     return "Unknown";

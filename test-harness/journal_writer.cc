@@ -50,8 +50,9 @@ const char* reject_reason_to_journal(RejectReason r) {
         case RejectReason::MaxOrderSizeExceeded: return "MAX_ORDER_SIZE_EXCEEDED";
         case RejectReason::RateThrottled:        return "RATE_THROTTLED";
         case RejectReason::LockLimitUp:          return "LOCK_LIMIT_UP";
-        case RejectReason::LockLimitDown:        return "LOCK_LIMIT_DOWN";
-        case RejectReason::ExchangeSpecific:     return "EXCHANGE_SPECIFIC";
+        case RejectReason::LockLimitDown:          return "LOCK_LIMIT_DOWN";
+        case RejectReason::PositionLimitExceeded: return "POSITION_LIMIT_EXCEEDED";
+        case RejectReason::ExchangeSpecific:      return "EXCHANGE_SPECIFIC";
     }
     return "UNKNOWN";
 }

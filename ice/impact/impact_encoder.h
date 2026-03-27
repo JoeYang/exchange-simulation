@@ -39,6 +39,7 @@ inline uint8_t encode_trading_status(SessionState state) {
             return static_cast<uint8_t>(TradingStatus::Continuous);
         case SessionState::Halt:
         case SessionState::VolatilityAuction:
+        case SessionState::LockLimit:
             return static_cast<uint8_t>(TradingStatus::Halt);
         case SessionState::Closed:
         case SessionState::PreClose:

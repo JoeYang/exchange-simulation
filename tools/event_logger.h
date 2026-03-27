@@ -226,7 +226,11 @@ private:
             case RejectReason::PriceBandViolation:  return "PriceBandViolation";
             case RejectReason::LevelPoolExhausted:  return "LevelPoolExhausted";
             case RejectReason::MaxOrderSizeExceeded: return "MaxOrderSizeExceeded";
-            case RejectReason::ExchangeSpecific:    return "ExchangeSpecific";
+            case RejectReason::RateThrottled:       return "RateThrottled";
+            case RejectReason::LockLimitUp:         return "LockLimitUp";
+            case RejectReason::LockLimitDown:           return "LockLimitDown";
+            case RejectReason::PositionLimitExceeded:  return "PositionLimitExceeded";
+            case RejectReason::ExchangeSpecific:       return "ExchangeSpecific";
         }
         return "Unknown";
     }
@@ -254,6 +258,7 @@ private:
             case SessionState::ClosingAuction:    return "ClosingAuction";
             case SessionState::Halt:              return "Halt";
             case SessionState::VolatilityAuction: return "VolatilityAuction";
+            case SessionState::LockLimit:         return "LockLimit";
         }
         return "Unknown";
     }

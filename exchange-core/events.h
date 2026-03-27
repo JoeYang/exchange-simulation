@@ -64,6 +64,18 @@ struct OrderModifyRejected {
     RejectReason reason;
 };
 
+// --- Trade bust events ---
+
+struct TradeBusted {
+    TradeId   trade_id;
+    OrderId   aggressor_id;
+    OrderId   resting_id;
+    Price     price;
+    Quantity  quantity;
+    BustReason reason;
+    Timestamp ts;
+};
+
 // --- Market data events (Section 6.2) ---
 
 struct TopOfBook {
@@ -113,6 +125,15 @@ struct IndicativePrice {
     Quantity matched_volume{};
     Quantity buy_surplus{};
     Quantity sell_surplus{};
+    Timestamp ts{};
+};
+
+// --- Daily price limit events ---
+
+struct LockLimitTriggered {
+    Side      side{};         // Side that hit the limit (Sell = hit lower, Buy = hit upper)
+    Price     limit_price{};  // the daily limit price that was hit
+    Price     last_trade_price{};  // trade price that triggered the lock
     Timestamp ts{};
 };
 

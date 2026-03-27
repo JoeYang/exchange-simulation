@@ -112,6 +112,23 @@ bool operator==(const IndicativePrice& a, const IndicativePrice& b) {
            a.ts == b.ts;
 }
 
+bool operator==(const TradeBusted& a, const TradeBusted& b) {
+    return a.trade_id == b.trade_id &&
+           a.aggressor_id == b.aggressor_id &&
+           a.resting_id == b.resting_id &&
+           a.price == b.price &&
+           a.quantity == b.quantity &&
+           a.reason == b.reason &&
+           a.ts == b.ts;
+}
+
+bool operator==(const LockLimitTriggered& a, const LockLimitTriggered& b) {
+    return a.side == b.side &&
+           a.limit_price == b.limit_price &&
+           a.last_trade_price == b.last_trade_price &&
+           a.ts == b.ts;
+}
+
 // --- to_string helpers ---
 
 namespace {
@@ -150,7 +167,11 @@ const char* reject_reason_str(RejectReason r) {
         case RejectReason::PriceBandViolation:    return "PriceBandViolation";
         case RejectReason::LevelPoolExhausted:    return "LevelPoolExhausted";
         case RejectReason::MaxOrderSizeExceeded:  return "MaxOrderSizeExceeded";
-        case RejectReason::ExchangeSpecific:      return "ExchangeSpecific";
+        case RejectReason::RateThrottled:         return "RateThrottled";
+        case RejectReason::LockLimitUp:           return "LockLimitUp";
+        case RejectReason::LockLimitDown:           return "LockLimitDown";
+        case RejectReason::PositionLimitExceeded:  return "PositionLimitExceeded";
+        case RejectReason::ExchangeSpecific:       return "ExchangeSpecific";
     }
     return "Unknown";
 }
@@ -165,6 +186,7 @@ const char* session_state_str(SessionState s) {
         case SessionState::ClosingAuction:    return "ClosingAuction";
         case SessionState::Halt:              return "Halt";
         case SessionState::VolatilityAuction: return "VolatilityAuction";
+        case SessionState::LockLimit:         return "LockLimit";
     }
     return "Unknown";
 }
@@ -178,6 +200,16 @@ const char* cancel_reason_str(CancelReason r) {
         case CancelReason::SelfMatchPrevention: return "SelfMatchPrevention";
         case CancelReason::LevelPoolExhausted:  return "LevelPoolExhausted";
         case CancelReason::MassCancelled:       return "MassCancelled";
+    }
+    return "Unknown";
+}
+
+const char* bust_reason_str(BustReason r) {
+    switch (r) {
+        case BustReason::ErroneousTrade:  return "ErroneousTrade";
+        case BustReason::SystemError:     return "SystemError";
+        case BustReason::Regulatory:      return "Regulatory";
+        case BustReason::ExchangeSpecific: return "ExchangeSpecific";
     }
     return "Unknown";
 }
@@ -267,6 +299,19 @@ std::string to_string(const RecordedEvent& event) {
                    ", matched_vol=" + std::to_string(e.matched_volume) +
                    ", buy_surplus=" + std::to_string(e.buy_surplus) +
                    ", sell_surplus=" + std::to_string(e.sell_surplus) +
+                   ", ts=" + std::to_string(e.ts) + "}";
+        } else if constexpr (std::is_same_v<T, TradeBusted>) {
+            return "TradeBusted{trade_id=" + std::to_string(e.trade_id) +
+                   ", aggressor=" + std::to_string(e.aggressor_id) +
+                   ", resting=" + std::to_string(e.resting_id) +
+                   ", price=" + std::to_string(e.price) +
+                   ", qty=" + std::to_string(e.quantity) +
+                   ", reason=" + bust_reason_str(e.reason) +
+                   ", ts=" + std::to_string(e.ts) + "}";
+        } else if constexpr (std::is_same_v<T, LockLimitTriggered>) {
+            return "LockLimitTriggered{side=" + std::string(side_str(e.side)) +
+                   ", limit_price=" + std::to_string(e.limit_price) +
+                   ", last_trade_price=" + std::to_string(e.last_trade_price) +
                    ", ts=" + std::to_string(e.ts) + "}";
         }
     }, event);

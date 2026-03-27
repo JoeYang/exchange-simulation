@@ -70,6 +70,7 @@ inline uint8_t encode_security_trading_status(SessionState state) {
         case SessionState::ClosingAuction:
             return static_cast<uint8_t>(SecurityTradingStatus::Cross);
         case SessionState::Halt:
+        case SessionState::LockLimit:
             return static_cast<uint8_t>(SecurityTradingStatus::TradingHalt);
         case SessionState::VolatilityAuction:
             return static_cast<uint8_t>(SecurityTradingStatus::PreCross);

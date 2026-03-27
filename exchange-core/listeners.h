@@ -26,6 +26,7 @@ public:
     void on_order_cancel_rejected(const OrderCancelRejected&) {}
     void on_order_modified(const OrderModified&) {}
     void on_order_modify_rejected(const OrderModifyRejected&) {}
+    void on_trade_busted(const TradeBusted&) {}
 };
 
 class MarketDataListenerBase {
@@ -36,6 +37,7 @@ public:
     void on_trade(const Trade&) {}
     void on_market_status(const MarketStatus&) {}
     void on_indicative_price(const IndicativePrice&) {}
+    void on_lock_limit_triggered(const LockLimitTriggered&) {}
 };
 
 }  // namespace exchange

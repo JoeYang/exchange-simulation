@@ -107,8 +107,9 @@ TEST(TypesTest, RejectReasonEnumCoversAllValues) {
             case RejectReason::MaxOrderSizeExceeded: return;
             case RejectReason::RateThrottled:        return;
             case RejectReason::LockLimitUp:          return;
-            case RejectReason::LockLimitDown:        return;
-            case RejectReason::ExchangeSpecific:     return;
+            case RejectReason::LockLimitDown:          return;
+            case RejectReason::PositionLimitExceeded:  return;
+            case RejectReason::ExchangeSpecific:       return;
         }
     };
     check(RejectReason::PoolExhausted);

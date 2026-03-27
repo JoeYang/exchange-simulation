@@ -1,0 +1,32 @@
+# Volatility auction trigger: trade exceeding VI threshold transitions to auction
+CONFIG match_algo=FIFO tick_size=100 lot_size=10000
+
+# Establish reference price: trade at 1000000
+ACTION NEW_ORDER cl_ord_id=1 side=BUY type=LIMIT price=1000000 qty=10000 ts=2
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=2
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1000000 qty=10000 action=ADD ts=2
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=10000 count=1 action=ADD ts=2
+EXPECT TOP_OF_BOOK bid=1000000 bid_qty=10000 ask=0 ask_qty=0 ts=2
+
+ACTION NEW_ORDER cl_ord_id=2 side=SELL type=LIMIT price=1000000 qty=10000 ts=3
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=2 ts=3
+EXPECT ORDER_FILLED aggressor=2 resting=1 price=1000000 qty=10000 ts=3
+EXPECT TRADE price=1000000 qty=10000 aggressor=2 resting=1 aggressor_side=SELL ts=3
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1000000 qty=10000 action=FILL ts=3
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=0 count=0 action=REMOVE ts=3
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=3
+
+# Trade at same price -- within any threshold, no VI triggered
+ACTION NEW_ORDER cl_ord_id=3 side=BUY type=LIMIT price=1000000 qty=10000 ts=10
+EXPECT ORDER_ACCEPTED ord_id=3 cl_ord_id=3 ts=10
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1000000 qty=10000 action=ADD ts=10
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=10000 count=1 action=ADD ts=10
+EXPECT TOP_OF_BOOK bid=1000000 bid_qty=10000 ask=0 ask_qty=0 ts=10
+
+ACTION NEW_ORDER cl_ord_id=4 side=SELL type=LIMIT price=1000000 qty=10000 ts=11
+EXPECT ORDER_ACCEPTED ord_id=4 cl_ord_id=4 ts=11
+EXPECT ORDER_FILLED aggressor=4 resting=3 price=1000000 qty=10000 ts=11
+EXPECT TRADE price=1000000 qty=10000 aggressor=4 resting=3 aggressor_side=SELL ts=11
+EXPECT ORDER_BOOK_ACTION ord_id=3 side=BUY price=1000000 qty=10000 action=FILL ts=11
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=0 count=0 action=REMOVE ts=11
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=11

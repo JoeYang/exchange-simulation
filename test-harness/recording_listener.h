@@ -22,6 +22,7 @@ public:
     void on_order_cancel_rejected(const OrderCancelRejected& e) { events_.emplace_back(e); }
     void on_order_modified(const OrderModified& e) { events_.emplace_back(e); }
     void on_order_modify_rejected(const OrderModifyRejected& e) { events_.emplace_back(e); }
+    void on_trade_busted(const TradeBusted& e) { events_.emplace_back(e); }
 
     const std::vector<RecordedEvent>& events() const { return events_; }
     size_t size() const { return events_.size(); }
@@ -40,6 +41,7 @@ public:
     void on_trade(const Trade& e) { events_.emplace_back(e); }
     void on_market_status(const MarketStatus& e) { events_.emplace_back(e); }
     void on_indicative_price(const IndicativePrice& e) { events_.emplace_back(e); }
+    void on_lock_limit_triggered(const LockLimitTriggered& e) { events_.emplace_back(e); }
 
     const std::vector<RecordedEvent>& events() const { return events_; }
     size_t size() const { return events_.size(); }

@@ -412,7 +412,20 @@ Normal Trading
 |              |  opposite direction continue to be accepted
 +-----+--------+
       |
-      | Hold period expires
+      | Hold period expires### 9.4 ICE vs CME Gap Comparison
+
+ICE is notably **simpler** than CME in several dimensions:
+
+| Dimension | CME | ICE |
+|---|---|---|
+| Matching algorithms | 8+ (FIFO, ProRata, LMM, TPR, Configurable, etc.) | 2 (FIFO + GTBPR) |
+| Closing mechanism | Opening + closing auctions | VWAP settlement window (no auction) |
+| Circuit breaker | Velocity Logic + CME-specific price banding | IPL hold-and-resume (simpler) |
+| Market maker priority | LMM (Liquidity-Making Maker) tier in some algorithms | None |
+| Protocol | iLink3 SBE (complex, proprietary) | FIX 4.2 (legacy) + new SBE BOE |
+| Implied matching | Complex multi-leg implied + inter-commodity | Calendar spreads + IN/OUT implied only |
+
+This means an ICE simulator is achievable with significantly less effort than CME — the core algorithms are already present, and the main work is the protocol layer.
       |
 +-----v--------+
 | Recalculate  |  New IPL band anchored to last trade or best bid/offer

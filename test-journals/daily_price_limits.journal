@@ -1,0 +1,35 @@
+# Daily Price Limits -- G4 integration test
+#
+# Verifies daily limit enforcement: orders beyond limits rejected,
+# trade at limit triggers lock-limit state.
+
+CONFIG tick_size=100 lot_size=10000 daily_limit_high=1100000 daily_limit_low=900000
+
+ACTION SET_SESSION_STATE state=CONTINUOUS ts=1
+
+# Order at upper limit -- accepted
+ACTION NEW_ORDER cl_ord_id=1 side=BUY type=LIMIT price=1100000 qty=10000 ts=2
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=2
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1100000 qty=10000 action=ADD ts=2
+EXPECT DEPTH_UPDATE side=BUY price=1100000 qty=10000 count=1 action=ADD ts=2
+EXPECT TOP_OF_BOOK bid=1100000 bid_qty=10000 ask=0 ask_qty=0 ts=2
+
+# Order beyond upper limit -- rejected
+ACTION NEW_ORDER cl_ord_id=2 side=BUY type=LIMIT price=1100100 qty=10000 ts=3
+EXPECT ORDER_REJECTED cl_ord_id=2 ts=3 reason=LOCK_LIMIT_UP
+
+# Order below lower limit -- rejected
+ACTION NEW_ORDER cl_ord_id=3 side=SELL type=LIMIT price=899900 qty=10000 ts=4
+EXPECT ORDER_REJECTED cl_ord_id=3 ts=4 reason=LOCK_LIMIT_DOWN
+
+# Sell at upper limit -- crosses with resting buy at 1100000.
+# Trade at upper limit triggers lock-limit.
+ACTION NEW_ORDER cl_ord_id=4 side=SELL type=LIMIT price=1100000 qty=10000 ts=5
+EXPECT ORDER_ACCEPTED ord_id=2 cl_ord_id=4 ts=5
+EXPECT ORDER_FILLED aggressor=2 resting=1 price=1100000 qty=10000 ts=5
+EXPECT TRADE price=1100000 qty=10000 aggressor=2 resting=1 aggressor_side=SELL ts=5
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1100000 qty=10000 action=FILL ts=5
+EXPECT DEPTH_UPDATE side=BUY price=1100000 qty=0 count=0 action=REMOVE ts=5
+EXPECT LOCK_LIMIT_TRIGGERED side=BUY limit_price=1100000 last_trade_price=1100000 ts=5
+EXPECT MARKET_STATUS state=LOCK_LIMIT ts=5
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=5
