@@ -162,6 +162,15 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "threshold_prorata_test",
+    srcs = ["threshold_prorata_test.cc"],
+    deps = [
+        ":match_algo",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "ohlcv",
     hdrs = ["ohlcv.h"],

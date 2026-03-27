@@ -142,4 +142,105 @@ struct ProRataMatch {
     }
 };
 
+// ThresholdProRataMatch -- pro-rata with minimum allocation threshold.
+//
+// Works like ProRataMatch but with an additional filter: any order whose
+// proportional allocation falls below MinThreshold gets zero in the base
+// pass. The unallocated quantity from zeroed orders is collected into a
+// remainder pool and distributed via FIFO across ALL eligible orders
+// (those that received a base allocation plus any orders that still have
+// remaining quantity).
+//
+// This matches CME's threshold pro-rata algorithm where small orders
+// must meet a minimum allocation size to participate in the proportional
+// distribution.
+//
+// Template parameter:
+//   MinThreshold -- minimum allocation in quantity units. Orders whose
+//                   proportional share is strictly less than this value
+//                   receive zero base allocation. Set to 0 for standard
+//                   pro-rata behavior (no threshold).
+//
+// Three-phase algorithm:
+//   Phase 1: Compute proportional allocations, zero those below threshold.
+//   Phase 2: Distribute remainder (rounding + zeroed orders) via FIFO.
+//   Phase 3: Apply fills to order state.
+
+template <Quantity MinThreshold>
+struct ThresholdProRataMatch {
+    static void match(PriceLevel& level, Quantity& remaining,
+                      FillResult* results, size_t& count) {
+        if (remaining <= 0 || level.head == nullptr) return;
+
+        Quantity to_fill = std::min(remaining, level.total_quantity);
+        size_t start_count = count;
+
+        // ---------------------------------------------------------------
+        // Phase 1: Proportional allocation with threshold filter
+        // ---------------------------------------------------------------
+        Quantity allocated = 0;
+        Order* order = level.head;
+        while (order != nullptr) {
+            Quantity alloc = order->remaining_quantity * to_fill
+                             / level.total_quantity;
+
+            if (alloc >= MinThreshold && alloc > 0) {
+                results[count].resting_order = order;
+                results[count].price         = level.price;
+                results[count].quantity      = alloc;
+                allocated += alloc;
+                ++count;
+            }
+            // Orders below threshold: skipped (get zero base allocation).
+            order = order->next;
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 2: Distribute remainder via FIFO
+        // ---------------------------------------------------------------
+        // Remainder includes both rounding residual and zeroed-order shares.
+        Quantity fifo_remainder = to_fill - allocated;
+        order = level.head;
+        while (fifo_remainder > 0 && order != nullptr) {
+            Quantity fifo_fill = std::min(fifo_remainder,
+                                          order->remaining_quantity);
+
+            // Check if this order already has a result from Phase 1.
+            bool found = false;
+            for (size_t i = start_count; i < count; ++i) {
+                if (results[i].resting_order == order) {
+                    // Cap: don't exceed the order's remaining quantity.
+                    Quantity cap = order->remaining_quantity
+                                   - results[i].quantity;
+                    Quantity add = std::min(fifo_fill, cap);
+                    results[i].quantity += add;
+                    fifo_remainder -= add;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && fifo_fill > 0) {
+                results[count].resting_order = order;
+                results[count].price         = level.price;
+                results[count].quantity      = fifo_fill;
+                fifo_remainder -= fifo_fill;
+                ++count;
+            }
+            order = order->next;
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 3: Apply fills to order state
+        // ---------------------------------------------------------------
+        for (size_t i = start_count; i < count; ++i) {
+            Order* o = results[i].resting_order;
+            o->filled_quantity    += results[i].quantity;
+            o->remaining_quantity -= results[i].quantity;
+            results[i].resting_remaining = o->remaining_quantity;
+        }
+
+        remaining -= to_fill;
+    }
+};
+
 }  // namespace exchange
