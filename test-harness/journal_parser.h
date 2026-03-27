@@ -21,6 +21,10 @@ struct ParsedConfig {
     int64_t     max_order_ids    = 10000;
     int64_t     price_band_low   = 0;
     int64_t     price_band_high  = 0;
+    int64_t     rate_limit       = 0;  // max messages per interval (0 = disabled)
+    int64_t     rate_interval    = 0;  // interval in nanoseconds (0 = disabled)
+    int64_t     daily_limit_high = 0;  // upper daily price limit (0 = no limit)
+    int64_t     daily_limit_low  = 0;  // lower daily price limit (0 = no limit)
 };
 
 // ---------------------------------------------------------------------------
@@ -30,7 +34,7 @@ struct ParsedConfig {
 struct ParsedAction {
     enum Type { NewOrder, Cancel, Modify, TriggerExpiry,
                 SetSessionState, ExecuteAuction, PublishIndicative,
-                MassCancel, MassCancelAll,
+                MassCancel, MassCancelAll, RestoreOrder, BustTrade,
                 // iLink3 E2E action types (client-side order entry)
                 ILink3NewOrder, ILink3Cancel, ILink3Replace, ILink3MassCancel,
                 // ICE FIX E2E action types (client-side order entry)

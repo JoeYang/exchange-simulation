@@ -148,6 +148,14 @@ public:
                 { reject(RejectReason::PriceBandViolation); return; }
             if (band_high > 0 && req.price > band_high)
                 { reject(RejectReason::PriceBandViolation); return; }
+
+            // Daily price limit check (0 = no limit)
+            if (config_.daily_limit_high > 0 &&
+                req.price > config_.daily_limit_high)
+                { reject(RejectReason::LockLimitUp); return; }
+            if (config_.daily_limit_low > 0 &&
+                req.price < config_.daily_limit_low)
+                { reject(RejectReason::LockLimitDown); return; }
         }
 
         // Stop price validation
@@ -214,11 +222,13 @@ public:
             return;
         }
 
-        // 12. Auction collection phases: insert into book without matching
+        // 12. Auction collection phases and LockLimit: insert into book
+        // without matching
         bool is_collection_phase =
             (current_state_ == SessionState::PreOpen ||
              current_state_ == SessionState::PreClose ||
-             current_state_ == SessionState::VolatilityAuction);
+             current_state_ == SessionState::VolatilityAuction ||
+             current_state_ == SessionState::LockLimit);
 
         if (is_collection_phase) {
             if (req.type == OrderType::Limit) {
@@ -506,6 +516,67 @@ public:
         fire_top_of_book(ts);
     }
 
+    // bust_trade -- reverse an executed trade
+    //
+    // Looks up trade in registry; if both orders are still alive, restores
+    // filled_quantity / remaining_quantity. If an order was fully filled and
+    // deallocated, the bust still fires the event but cannot restore it.
+    // If resting order is still in the book, its level total is updated.
+
+    void bust_trade(TradeId trade_id, BustReason reason, Timestamp ts) {
+        // Reject in Closed state
+        if (current_state_ == SessionState::Closed) return;
+
+        auto record = trade_registry_.lookup(trade_id);
+        if (!record.has_value()) return;  // unknown trade
+        if (record->busted) return;       // already busted
+
+        // CRTP validation hook -- exchange can reject the bust
+        if (!derived().on_validate_bust(trade_id, *record, ts)) return;
+
+        if (!trade_registry_.mark_busted(trade_id)) return;
+
+        Quantity bust_qty = record->quantity;
+
+        // Restore aggressor order quantities (if still alive)
+        Order* aggressor = (record->aggressor_id < MaxOrderIds)
+                               ? order_index_[record->aggressor_id] : nullptr;
+        if (aggressor) {
+            aggressor->filled_quantity -= bust_qty;
+            aggressor->remaining_quantity += bust_qty;
+            if (aggressor->level) {
+                aggressor->level->total_quantity += bust_qty;
+            }
+        }
+
+        // Restore resting order quantities (if still alive)
+        Order* resting = (record->resting_id < MaxOrderIds)
+                             ? order_index_[record->resting_id] : nullptr;
+        if (resting) {
+            resting->filled_quantity -= bust_qty;
+            resting->remaining_quantity += bust_qty;
+            if (resting->level) {
+                resting->level->total_quantity += bust_qty;
+            }
+        }
+
+        // Fire TradeBusted event
+        order_listener_.on_trade_busted(TradeBusted{
+            .trade_id     = trade_id,
+            .aggressor_id = record->aggressor_id,
+            .resting_id   = record->resting_id,
+            .price        = record->price,
+            .quantity     = record->quantity,
+            .reason       = reason,
+            .ts           = ts,
+        });
+    }
+
+    // trade_registry accessor for test introspection
+    const TradeRegistry<MaxOrderIds>& trade_registry() const {
+        return trade_registry_;
+    }
+
     // Session state management
 
     SessionState session_state() const { return current_state_; }
@@ -520,6 +591,17 @@ public:
 
         current_state_ = new_state;
         md_listener_.on_market_status(MarketStatus{.state = new_state, .ts = ts});
+    }
+
+    // unlock_limit -- resume matching after a lock-limit event.
+    // Transitions from LockLimit back to Continuous and fires MarketStatus.
+    // No-op if not currently in LockLimit state.
+
+    void unlock_limit(Timestamp ts) {
+        if (current_state_ != SessionState::LockLimit) return;
+        current_state_ = SessionState::Continuous;
+        md_listener_.on_market_status(
+            MarketStatus{.state = SessionState::Continuous, .ts = ts});
     }
 
     // calculate_auction_price -- find the equilibrium price for uncrossing.
@@ -694,11 +776,13 @@ public:
                             bid_rem, ask_rem, ts});
                 }
 
-                // Fire Trade
+                // Fire Trade and record in registry
                 md_listener_.on_trade(Trade{
                     auction_price, fill_qty,
                     bid->id, ask->id,
                     Side::Buy, ts});
+                trade_registry_.record(bid->id, ask->id,
+                                       auction_price, fill_qty, ts);
 
                 // Fire L3 for both sides
                 md_listener_.on_order_book_action(OrderBookAction{
@@ -795,6 +879,11 @@ public:
     bool on_validate_restore(const SerializedOrder&) { return true; }
     bool is_tif_valid(TimeInForce) { return true; }
 
+    // Called before busting a trade. Return false to reject the bust.
+    bool on_validate_bust(TradeId, const TradeRecord&, Timestamp) {
+        return true;
+    }
+
     // Rate throttle hook. Default: disabled (zero overhead on hot path).
     // Override to return true in exchange-derived class to enable per-account
     // message rate limiting via ThrottleConfig in EngineConfig.
@@ -811,6 +900,12 @@ public:
         return {config_.price_band_low, config_.price_band_high};
     }
 
+    // Daily limit hit hook. Called when a trade executes at a daily limit
+    // price. Default: transition to LockLimit state. Override in derived
+    // class for exchange-specific behavior (e.g. CME tier expansion).
+    void on_daily_limit_hit(Side /*side*/, Price /*limit_price*/,
+                            Timestamp /*ts*/) {}
+
     bool should_trigger_stop(Price last_trade, const Order& stop) {
         if (stop.side == Side::Buy) {
             return last_trade >= stop.level->price;
@@ -826,6 +921,7 @@ protected:
     ObjectPool<Order, MaxOrders> order_pool_;
     ObjectPool<PriceLevel, MaxPriceLevels> level_pool_;
     RateTracker<MaxAccounts> rate_tracker_;
+    TradeRegistry<MaxOrderIds> trade_registry_;
     Price last_trade_price_{0};
     OrderId next_order_id_{1};
     OrderListenerT& order_listener_;
@@ -836,6 +932,39 @@ private:
     Derived& derived() { return static_cast<Derived&>(*this); }
     const Derived& derived() const {
         return static_cast<const Derived&>(*this);
+    }
+
+    // check_daily_limit_hit -- after a fill, check if the trade price
+    // hit a daily limit. If so, fire LockLimitTriggered event, call
+    // CRTP hook, and transition to LockLimit. Returns true if limit hit.
+
+    bool check_daily_limit_hit(Timestamp ts) {
+        if (current_state_ == SessionState::LockLimit) return true;
+
+        bool hit_upper = (config_.daily_limit_high > 0 &&
+                          last_trade_price_ >= config_.daily_limit_high);
+        bool hit_lower = (config_.daily_limit_low > 0 &&
+                          last_trade_price_ <= config_.daily_limit_low);
+
+        if (!hit_upper && !hit_lower) return false;
+
+        Side limit_side = hit_upper ? Side::Buy : Side::Sell;
+        Price limit_price = hit_upper ? config_.daily_limit_high
+                                      : config_.daily_limit_low;
+
+        // Fire LockLimitTriggered event
+        md_listener_.on_lock_limit_triggered(LockLimitTriggered{
+            limit_side, limit_price, last_trade_price_, ts});
+
+        // Transition to LockLimit state
+        current_state_ = SessionState::LockLimit;
+        md_listener_.on_market_status(
+            MarketStatus{.state = SessionState::LockLimit, .ts = ts});
+
+        // CRTP hook for exchange-specific behavior
+        derived().on_daily_limit_hit(limit_side, limit_price, ts);
+
+        return true;
     }
 
     // cancel_active_order -- remove from book/stop-book and fire events
@@ -1005,11 +1134,13 @@ private:
                             fill.resting_remaining, ts});
                 }
 
-                // Fire Trade
+                // Fire Trade and record in registry
                 md_listener_.on_trade(Trade{
                     fill.price, fill.quantity,
                     order->id, resting->id,
                     order->side, ts});
+                trade_registry_.record(order->id, resting->id,
+                                       fill.price, fill.quantity, ts);
 
                 // Fire L3: OrderBookAction for resting order fill
                 md_listener_.on_order_book_action(OrderBookAction{
@@ -1065,6 +1196,12 @@ private:
                         lv->total_quantity, lv->order_count,
                         DepthUpdate::Update, ts});
                 }
+            }
+
+            // Daily limit check: if last trade hit a daily limit,
+            // enter lock-limit state and stop matching.
+            if (check_daily_limit_hit(ts)) {
+                break;
             }
         }
 

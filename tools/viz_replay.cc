@@ -178,6 +178,40 @@ void dispatch_action(EngineT& engine, const ParsedAction& action) {
         break;
     }
 
+    case ParsedAction::RestoreOrder: {
+        Timestamp ts = static_cast<Timestamp>(action.get_int("ts"));
+        SerializedOrder s{};
+        s.id                 = static_cast<OrderId>(action.get_int("ord_id"));
+        s.client_order_id    = static_cast<uint64_t>(action.get_int("cl_ord_id"));
+        s.price              = static_cast<Price>(action.get_int("price"));
+        s.quantity           = static_cast<Quantity>(action.get_int("qty"));
+        {
+            auto it = action.fields.find("filled_qty");
+            s.filled_quantity = (it != action.fields.end())
+                                    ? static_cast<Quantity>(std::stoll(it->second))
+                                    : 0;
+        }
+        s.remaining_quantity = s.quantity - s.filled_quantity;
+        s.side               = parse_side(action.get_str("side"));
+        s.type               = parse_order_type(action.get_str("type"));
+        {
+            auto it = action.fields.find("tif");
+            s.tif = (it != action.fields.end())
+                        ? parse_tif(it->second) : TimeInForce::GTC;
+        }
+        s.timestamp = ts;
+        s.total_qty = s.quantity;
+        engine.restore_order(s, ts);
+        break;
+    }
+
+    case ParsedAction::BustTrade: {
+        TradeId   trade_id = static_cast<TradeId>(action.get_int("trade_id"));
+        Timestamp ts       = static_cast<Timestamp>(action.get_int("ts"));
+        engine.bust_trade(trade_id, BustReason::ErroneousTrade, ts);
+        break;
+    }
+
     // iLink3 E2E actions are not supported by the viz replay tool.
     case ParsedAction::ILink3NewOrder:
     case ParsedAction::ILink3Cancel:

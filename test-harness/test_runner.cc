@@ -51,6 +51,9 @@ RejectReason parse_reject_reason(const std::string& s) {
     if (s == "UNKNOWN_ORDER")        return RejectReason::UnknownOrder;
     if (s == "PRICE_BAND_VIOLATION") return RejectReason::PriceBandViolation;
     if (s == "LEVEL_POOL_EXHAUSTED") return RejectReason::LevelPoolExhausted;
+    if (s == "RATE_THROTTLED")       return RejectReason::RateThrottled;
+    if (s == "LOCK_LIMIT_UP")       return RejectReason::LockLimitUp;
+    if (s == "LOCK_LIMIT_DOWN")     return RejectReason::LockLimitDown;
     if (s == "EXCHANGE_SPECIFIC")    return RejectReason::ExchangeSpecific;
     throw std::runtime_error("test_runner: unknown reject reason '" + s + "'");
 }
@@ -77,6 +80,7 @@ SessionState parse_session_state(const std::string& s) {
     if (s == "CLOSING_AUCTION")    return SessionState::ClosingAuction;
     if (s == "HALT")               return SessionState::Halt;
     if (s == "VOLATILITY_AUCTION") return SessionState::VolatilityAuction;
+    if (s == "LOCK_LIMIT")        return SessionState::LockLimit;
     throw std::runtime_error("test_runner: unknown session state '" + s + "'");
 }
 
@@ -252,6 +256,50 @@ void JournalTestRunner::execute_action(EngineT& engine,
         break;
     }
 
+    case ParsedAction::RestoreOrder: {
+        Timestamp ts = static_cast<Timestamp>(action.get_int("ts"));
+        SerializedOrder s{};
+        s.id                 = static_cast<OrderId>(action.get_int("ord_id"));
+        s.client_order_id    = static_cast<uint64_t>(action.get_int("cl_ord_id"));
+        s.price              = static_cast<Price>(action.get_int("price"));
+        s.quantity           = static_cast<Quantity>(action.get_int("qty"));
+        s.filled_quantity    = static_cast<Quantity>(action.get_int("filled_qty"));
+        s.remaining_quantity = static_cast<Quantity>(action.get_int("remaining_qty"));
+        s.side               = parse_side(action.get_str("side"));
+        s.type               = parse_order_type(action.get_str("type"));
+        {
+            auto it = action.fields.find("tif");
+            s.tif = (it != action.fields.end())
+                        ? parse_tif(it->second) : TimeInForce::GTC;
+        }
+        s.timestamp = ts;
+        {
+            auto it = action.fields.find("account_id");
+            s.account_id = (it != action.fields.end())
+                               ? static_cast<uint64_t>(std::stoll(it->second)) : 0;
+        }
+        {
+            auto it = action.fields.find("display_qty");
+            s.display_qty = (it != action.fields.end())
+                                ? static_cast<Quantity>(std::stoll(it->second)) : 0;
+        }
+        {
+            auto it = action.fields.find("total_qty");
+            s.total_qty = (it != action.fields.end())
+                              ? static_cast<Quantity>(std::stoll(it->second))
+                              : s.quantity;
+        }
+        engine.restore_order(s, ts);
+        break;
+    }
+
+    case ParsedAction::BustTrade: {
+        TradeId   trade_id = static_cast<TradeId>(action.get_int("trade_id"));
+        Timestamp ts       = static_cast<Timestamp>(action.get_int("ts"));
+        engine.bust_trade(trade_id, BustReason::ErroneousTrade, ts);
+        break;
+    }
+
     // iLink3 E2E actions are handled by the E2E test runner, not
     // the unit-test runner which drives the engine directly.
     case ParsedAction::ILink3NewOrder:
@@ -288,6 +336,8 @@ template void JournalTestRunner::execute_action<ProRataExchange>(
     ProRataExchange&, const ParsedAction&);
 template void JournalTestRunner::execute_action<SmpFifoExchange>(
     SmpFifoExchange&, const ParsedAction&);
+template void JournalTestRunner::execute_action<RateThrottledFifoExchange>(
+    RateThrottledFifoExchange&, const ParsedAction&);
 
 // ---------------------------------------------------------------------------
 // expectation_to_event
@@ -414,6 +464,25 @@ RecordedEvent JournalTestRunner::expectation_to_event(
             static_cast<Quantity>(e.get_int("matched_vol")),
             static_cast<Quantity>(e.get_int("buy_surplus")),
             static_cast<Quantity>(e.get_int("sell_surplus")),
+            static_cast<Timestamp>(e.get_int("ts"))
+        };
+    }
+    if (t == "TRADE_BUSTED") {
+        return TradeBusted{
+            static_cast<TradeId>(e.get_int("trade_id")),
+            static_cast<OrderId>(e.get_int("aggressor")),
+            static_cast<OrderId>(e.get_int("resting")),
+            static_cast<Price>(e.get_int("price")),
+            static_cast<Quantity>(e.get_int("qty")),
+            BustReason::ErroneousTrade,  // default for journal tests
+            static_cast<Timestamp>(e.get_int("ts"))
+        };
+    }
+    if (t == "LOCK_LIMIT_TRIGGERED") {
+        return LockLimitTriggered{
+            parse_side(e.get_str("side")),
+            static_cast<Price>(e.get_int("limit_price")),
+            static_cast<Price>(e.get_int("last_trade_price")),
             static_cast<Timestamp>(e.get_int("ts"))
         };
     }
@@ -551,6 +620,9 @@ template TestResult JournalTestRunner::run_impl<ProRataExchange>(
 template TestResult JournalTestRunner::run_impl<SmpFifoExchange>(
     SmpFifoExchange&, RecordingOrderListener&, RecordingMdListener&,
     const Journal&);
+template TestResult JournalTestRunner::run_impl<RateThrottledFifoExchange>(
+    RateThrottledFifoExchange&, RecordingOrderListener&,
+    RecordingMdListener&, const Journal&);
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -561,10 +633,12 @@ TestResult JournalTestRunner::run_fifo(const Journal& journal) {
     RecordingMdListener    md_listener;
 
     EngineConfig cfg{
-        journal.config.tick_size,
-        journal.config.lot_size,
-        journal.config.price_band_low,
-        journal.config.price_band_high
+        .tick_size = journal.config.tick_size,
+        .lot_size = journal.config.lot_size,
+        .price_band_low = journal.config.price_band_low,
+        .price_band_high = journal.config.price_band_high,
+        .daily_limit_high = journal.config.daily_limit_high,
+        .daily_limit_low = journal.config.daily_limit_low,
     };
 
     FifoExchange engine(cfg, order_listener, md_listener);
@@ -576,10 +650,12 @@ TestResult JournalTestRunner::run_pro_rata(const Journal& journal) {
     RecordingMdListener    md_listener;
 
     EngineConfig cfg{
-        journal.config.tick_size,
-        journal.config.lot_size,
-        journal.config.price_band_low,
-        journal.config.price_band_high
+        .tick_size = journal.config.tick_size,
+        .lot_size = journal.config.lot_size,
+        .price_band_low = journal.config.price_band_low,
+        .price_band_high = journal.config.price_band_high,
+        .daily_limit_high = journal.config.daily_limit_high,
+        .daily_limit_low = journal.config.daily_limit_low,
     };
 
     ProRataExchange engine(cfg, order_listener, md_listener);
@@ -591,13 +667,35 @@ TestResult JournalTestRunner::run_smp_fifo(const Journal& journal) {
     RecordingMdListener    md_listener;
 
     EngineConfig cfg{
-        journal.config.tick_size,
-        journal.config.lot_size,
-        journal.config.price_band_low,
-        journal.config.price_band_high
+        .tick_size = journal.config.tick_size,
+        .lot_size = journal.config.lot_size,
+        .price_band_low = journal.config.price_band_low,
+        .price_band_high = journal.config.price_band_high,
+        .daily_limit_high = journal.config.daily_limit_high,
+        .daily_limit_low = journal.config.daily_limit_low,
     };
 
     SmpFifoExchange engine(cfg, order_listener, md_listener);
+    return run_impl(engine, order_listener, md_listener, journal);
+}
+
+TestResult JournalTestRunner::run_rate_throttled(const Journal& journal) {
+    RecordingOrderListener order_listener;
+    RecordingMdListener    md_listener;
+
+    EngineConfig cfg{
+        .tick_size = journal.config.tick_size,
+        .lot_size = journal.config.lot_size,
+        .price_band_low = journal.config.price_band_low,
+        .price_band_high = journal.config.price_band_high,
+        .daily_limit_high = journal.config.daily_limit_high,
+        .daily_limit_low = journal.config.daily_limit_low,
+        .throttle = ThrottleConfig{
+            .max_messages_per_interval = journal.config.rate_limit,
+            .interval_ns = journal.config.rate_interval}
+    };
+
+    RateThrottledFifoExchange engine(cfg, order_listener, md_listener);
     return run_impl(engine, order_listener, md_listener, journal);
 }
 

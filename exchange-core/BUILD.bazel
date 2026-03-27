@@ -221,8 +221,29 @@ cc_library(
         ":match_algo",
         ":order_persistence",
         ":rate_tracker",
+        ":trade_registry",
     ],
     visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "trade_bust_test",
+    srcs = ["trade_bust_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "daily_limits_test",
+    srcs = ["daily_limits_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
 )
 
 cc_test(

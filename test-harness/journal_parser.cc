@@ -148,6 +148,10 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::MassCancel;
             } else if (type_str == "MASS_CANCEL_ALL") {
                 atype = ParsedAction::MassCancelAll;
+            } else if (type_str == "RESTORE_ORDER") {
+                atype = ParsedAction::RestoreOrder;
+            } else if (type_str == "BUST_TRADE") {
+                atype = ParsedAction::BustTrade;
             } else if (type_str == "ILINK3_NEW_ORDER") {
                 atype = ParsedAction::ILink3NewOrder;
             } else if (type_str == "ILINK3_CANCEL") {
@@ -248,6 +252,10 @@ void JournalParser::apply_config(
     apply_int("max_order_ids",   cfg.max_order_ids);
     apply_int("price_band_low",  cfg.price_band_low);
     apply_int("price_band_high", cfg.price_band_high);
+    apply_int("rate_limit",        cfg.rate_limit);
+    apply_int("rate_interval",     cfg.rate_interval);
+    apply_int("daily_limit_high",  cfg.daily_limit_high);
+    apply_int("daily_limit_low",   cfg.daily_limit_low);
 }
 
 std::vector<std::string> JournalParser::split(const std::string& line) {

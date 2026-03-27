@@ -19,6 +19,8 @@ TEST_P(JournalTest, RunJournal) {
         result = runner.run_pro_rata(journal);
     } else if (journal.config.match_algo == "FIFO_SMP") {
         result = runner.run_smp_fifo(journal);
+    } else if (journal.config.rate_limit > 0) {
+        result = runner.run_rate_throttled(journal);
     } else {
         result = runner.run_fifo(journal);
     }

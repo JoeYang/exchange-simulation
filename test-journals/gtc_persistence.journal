@@ -1,0 +1,45 @@
+# GTC cross-session persistence: restore a GTC order after session boundary.
+#
+# Scenario:
+#   1. Place a GTC limit buy in continuous trading (engine starts Continuous).
+#   2. Close the session (simulating end of trading day).
+#   3. Cancel all orders (simulating session-boundary cleanup).
+#   4. Reopen the session.
+#   5. Restore the GTC order from persistent storage.
+#   6. Verify the restored order matches against a new incoming sell.
+
+ACTION NEW_ORDER cl_ord_id=1 side=BUY type=LIMIT price=1000000 qty=50000 tif=GTC ts=2
+EXPECT ORDER_ACCEPTED ord_id=1 cl_ord_id=1 ts=2
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1000000 qty=50000 action=ADD ts=2
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=50000 count=1 action=ADD ts=2
+EXPECT TOP_OF_BOOK bid=1000000 bid_qty=50000 ask=0 ask_qty=0 ts=2
+
+# Simulate session boundary: close and cancel all resting orders.
+ACTION SET_SESSION_STATE state=CLOSED ts=100
+EXPECT MARKET_STATUS state=CLOSED ts=100
+
+ACTION MASS_CANCEL_ALL ts=101
+EXPECT ORDER_CANCELLED ord_id=1 ts=101 reason=MASS_CANCELLED
+EXPECT ORDER_BOOK_ACTION ord_id=1 side=BUY price=1000000 qty=50000 action=CANCEL ts=101
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=0 count=0 action=REMOVE ts=101
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=101
+
+# Reopen the session.
+ACTION SET_SESSION_STATE state=CONTINUOUS ts=200
+EXPECT MARKET_STATUS state=CONTINUOUS ts=200
+
+# Restore the GTC order from persistent storage.
+ACTION RESTORE_ORDER ord_id=100 cl_ord_id=1 side=BUY type=LIMIT price=1000000 qty=50000 filled_qty=0 remaining_qty=50000 tif=GTC ts=201
+EXPECT ORDER_ACCEPTED ord_id=100 cl_ord_id=1 ts=201
+EXPECT ORDER_BOOK_ACTION ord_id=100 side=BUY price=1000000 qty=50000 action=ADD ts=201
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=50000 count=1 action=ADD ts=201
+EXPECT TOP_OF_BOOK bid=1000000 bid_qty=50000 ask=0 ask_qty=0 ts=201
+
+# Verify the restored order matches against a new sell.
+ACTION NEW_ORDER cl_ord_id=2 side=SELL type=LIMIT price=1000000 qty=50000 ts=300
+EXPECT ORDER_ACCEPTED ord_id=101 cl_ord_id=2 ts=300
+EXPECT ORDER_FILLED aggressor=101 resting=100 price=1000000 qty=50000 ts=300
+EXPECT TRADE price=1000000 qty=50000 aggressor=101 resting=100 aggressor_side=SELL ts=300
+EXPECT ORDER_BOOK_ACTION ord_id=100 side=BUY price=1000000 qty=50000 action=FILL ts=300
+EXPECT DEPTH_UPDATE side=BUY price=1000000 qty=0 count=0 action=REMOVE ts=300
+EXPECT TOP_OF_BOOK bid=0 bid_qty=0 ask=0 ask_qty=0 ts=300

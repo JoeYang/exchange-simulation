@@ -70,6 +70,26 @@ public:
     using Base::Base;
 };
 
+// RateThrottledFifoExchange: FIFO matching with per-account rate throttling.
+class RateThrottledFifoExchange
+    : public MatchingEngine<RateThrottledFifoExchange,
+                            RecordingOrderListener,
+                            RecordingMdListener,
+                            FifoMatch,
+                            /*MaxOrders=*/1000,
+                            /*MaxPriceLevels=*/100,
+                            /*MaxOrderIds=*/10000> {
+public:
+    using Base = MatchingEngine<RateThrottledFifoExchange,
+                                RecordingOrderListener,
+                                RecordingMdListener,
+                                FifoMatch,
+                                1000, 100, 10000>;
+    using Base::Base;
+
+    bool is_rate_check_enabled() { return true; }
+};
+
 // SmpFifoExchange: FIFO matching with self-match prevention enabled.
 // is_self_match() returns true when both orders belong to the same account.
 // get_smp_action() returns CancelNewest (cancel the aggressor on self-match).
@@ -109,6 +129,9 @@ public:
     // Run a journal against a FIFO engine with self-match prevention enabled
     // (CancelNewest: the aggressor is cancelled on a self-match).
     TestResult run_smp_fifo(const Journal& journal);
+
+    // Run a journal against a FIFO engine with per-account rate throttling.
+    TestResult run_rate_throttled(const Journal& journal);
 
 private:
     // Shared replay + compare implementation.

@@ -48,6 +48,9 @@ const char* reject_reason_to_journal(RejectReason r) {
         case RejectReason::PriceBandViolation: return "PRICE_BAND_VIOLATION";
         case RejectReason::LevelPoolExhausted:   return "LEVEL_POOL_EXHAUSTED";
         case RejectReason::MaxOrderSizeExceeded: return "MAX_ORDER_SIZE_EXCEEDED";
+        case RejectReason::RateThrottled:        return "RATE_THROTTLED";
+        case RejectReason::LockLimitUp:          return "LOCK_LIMIT_UP";
+        case RejectReason::LockLimitDown:        return "LOCK_LIMIT_DOWN";
         case RejectReason::ExchangeSpecific:     return "EXCHANGE_SPECIFIC";
     }
     return "UNKNOWN";
@@ -63,6 +66,7 @@ const char* session_state_to_journal(SessionState s) {
         case SessionState::ClosingAuction:    return "CLOSING_AUCTION";
         case SessionState::Halt:              return "HALT";
         case SessionState::VolatilityAuction: return "VOLATILITY_AUCTION";
+        case SessionState::LockLimit:         return "LOCK_LIMIT";
     }
     return "UNKNOWN";
 }
@@ -120,6 +124,8 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::PublishIndicative: os << "PUBLISH_INDICATIVE"; break;
         case ParsedAction::MassCancel:        os << "MASS_CANCEL";        break;
         case ParsedAction::MassCancelAll:     os << "MASS_CANCEL_ALL";    break;
+        case ParsedAction::RestoreOrder:     os << "RESTORE_ORDER";     break;
+        case ParsedAction::BustTrade:        os << "BUST_TRADE";        break;
         case ParsedAction::ILink3NewOrder:    os << "ILINK3_NEW_ORDER";   break;
         case ParsedAction::ILink3Cancel:      os << "ILINK3_CANCEL";     break;
         case ParsedAction::ILink3Replace:     os << "ILINK3_REPLACE";    break;
@@ -197,6 +203,27 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
 
         case ParsedAction::MassCancelAll:
             emit("ts");
+            break;
+
+        case ParsedAction::RestoreOrder:
+            emit("ts");
+            emit("ord_id");
+            emit("cl_ord_id");
+            emit("account_id");
+            emit("side");
+            emit("price");
+            emit("qty");
+            emit("filled_qty");
+            emit("remaining_qty");
+            emit("type");
+            emit("tif");
+            emit("display_qty");
+            emit("total_qty");
+            break;
+
+        case ParsedAction::BustTrade:
+            emit("ts");
+            emit("trade_id");
             break;
 
         case ParsedAction::ILink3NewOrder:
@@ -309,6 +336,11 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "account_id"};
     static const std::vector<std::string> known_mass_cancel_all =
         {"ts"};
+    static const std::vector<std::string> known_restore_order =
+        {"ts", "ord_id", "cl_ord_id", "account_id", "side", "price", "qty",
+         "filled_qty", "remaining_qty", "type", "tif", "display_qty", "total_qty"};
+    static const std::vector<std::string> known_bust_trade =
+        {"ts", "trade_id"};
     static const std::vector<std::string> known_ilink3_new_order =
         {"ts", "instrument", "cl_ord_id", "account", "side", "price", "qty",
          "type", "tif", "display_qty", "stop_price"};
@@ -345,6 +377,8 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::PublishIndicative: known = &known_publish_indicative; break;
         case ParsedAction::MassCancel:        known = &known_mass_cancel;        break;
         case ParsedAction::MassCancelAll:     known = &known_mass_cancel_all;    break;
+        case ParsedAction::RestoreOrder:     known = &known_restore_order;      break;
+        case ParsedAction::BustTrade:        known = &known_bust_trade;         break;
         case ParsedAction::ILink3NewOrder:    known = &known_ilink3_new_order;   break;
         case ParsedAction::ILink3Cancel:      known = &known_ilink3_cancel;      break;
         case ParsedAction::ILink3Replace:     known = &known_ilink3_replace;     break;
