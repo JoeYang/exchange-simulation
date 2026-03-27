@@ -350,3 +350,16 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+# --- Simulation Exercise: Exchange Trader ---
+cc_binary(
+    name = "exchange-trader",
+    srcs = ["exchange_trader.cc"],
+    deps = [
+        ":sim_client",
+        ":trading_strategy",
+        "//cme:cme_products",
+        "//ice:ice_products",
+    ],
+    visibility = ["//visibility:public"],
+)
