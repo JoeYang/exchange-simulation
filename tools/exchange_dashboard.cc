@@ -77,6 +77,7 @@ const char* session_state_str(exchange::SessionState s) {
         case exchange::SessionState::ClosingAuction:    return "CLOSING";
         case exchange::SessionState::Halt:              return "HALT";
         case exchange::SessionState::VolatilityAuction: return "VOL_AUCTION";
+        case exchange::SessionState::LockLimit:          return "LOCK_LIMIT";
     }
     return "UNKNOWN";
 }
