@@ -17,7 +17,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -38,6 +40,7 @@ struct ObserverConfig {
     uint16_t    port{0};      // multicast port
     std::string instrument;   // symbol filter (e.g. "ES", "B")
     std::string journal_path; // output journal file (empty = no journal)
+    bool        transitions{false}; // print book transitions
 };
 
 static void print_usage(const char* prog) {
@@ -50,6 +53,7 @@ static void print_usage(const char* prog) {
         "  --port        Multicast port\n"
         "  --instrument  Instrument symbol to filter (e.g. ES, B)\n"
         "  --journal     Output journal file path (optional)\n"
+        "  --transitions Print real-time book transitions\n"
         "  -h, --help    Show this message\n",
         prog);
 }
@@ -66,6 +70,8 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
             cfg.instrument = argv[++i];
         } else if ((std::strcmp(argv[i], "--journal") == 0) && i + 1 < argc) {
             cfg.journal_path = argv[++i];
+        } else if (std::strcmp(argv[i], "--transitions") == 0) {
+            cfg.transitions = true;
         } else if (std::strcmp(argv[i], "-h") == 0 ||
                    std::strcmp(argv[i], "--help") == 0) {
             return false;
@@ -230,6 +236,94 @@ static void format_price4(char* buf, size_t len, int64_t fp) {
     double val = static_cast<double>(fp) / 10000.0;
     std::snprintf(buf, len, "%.2f", val);
 }
+
+// ---------------------------------------------------------------------------
+// Transition logger: real-time book change output
+// ---------------------------------------------------------------------------
+
+class TransitionLogger {
+    FILE* out_{nullptr};
+    bool  color_{false};
+
+    // ANSI color codes
+    static constexpr const char* kGreen  = "\033[32m";
+    static constexpr const char* kRed    = "\033[31m";
+    static constexpr const char* kYellow = "\033[33m";
+    static constexpr const char* kCyan   = "\033[36m";
+    static constexpr const char* kReset  = "\033[0m";
+
+    void write_timestamp() {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        struct tm tm_buf;
+        localtime_r(&ts.tv_sec, &tm_buf);
+        std::fprintf(out_, "[%02d:%02d:%02d.%09ld] ",
+                     tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                     ts.tv_nsec);
+    }
+
+    const char* bid_color() const { return color_ ? kGreen : ""; }
+    const char* ask_color() const { return color_ ? kRed : ""; }
+    const char* trade_color() const { return color_ ? kYellow : ""; }
+    const char* status_color() const { return color_ ? kCyan : ""; }
+    const char* reset() const { return color_ ? kReset : ""; }
+
+public:
+    // out: output stream. color: emit ANSI color codes.
+    TransitionLogger(FILE* out, bool color)
+        : out_(out), color_(color) {}
+
+    bool enabled() const { return out_ != nullptr; }
+
+    void log_book_add(bool is_bid, double price, int32_t qty,
+                      int bid_levels, int ask_levels) {
+        if (!out_) return;
+        const char* side = is_bid ? "BID" : "ASK";
+        int levels = is_bid ? bid_levels : ask_levels;
+        const char* c = is_bid ? bid_color() : ask_color();
+        write_timestamp();
+        std::fprintf(out_, "%s%-3s ADD  %10.4f x %-5d (levels: %d)%s\n",
+                     c, side, price, qty, levels, reset());
+    }
+
+    void log_book_update(bool is_bid, double price, int32_t qty,
+                         int bid_levels, int ask_levels) {
+        if (!out_) return;
+        const char* side = is_bid ? "BID" : "ASK";
+        int levels = is_bid ? bid_levels : ask_levels;
+        const char* c = is_bid ? bid_color() : ask_color();
+        write_timestamp();
+        std::fprintf(out_, "%s%-3s UPD  %10.4f x %-5d (levels: %d)%s\n",
+                     c, side, price, qty, levels, reset());
+    }
+
+    void log_book_delete(bool is_bid, double price,
+                         int bid_levels, int ask_levels) {
+        if (!out_) return;
+        const char* side = is_bid ? "BID" : "ASK";
+        int levels = is_bid ? bid_levels : ask_levels;
+        const char* c = is_bid ? bid_color() : ask_color();
+        write_timestamp();
+        std::fprintf(out_, "%s%-3s DEL  %10.4f        (levels: %d)%s\n",
+                     c, side, price, levels, reset());
+    }
+
+    void log_trade(double price, int32_t qty, uint8_t aggressor_side) {
+        if (!out_) return;
+        const char* agg = (aggressor_side == 1) ? "BUY" :
+                          (aggressor_side == 2) ? "SELL" : "???";
+        write_timestamp();
+        std::fprintf(out_, "%sTRADE    %10.4f x %-5d aggressor=%s%s\n",
+                     trade_color(), price, qty, agg, reset());
+    }
+
+    void log_status(const char* state) {
+        if (!out_) return;
+        write_timestamp();
+        std::fprintf(out_, "%sSTATUS   %s%s\n",
+                     status_color(), state, reset());
+    }
+};
 
 // ---------------------------------------------------------------------------
 // ANSI terminal display rendering
@@ -405,10 +499,11 @@ public:
 namespace cme_ns = exchange::cme::sbe::mdp3;
 
 struct CmeVisitor {
-    DisplayState&  ds;
-    JournalWriter& journal;
-    int32_t        filter_security_id;
-    std::string    instrument;
+    DisplayState&      ds;
+    JournalWriter&     journal;
+    TransitionLogger&  transitions;
+    int32_t            filter_security_id;
+    std::string        instrument;
 
     void operator()(const cme_ns::DecodedRefreshBook46& msg) {
         uint64_t ts = msg.root.transact_time;
@@ -435,15 +530,24 @@ struct CmeVisitor {
             update_book_side(levels, count, price, qty, orders,
                              is_delete, is_bid);
 
+            // CME PRICE9: mantissa with exponent=-9.
+            double display_price = static_cast<double>(price) / 1e9;
+
             // Journal
             if (is_delete) {
                 journal.write_book_delete(ts, instrument, side_str, price);
+                transitions.log_book_delete(is_bid, display_price,
+                                            ds.bid_levels, ds.ask_levels);
             } else if (action == cme_ns::MDUpdateAction::New) {
                 journal.write_book_add(ts, instrument, side_str, price,
                                        qty, orders);
+                transitions.log_book_add(is_bid, display_price, qty,
+                                         ds.bid_levels, ds.ask_levels);
             } else {
                 journal.write_book_update(ts, instrument, side_str, price,
                                           qty, orders);
+                transitions.log_book_update(is_bid, display_price, qty,
+                                            ds.bid_levels, ds.ask_levels);
             }
         }
     }
@@ -458,6 +562,9 @@ struct CmeVisitor {
                          e.aggressor_side, ts);
             journal.write_trade(ts, instrument, e.md_entry_px.mantissa,
                                 e.md_entry_size, e.aggressor_side);
+            double display_price = static_cast<double>(e.md_entry_px.mantissa) / 1e9;
+            transitions.log_trade(display_price, e.md_entry_size,
+                                  e.aggressor_side);
         }
     }
 
@@ -476,6 +583,7 @@ struct CmeVisitor {
             default: break;
         }
         journal.write_status(msg.root.transact_time, instrument, state);
+        transitions.log_status(state);
     }
 
     // Snapshot and instrument def -- update book from snapshot, log but no journal.
@@ -490,11 +598,12 @@ struct CmeVisitor {
 namespace ice_ns = exchange::ice::impact;
 
 struct IceVisitor {
-    DisplayState&  ds;
-    JournalWriter& journal;
-    int32_t        filter_instrument_id;
-    std::string    instrument;
-    uint64_t       bundle_ts{0}; // timestamp from most recent BundleStart
+    DisplayState&      ds;
+    JournalWriter&     journal;
+    TransitionLogger&  transitions;
+    int32_t            filter_instrument_id;
+    std::string        instrument;
+    uint64_t           bundle_ts{0}; // timestamp from most recent BundleStart
 
     void on_bundle_start(const ice_ns::BundleStart& msg) {
         bundle_ts = static_cast<uint64_t>(msg.timestamp);
@@ -517,6 +626,10 @@ struct IceVisitor {
             ? bundle_ts
             : static_cast<uint64_t>(msg.order_entry_date_time);
         journal.write_book_add(ts, instrument, side_str, price, qty, 0);
+        // ICE uses fixed-point with PRICE_SCALE=10000.
+        double display_price = static_cast<double>(price) / 10000.0;
+        transitions.log_book_add(is_bid, display_price, qty,
+                                 ds.bid_levels, ds.ask_levels);
     }
 
     void on_order_withdrawal(const ice_ns::OrderWithdrawal& msg) {
@@ -530,6 +643,9 @@ struct IceVisitor {
         update_book_side(levels, count, msg.price, 0, 0, true, is_bid);
 
         journal.write_book_delete(bundle_ts, instrument, side_str, msg.price);
+        double display_price = static_cast<double>(msg.price) / 10000.0;
+        transitions.log_book_delete(is_bid, display_price,
+                                    ds.bid_levels, ds.ask_levels);
     }
 
     void on_deal_trade(const ice_ns::DealTrade& msg) {
@@ -542,6 +658,8 @@ struct IceVisitor {
         uint64_t ts = static_cast<uint64_t>(msg.timestamp);
         record_trade(ds, msg.price, qty, agg, ts);
         journal.write_trade(ts, instrument, msg.price, qty, agg);
+        double display_price = static_cast<double>(msg.price) / 10000.0;
+        transitions.log_trade(display_price, qty, agg);
     }
 
     void on_market_status(const ice_ns::MarketStatus& msg) {
@@ -557,6 +675,7 @@ struct IceVisitor {
             case ice_ns::TradingStatus::Settlement:  state = "SETTLEMENT"; break;
         }
         journal.write_status(bundle_ts, instrument, state);
+        transitions.log_status(state);
     }
 
     void on_snapshot_order(const ice_ns::SnapshotOrder& /*msg*/) {}
@@ -612,6 +731,17 @@ int main(int argc, char* argv[]) {
     // Open journal.
     JournalWriter journal(cfg.journal_path);
 
+    // Set up transition logger.
+    // When --transitions is set AND --journal is not set (no ANSI display),
+    // print to stdout; otherwise print to stderr so it doesn't interfere
+    // with the ANSI terminal display.
+    FILE* trans_out = nullptr;
+    if (cfg.transitions) {
+        trans_out = cfg.journal_path.empty() ? stdout : stderr;
+    }
+    bool trans_color = (trans_out != nullptr) && isatty(fileno(trans_out));
+    TransitionLogger transitions(trans_out, trans_color);
+
     // Join multicast group.
     exchange::UdpMulticastReceiver receiver;
     receiver.join_group(cfg.group.c_str(), cfg.port);
@@ -635,8 +765,8 @@ int main(int argc, char* argv[]) {
     DisplayState ds{};
 
     // Prepare visitors.
-    CmeVisitor cme_visitor{ds, journal, instrument_id, cfg.instrument};
-    IceVisitor ice_visitor{ds, journal, instrument_id, cfg.instrument, 0};
+    CmeVisitor cme_visitor{ds, journal, transitions, instrument_id, cfg.instrument};
+    IceVisitor ice_visitor{ds, journal, transitions, instrument_id, cfg.instrument, 0};
 
     char buf[65536]; // max UDP datagram
 
