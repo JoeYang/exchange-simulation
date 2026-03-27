@@ -273,3 +273,80 @@ cc_test(
     srcs = ["tcp_client_test.cc"],
     deps = [":tcp_client", ":tcp_server", "@googletest//:gtest_main"],
 )
+
+# --- Simulation Exercise: Trading Strategies ---
+cc_library(
+    name = "trading_strategy",
+    hdrs = ["trading_strategy.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "trading_strategy_test",
+    srcs = ["trading_strategy_test.cc"],
+    deps = [":trading_strategy", "@googletest//:gtest_main"],
+)
+
+# --- Simulation Exercise: Journal Reconciler ---
+cc_library(
+    name = "journal_reconciler",
+    hdrs = ["journal_reconciler.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "journal_reconciler_test",
+    srcs = ["journal_reconciler_test.cc"],
+    deps = [":journal_reconciler", "@googletest//:gtest_main"],
+)
+
+# --- Simulation Exercise: SimClient ---
+cc_library(
+    name = "sim_client",
+    hdrs = ["sim_client.h"],
+    deps = [
+        ":tcp_client",
+        ":trading_strategy",
+        "//cme/codec:ilink3_encoder",
+        "//cme/codec:ilink3_decoder",
+        "//ice/fix:fix_encoder",
+        "//ice/fix:fix_parser",
+        "//exchange-core:types",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "sim_client_test",
+    srcs = ["sim_client_test.cc"],
+    deps = [
+        ":sim_client",
+        ":tcp_server",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# --- Simulation Exercise: Exchange Observer ---
+cc_binary(
+    name = "exchange-observer",
+    srcs = ["exchange_observer.cc"],
+    deps = [
+        ":udp_multicast",
+        "//cme/codec:mdp3_decoder",
+        "//ice/impact:impact_decoder",
+        "//cme:cme_products",
+        "//ice:ice_products",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "exchange_observer_test",
+    srcs = ["exchange_observer_test.cc"],
+    deps = [
+        "//cme/codec:mdp3_decoder",
+        "//ice/impact:impact_decoder",
+        "@googletest//:gtest_main",
+    ],
+)
