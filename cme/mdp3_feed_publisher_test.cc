@@ -1,5 +1,6 @@
 #include "cme/mdp3_feed_publisher.h"
 #include "cme/cme_simulator.h"
+#include "cme/codec/mdp3_decoder.h"
 #include "cme/codec/mdp3_messages.h"
 #include "cme/codec/sbe_header.h"
 #include "test-harness/recording_listener.h"
@@ -271,6 +272,79 @@ TEST_F(Mdp3FeedPublisherTest, CloseMarketProducesStatusEvents) {
         if (hdr.template_id == 30) ++status_count;
     }
     EXPECT_GE(status_count, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Regression: default-constructed publisher encodes security_id=0, which
+// causes observers to silently drop all events.  Verify that a properly
+// initialized publisher produces packets that survive security_id filtering
+// after a full encode->decode round trip.
+// ---------------------------------------------------------------------------
+
+TEST_F(Mdp3FeedPublisherTest, RoundTripDecodeMatchesSecurityIdFilter) {
+    sim_.start_trading_day(100);
+    sim_.open_market(200);
+
+    // Two crossing orders produce depth + trade + top-of-book events.
+    auto bid = make_limit(1, Side::Buy, 45000000, 10000, 300);
+    bid.account_id = 1;
+    auto ask = make_limit(2, Side::Sell, 45000000, 10000, 400);
+    ask.account_id = 2;
+    sim_.new_order(1, bid);
+    sim_.new_order(1, ask);
+
+    const int32_t expected_security_id = 1;
+
+    // Decode every packet and verify security_id passes the observer's filter.
+    int book_events = 0;
+    int trade_events = 0;
+    int status_events = 0;
+
+    struct CountingVisitor {
+        int32_t filter_id;
+        int* book_out;
+        int* trade_out;
+        int* status_out;
+
+        void operator()(const sbe::mdp3::DecodedRefreshBook46& msg) {
+            for (uint8_t i = 0; i < msg.num_md_entries; ++i) {
+                if (msg.md_entries[i].security_id == filter_id) ++(*book_out);
+            }
+        }
+        void operator()(const sbe::mdp3::DecodedTradeSummary48& msg) {
+            for (uint8_t i = 0; i < msg.num_md_entries; ++i) {
+                if (msg.md_entries[i].security_id == filter_id) ++(*trade_out);
+            }
+        }
+        void operator()(const sbe::mdp3::DecodedSecurityStatus30& msg) {
+            if (msg.root.security_id == filter_id) ++(*status_out);
+        }
+        void operator()(const sbe::mdp3::DecodedSnapshot53&) {}
+        void operator()(const sbe::mdp3::DecodedInstrumentDef54&) {}
+    };
+
+    CountingVisitor visitor{expected_security_id, &book_events, &trade_events,
+                            &status_events};
+
+    for (const auto& pkt : pub_.packets()) {
+        auto rc = sbe::mdp3::decode_mdp3_message(pkt.bytes(), pkt.len, visitor);
+        EXPECT_NE(rc, sbe::mdp3::DecodeResult::kBufferTooShort);
+        EXPECT_NE(rc, sbe::mdp3::DecodeResult::kBadSchemaId);
+    }
+
+    // Must see book updates, at least one trade, and status events.
+    EXPECT_GT(book_events, 0) << "No book events passed security_id filter";
+    EXPECT_GT(trade_events, 0) << "No trade events passed security_id filter";
+    EXPECT_GT(status_events, 0) << "No status events passed security_id filter";
+}
+
+// Verify that default-constructed publisher produces security_id=0,
+// which would fail the observer's filter — the exact bug scenario.
+TEST_F(Mdp3FeedPublisherTest, DefaultConstructedPublisherHasZeroSecurityId) {
+    Mdp3FeedPublisher default_pub;
+    EXPECT_EQ(default_pub.context().security_id, 0)
+        << "Default-constructed publisher should have security_id=0 "
+           "(the bug: this value would be silently dropped by observers)";
 }
 
 }  // namespace

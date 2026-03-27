@@ -236,7 +236,21 @@ int main(int argc, char* argv[]) {
     ilink_ctx.party_details_list_req_id = 1;
 
     ILink3ReportPublisher report_pub(ilink_ctx);
-    Mdp3FeedPublisher md_pub;
+
+    // Initialize the MDP3 feed publisher with the first product's security_id
+    // so encoded packets carry the correct instrument identifier.  Without this,
+    // security_id defaults to 0 and multicast consumers that filter by instrument
+    // (e.g. exchange-observer) silently discard every book/trade/status message.
+    char security_group[7]{};  // 6-char padded field
+    char asset[7]{};
+    std::snprintf(security_group, sizeof(security_group), "%-6s",
+                  products[0].product_group.c_str());
+    std::snprintf(asset, sizeof(asset), "%-6s",
+                  products[0].symbol.c_str());
+    Mdp3FeedPublisher md_pub(
+        static_cast<int32_t>(products[0].instrument_id),
+        security_group,
+        asset);
 
     if (!cfg.shm_path.empty()) {
         // -- SHM mode: composite listeners fan out to protocol publishers + SHM --

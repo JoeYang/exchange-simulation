@@ -133,6 +133,7 @@ cc_test(
     deps = [
         ":mdp3_feed_publisher",
         ":cme_simulator",
+        "//cme/codec:mdp3_decoder",
         "//cme/codec:mdp3_messages",
         "//cme/codec:sbe_header",
         "//test-harness:recording_listener",
