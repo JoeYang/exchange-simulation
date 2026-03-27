@@ -53,7 +53,8 @@ RejectReason parse_reject_reason(const std::string& s) {
     if (s == "LEVEL_POOL_EXHAUSTED") return RejectReason::LevelPoolExhausted;
     if (s == "RATE_THROTTLED")       return RejectReason::RateThrottled;
     if (s == "LOCK_LIMIT_UP")       return RejectReason::LockLimitUp;
-    if (s == "LOCK_LIMIT_DOWN")     return RejectReason::LockLimitDown;
+    if (s == "LOCK_LIMIT_DOWN")        return RejectReason::LockLimitDown;
+    if (s == "POSITION_LIMIT_EXCEEDED") return RejectReason::PositionLimitExceeded;
     if (s == "EXCHANGE_SPECIFIC")    return RejectReason::ExchangeSpecific;
     throw std::runtime_error("test_runner: unknown reject reason '" + s + "'");
 }
@@ -191,6 +192,14 @@ void JournalTestRunner::execute_action(EngineT& engine,
             req.display_qty = (it != action.fields.end())
                                   ? static_cast<Quantity>(std::stoll(it->second))
                                   : 0;
+        }
+
+        // is_mm is optional (default false).
+        {
+            auto it = action.fields.find("is_mm");
+            req.is_market_maker = (it != action.fields.end())
+                                      && (it->second == "true"
+                                          || it->second == "1");
         }
 
         engine.new_order(req);
@@ -338,6 +347,8 @@ template void JournalTestRunner::execute_action<SmpFifoExchange>(
     SmpFifoExchange&, const ParsedAction&);
 template void JournalTestRunner::execute_action<RateThrottledFifoExchange>(
     RateThrottledFifoExchange&, const ParsedAction&);
+template void JournalTestRunner::execute_action<FifoLmmExchange>(
+    FifoLmmExchange&, const ParsedAction&);
 
 // ---------------------------------------------------------------------------
 // expectation_to_event
@@ -623,6 +634,9 @@ template TestResult JournalTestRunner::run_impl<SmpFifoExchange>(
 template TestResult JournalTestRunner::run_impl<RateThrottledFifoExchange>(
     RateThrottledFifoExchange&, RecordingOrderListener&,
     RecordingMdListener&, const Journal&);
+template TestResult JournalTestRunner::run_impl<FifoLmmExchange>(
+    FifoLmmExchange&, RecordingOrderListener&,
+    RecordingMdListener&, const Journal&);
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -696,6 +710,21 @@ TestResult JournalTestRunner::run_rate_throttled(const Journal& journal) {
     };
 
     RateThrottledFifoExchange engine(cfg, order_listener, md_listener);
+    return run_impl(engine, order_listener, md_listener, journal);
+}
+
+TestResult JournalTestRunner::run_fifo_lmm(const Journal& journal) {
+    RecordingOrderListener order_listener;
+    RecordingMdListener    md_listener;
+
+    EngineConfig cfg{
+        .tick_size = journal.config.tick_size,
+        .lot_size = journal.config.lot_size,
+        .price_band_low = journal.config.price_band_low,
+        .price_band_high = journal.config.price_band_high,
+    };
+
+    FifoLmmExchange engine(cfg, order_listener, md_listener);
     return run_impl(engine, order_listener, md_listener, journal);
 }
 

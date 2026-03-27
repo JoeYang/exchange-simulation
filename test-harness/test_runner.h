@@ -90,6 +90,29 @@ public:
     bool is_rate_check_enabled() { return true; }
 };
 
+// FifoLmmExchange: FIFO matching with 40% Lead Market Maker priority.
+// Orders with is_market_maker=true in the request get the MM flag.
+class FifoLmmExchange
+    : public MatchingEngine<FifoLmmExchange,
+                            RecordingOrderListener,
+                            RecordingMdListener,
+                            FifoLmmMatch<40>,
+                            /*MaxOrders=*/1000,
+                            /*MaxPriceLevels=*/100,
+                            /*MaxOrderIds=*/10000> {
+public:
+    using Base = MatchingEngine<FifoLmmExchange,
+                                RecordingOrderListener,
+                                RecordingMdListener,
+                                FifoLmmMatch<40>,
+                                1000, 100, 10000>;
+    using Base::Base;
+
+    bool is_market_maker(const OrderRequest& req) {
+        return req.is_market_maker;
+    }
+};
+
 // SmpFifoExchange: FIFO matching with self-match prevention enabled.
 // is_self_match() returns true when both orders belong to the same account.
 // get_smp_action() returns CancelNewest (cancel the aggressor on self-match).
@@ -132,6 +155,9 @@ public:
 
     // Run a journal against a FIFO engine with per-account rate throttling.
     TestResult run_rate_throttled(const Journal& journal);
+
+    // Run a journal against a FIFO engine with 40% LMM priority.
+    TestResult run_fifo_lmm(const Journal& journal);
 
 private:
     // Shared replay + compare implementation.

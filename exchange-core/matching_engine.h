@@ -14,12 +14,30 @@
 #include "exchange-core/object_pool.h"
 #include "exchange-core/order_persistence.h"
 #include "exchange-core/orderbook.h"
+#include "exchange-core/position_tracker.h"
 #include "exchange-core/rate_tracker.h"
 #include "exchange-core/stop_book.h"
 #include "exchange-core/trade_registry.h"
 #include "exchange-core/types.h"
 
 namespace exchange {
+
+// --- Volatility Interruption (VI) configuration ---
+
+// Controls automatic transition to VolatilityAuction when a trade price
+// deviates beyond a threshold from a reference price.
+// Disabled by default (vi_threshold_ticks == 0).
+struct VolatilityConfig {
+    // Maximum allowed price deviation in ticks from reference price.
+    // A trade at exactly the threshold does NOT trigger (strictly greater-than).
+    // 0 = disabled (no volatility auction auto-trigger).
+    int64_t vi_threshold_ticks{0};
+
+    // Duration of the volatility auction in nanoseconds.
+    // Used by exchange-layer scheduling; the engine itself does not
+    // auto-end the auction (the exchange calls execute_auction()).
+    int64_t vi_auction_duration_ns{0};
+};
 
 // --- Engine configuration ---
 
@@ -32,6 +50,7 @@ struct EngineConfig {
     Price daily_limit_high{0};    // upper daily price limit (0 = no limit)
     Price daily_limit_low{0};     // lower daily price limit (0 = no limit)
     ThrottleConfig throttle{};    // per-account rate limit (disabled by default)
+    VolatilityConfig vi{};        // volatility interruption (disabled by default)
 };
 
 // --- Request structs ---
@@ -48,6 +67,7 @@ struct OrderRequest {
     Timestamp timestamp;
     Timestamp gtd_expiry;     // only for GTD
     Quantity display_qty{0};  // 0 = fully visible, > 0 = iceberg display size
+    bool is_market_maker{false};  // true = designated market maker order (LMM)
 };
 
 struct ModifyRequest {
@@ -171,6 +191,14 @@ public:
         if (!derived().is_order_allowed_in_phase(req, current_state_))
             { reject(RejectReason::InvalidTif); return; }
 
+        // Position limit check (zero overhead when disabled via CRTP hook)
+        if (derived().is_position_check_enabled()) {
+            Quantity limit = derived().get_position_limit(req.account_id);
+            if (position_tracker_.would_exceed_limit(
+                    req.account_id, req.side, req.quantity, limit))
+                { reject(RejectReason::PositionLimitExceeded); return; }
+        }
+
         if (next_order_id_ >= MaxOrderIds)
             { reject(RejectReason::PoolExhausted); return; }
 
@@ -194,6 +222,7 @@ public:
         order->gtd_expiry         = req.gtd_expiry;
         order->display_qty        = req.display_qty;
         order->total_qty          = req.quantity;
+        order->is_market_maker    = derived().is_market_maker(req);
         order->prev               = nullptr;
         order->next               = nullptr;
         order->level              = nullptr;
@@ -560,6 +589,15 @@ public:
             }
         }
 
+        // Reverse positions using stored TradeRecord data (works even
+        // if orders have been deallocated after full fill).
+        Side resting_side = (record->aggressor_side == Side::Buy)
+                                ? Side::Sell : Side::Buy;
+        position_tracker_.reverse_fill(
+            record->aggressor_account_id, record->aggressor_side, bust_qty);
+        position_tracker_.reverse_fill(
+            record->resting_account_id, resting_side, bust_qty);
+
         // Fire TradeBusted event
         order_listener_.on_trade_busted(TradeBusted{
             .trade_id     = trade_id,
@@ -591,6 +629,11 @@ public:
 
         current_state_ = new_state;
         md_listener_.on_market_status(MarketStatus{.state = new_state, .ts = ts});
+
+        // When entering Continuous, snapshot last trade as VI reference
+        if (new_state == SessionState::Continuous && last_trade_price_ > 0) {
+            vi_reference_price_ = last_trade_price_;
+        }
     }
 
     // unlock_limit -- resume matching after a lock-limit event.
@@ -734,6 +777,12 @@ public:
                 ask->remaining_quantity -= fill_qty;
                 remaining_to_fill       -= fill_qty;
 
+                // Update per-account positions
+                position_tracker_.update_fill(
+                    bid->account_id, Side::Buy, fill_qty);
+                position_tracker_.update_fill(
+                    ask->account_id, Side::Sell, fill_qty);
+
                 // Update level totals
                 bid->level->total_quantity -= fill_qty;
                 ask->level->total_quantity -= fill_qty;
@@ -782,7 +831,9 @@ public:
                     bid->id, ask->id,
                     Side::Buy, ts});
                 trade_registry_.record(bid->id, ask->id,
-                                       auction_price, fill_qty, ts);
+                                       auction_price, fill_qty, ts,
+                                       Side::Buy,
+                                       bid->account_id, ask->account_id);
 
                 // Fire L3 for both sides
                 md_listener_.on_order_book_action(OrderBookAction{
@@ -824,6 +875,9 @@ public:
 
         // Fire L2 for any modified levels and TopOfBook after all fills
         fire_top_of_book(ts);
+
+        // Update VI reference price to the auction clearing price
+        vi_reference_price_ = auction_price;
     }
 
     // publish_indicative_price -- calculate and broadcast the indicative
@@ -884,14 +938,36 @@ public:
         return true;
     }
 
+    // Position limit hooks. Default: disabled (zero overhead on hot path).
+    // Override is_position_check_enabled() to return true to enable.
+    // Override get_position_limit() to return per-account limits.
+    bool is_position_check_enabled() { return false; }
+    Quantity get_position_limit(uint64_t /*account_id*/) { return 0; }
+
     // Rate throttle hook. Default: disabled (zero overhead on hot path).
     // Override to return true in exchange-derived class to enable per-account
     // message rate limiting via ThrottleConfig in EngineConfig.
     bool is_rate_check_enabled() { return false; }
+
+    // Market maker (LMM) hook. Default: no orders are market maker.
+    // Override in exchange-derived class to identify MM orders from the
+    // request (e.g. based on account_id, a request flag, or firm membership).
+    bool is_market_maker(const OrderRequest&) { return false; }
+
     bool is_self_match(const Order&, const Order&) { return false; }
     SmpAction get_smp_action() { return SmpAction::CancelNewest; }
     ModifyPolicy get_modify_policy() { return ModifyPolicy::CancelReplace; }
     Quantity get_min_display_qty(const OrderRequest&) { return 0; }
+
+    // Volatility interruption hook. Called after each fill in match_order()
+    // with the trade price and a reference price. Return true to trigger
+    // transition to VolatilityAuction state. Default: never trigger.
+    // Override in exchange-derived class to implement exchange-specific
+    // VI logic (e.g. percentage-based or tick-based threshold).
+    bool should_trigger_volatility_auction(Price /*trade_price*/,
+                                           Price /*reference_price*/) {
+        return false;
+    }
 
     // Dynamic price band hook.  Default: return static bands from config.
     // Override in derived class to compute bands relative to a reference price
@@ -921,8 +997,10 @@ protected:
     ObjectPool<Order, MaxOrders> order_pool_;
     ObjectPool<PriceLevel, MaxPriceLevels> level_pool_;
     RateTracker<MaxAccounts> rate_tracker_;
+    PositionTracker<MaxAccounts> position_tracker_;
     TradeRegistry<MaxOrderIds> trade_registry_;
     Price last_trade_price_{0};
+    Price vi_reference_price_{0};  // reference for volatility interruption checks
     OrderId next_order_id_{1};
     OrderListenerT& order_listener_;
     MdListenerT& md_listener_;
@@ -963,6 +1041,32 @@ private:
 
         // CRTP hook for exchange-specific behavior
         derived().on_daily_limit_hit(limit_side, limit_price, ts);
+
+        return true;
+    }
+
+    // check_volatility_interruption -- after a fill, check if the trade
+    // price breaches the VI threshold relative to the reference price.
+    // If triggered: transition to VolatilityAuction, fire MarketStatus.
+    // Returns true if VI was triggered (caller should stop matching).
+
+    bool check_volatility_interruption(Timestamp ts) {
+        // Only trigger in Continuous state
+        if (current_state_ != SessionState::Continuous) return false;
+
+        // Disabled if no reference price or no threshold configured
+        if (vi_reference_price_ == 0) return false;
+
+        // Delegate to CRTP hook for exchange-specific threshold logic
+        if (!derived().should_trigger_volatility_auction(
+                last_trade_price_, vi_reference_price_)) {
+            return false;
+        }
+
+        // Transition to VolatilityAuction
+        current_state_ = SessionState::VolatilityAuction;
+        md_listener_.on_market_status(
+            MarketStatus{.state = SessionState::VolatilityAuction, .ts = ts});
 
         return true;
     }
@@ -1112,6 +1216,12 @@ private:
                 order->filled_quantity += fill.quantity;
                 last_trade_price_ = fill.price;
 
+                // Update per-account positions
+                position_tracker_.update_fill(
+                    order->account_id, order->side, fill.quantity);
+                position_tracker_.update_fill(
+                    resting->account_id, resting->side, fill.quantity);
+
                 // Update level total_quantity to reflect the fill
                 // (MatchAlgoT adjusts order state but not level totals)
                 resting->level->total_quantity -= fill.quantity;
@@ -1140,7 +1250,10 @@ private:
                     order->id, resting->id,
                     order->side, ts});
                 trade_registry_.record(order->id, resting->id,
-                                       fill.price, fill.quantity, ts);
+                                       fill.price, fill.quantity, ts,
+                                       order->side,
+                                       order->account_id,
+                                       resting->account_id);
 
                 // Fire L3: OrderBookAction for resting order fill
                 md_listener_.on_order_book_action(OrderBookAction{
@@ -1201,6 +1314,12 @@ private:
             // Daily limit check: if last trade hit a daily limit,
             // enter lock-limit state and stop matching.
             if (check_daily_limit_hit(ts)) {
+                break;
+            }
+
+            // Volatility interruption check: if trade price breaches
+            // VI threshold, transition to VolatilityAuction and stop.
+            if (check_volatility_interruption(ts)) {
                 break;
             }
         }
