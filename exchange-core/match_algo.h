@@ -243,4 +243,228 @@ struct ThresholdProRataMatch {
     }
 };
 
+// AllocationMatch -- pro-rata with remainder to largest resting order.
+//
+// Like ProRataMatch but remainder lots (from integer floor rounding) are
+// distributed one at a time to the order with the largest remaining_quantity
+// (original, pre-fill). Ties on size break to FIFO (oldest order wins).
+//
+// This is the CME "allocation" algorithm used for certain products where
+// size priority is preferred over time priority for remainder distribution.
+struct AllocationMatch {
+    static void match(PriceLevel& level, Quantity& remaining,
+                      FillResult* results, size_t& count) {
+        if (remaining <= 0 || level.head == nullptr) return;
+
+        Quantity to_fill = std::min(remaining, level.total_quantity);
+        size_t start_count = count;
+
+        // Phase 1: Proportional base allocation (same as ProRata).
+        Quantity allocated = 0;
+        Order* order = level.head;
+        while (order != nullptr) {
+            Quantity alloc = order->remaining_quantity * to_fill
+                             / level.total_quantity;
+            if (alloc > 0) {
+                results[count].resting_order = order;
+                results[count].price         = level.price;
+                results[count].quantity      = alloc;
+                allocated += alloc;
+                ++count;
+            }
+            order = order->next;
+        }
+
+        // Phase 2: Distribute remainder to largest orders.
+        // Build a temporary index sorted by remaining_quantity desc (FIFO tiebreak).
+        // We walk the level list and for each remainder lot, find the order with
+        // the largest original remaining_quantity that still has capacity.
+        Quantity remainder = to_fill - allocated;
+        while (remainder > 0) {
+            // Find order with largest remaining_quantity (pre-fill, i.e. original).
+            // FIFO tiebreak: first in list wins among equals.
+            Order* best = nullptr;
+            Quantity best_qty = -1;
+            order = level.head;
+            while (order != nullptr) {
+                // Compute how much this order has been allocated so far.
+                Quantity already = 0;
+                for (size_t i = start_count; i < count; ++i) {
+                    if (results[i].resting_order == order) {
+                        already = results[i].quantity;
+                        break;
+                    }
+                }
+                Quantity capacity = order->remaining_quantity - already;
+                if (capacity > 0 && order->remaining_quantity > best_qty) {
+                    best = order;
+                    best_qty = order->remaining_quantity;
+                }
+                order = order->next;
+            }
+            if (best == nullptr) break;
+
+            // Give one lot to the best order.
+            bool found = false;
+            for (size_t i = start_count; i < count; ++i) {
+                if (results[i].resting_order == best) {
+                    results[i].quantity += 1;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                results[count].resting_order = best;
+                results[count].price         = level.price;
+                results[count].quantity      = 1;
+                ++count;
+            }
+            --remainder;
+        }
+
+        // Phase 3: Apply fills to order state.
+        for (size_t i = start_count; i < count; ++i) {
+            Order* o = results[i].resting_order;
+            o->filled_quantity    += results[i].quantity;
+            o->remaining_quantity -= results[i].quantity;
+            results[i].resting_remaining = o->remaining_quantity;
+        }
+
+        remaining -= to_fill;
+    }
+};
+
+// SplitFifoProRataMatch -- configurable FIFO/ProRata split.
+//
+// Divides the matchable quantity into a FIFO portion and a ProRata portion
+// based on FifoPct (compile-time percentage, 0-100).
+//
+//   fifo_qty    = floor(to_fill * FifoPct / 100)
+//   prorata_qty = to_fill - fifo_qty
+//
+// The FIFO portion is filled first (head-to-tail, time priority). Then the
+// ProRata portion is filled proportionally across orders that still have
+// remaining quantity. Remainder from ProRata rounding goes via FIFO.
+//
+// Special cases:
+//   FifoPct=0   -> pure ProRata
+//   FifoPct=100 -> pure FIFO
+//
+// Template parameter:
+//   FifoPct -- percentage of aggressor quantity filled by FIFO (0-100).
+
+template <int FifoPct>
+struct SplitFifoProRataMatch {
+    static_assert(FifoPct >= 0 && FifoPct <= 100,
+                  "FifoPct must be between 0 and 100");
+
+    static void match(PriceLevel& level, Quantity& remaining,
+                      FillResult* results, size_t& count) {
+        if (remaining <= 0 || level.head == nullptr) return;
+
+        Quantity to_fill = std::min(remaining, level.total_quantity);
+
+        Quantity fifo_qty    = to_fill * FifoPct / 100;
+        Quantity prorata_qty = to_fill - fifo_qty;
+
+        // ---------------------------------------------------------------
+        // Phase 1: FIFO portion
+        // ---------------------------------------------------------------
+        Quantity fifo_left = fifo_qty;
+        Order* order = level.head;
+        while (order != nullptr && fifo_left > 0) {
+            Quantity fill = std::min(fifo_left, order->remaining_quantity);
+            if (fill > 0) {
+                results[count].resting_order = order;
+                results[count].price         = level.price;
+                results[count].quantity      = fill;
+
+                order->filled_quantity    += fill;
+                order->remaining_quantity -= fill;
+                results[count].resting_remaining = order->remaining_quantity;
+
+                fifo_left -= fill;
+                ++count;
+            }
+            order = order->next;
+        }
+
+        // Update level total for the ProRata phase.
+        Quantity level_remaining = 0;
+        order = level.head;
+        while (order != nullptr) {
+            level_remaining += order->remaining_quantity;
+            order = order->next;
+        }
+
+        // ---------------------------------------------------------------
+        // Phase 2: ProRata portion on remaining quantities
+        // ---------------------------------------------------------------
+        if (prorata_qty > 0 && level_remaining > 0) {
+            Quantity pr_to_fill = std::min(prorata_qty, level_remaining);
+            Quantity pr_allocated = 0;
+            size_t pr_start = count;
+
+            // Base proportional allocation.
+            order = level.head;
+            while (order != nullptr) {
+                if (order->remaining_quantity > 0) {
+                    Quantity alloc = order->remaining_quantity * pr_to_fill
+                                     / level_remaining;
+                    if (alloc > 0) {
+                        results[count].resting_order = order;
+                        results[count].price         = level.price;
+                        results[count].quantity      = alloc;
+                        pr_allocated += alloc;
+                        ++count;
+                    }
+                }
+                order = order->next;
+            }
+
+            // ProRata remainder via FIFO.
+            Quantity pr_remainder = pr_to_fill - pr_allocated;
+            order = level.head;
+            while (pr_remainder > 0 && order != nullptr) {
+                if (order->remaining_quantity > 0) {
+                    // Find existing result for this order in ProRata phase.
+                    Quantity already = 0;
+                    size_t found_idx = count;
+                    for (size_t i = pr_start; i < count; ++i) {
+                        if (results[i].resting_order == order) {
+                            already = results[i].quantity;
+                            found_idx = i;
+                            break;
+                        }
+                    }
+                    Quantity cap = order->remaining_quantity - already;
+                    Quantity add = std::min(pr_remainder, cap);
+                    if (add > 0) {
+                        if (found_idx < count) {
+                            results[found_idx].quantity += add;
+                        } else {
+                            results[count].resting_order = order;
+                            results[count].price         = level.price;
+                            results[count].quantity      = add;
+                            ++count;
+                        }
+                        pr_remainder -= add;
+                    }
+                }
+                order = order->next;
+            }
+
+            // Apply ProRata fills to order state.
+            for (size_t i = pr_start; i < count; ++i) {
+                Order* o = results[i].resting_order;
+                o->filled_quantity    += results[i].quantity;
+                o->remaining_quantity -= results[i].quantity;
+                results[i].resting_remaining = o->remaining_quantity;
+            }
+        }
+
+        remaining -= to_fill;
+    }
+};
+
 }  // namespace exchange

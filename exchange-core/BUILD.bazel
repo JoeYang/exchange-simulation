@@ -171,6 +171,24 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "allocation_match_test",
+    srcs = ["allocation_match_test.cc"],
+    deps = [
+        ":match_algo",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "split_match_test",
+    srcs = ["split_match_test.cc"],
+    deps = [
+        ":match_algo",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "ohlcv",
     hdrs = ["ohlcv.h"],
