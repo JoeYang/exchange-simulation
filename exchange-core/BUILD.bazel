@@ -219,6 +219,8 @@ cc_library(
         ":orderbook",
         ":stop_book",
         ":match_algo",
+        ":order_persistence",
+        ":rate_tracker",
     ],
     visibility = ["//visibility:public"],
 )
@@ -253,6 +255,16 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "rate_throttle_integration_test",
+    srcs = ["rate_throttle_integration_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "order_persistence",
     hdrs = ["order_persistence.h"],
@@ -265,6 +277,17 @@ cc_test(
     srcs = ["order_persistence_test.cc"],
     deps = [
         ":order_persistence",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "order_restore_test",
+    srcs = ["order_restore_test.cc"],
+    deps = [
+        ":matching_engine",
+        ":order_persistence",
+        "//test-harness:recording_listener",
         "@googletest//:gtest_main",
     ],
 )

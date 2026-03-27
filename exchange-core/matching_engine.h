@@ -12,8 +12,11 @@
 #include "exchange-core/listeners.h"
 #include "exchange-core/match_algo.h"
 #include "exchange-core/object_pool.h"
+#include "exchange-core/order_persistence.h"
 #include "exchange-core/orderbook.h"
+#include "exchange-core/rate_tracker.h"
 #include "exchange-core/stop_book.h"
+#include "exchange-core/trade_registry.h"
 #include "exchange-core/types.h"
 
 namespace exchange {
@@ -26,6 +29,9 @@ struct EngineConfig {
     Price price_band_low;         // reject orders below this (0 = no band)
     Price price_band_high;        // reject orders above this (0 = no band)
     Quantity max_order_size{0};   // maximum single-order quantity (0 = no limit)
+    Price daily_limit_high{0};    // upper daily price limit (0 = no limit)
+    Price daily_limit_low{0};     // lower daily price limit (0 = no limit)
+    ThrottleConfig throttle{};    // per-account rate limit (disabled by default)
 };
 
 // --- Request structs ---
@@ -71,7 +77,8 @@ template <
     typename MatchAlgoT = FifoMatch,
     size_t MaxOrders = 100000,
     size_t MaxPriceLevels = 10000,
-    size_t MaxOrderIds = 1000000
+    size_t MaxOrderIds = 1000000,
+    size_t MaxAccounts = 4096
 >
 class MatchingEngine {
 public:
@@ -79,6 +86,7 @@ public:
                    OrderListenerT& order_listener,
                    MdListenerT& md_listener)
         : config_(config)
+        , rate_tracker_(config.throttle)
         , order_listener_(order_listener)
         , md_listener_(md_listener) {
         order_index_.fill(nullptr);
@@ -97,6 +105,11 @@ public:
             order_listener_.on_order_rejected(
                 OrderRejected{req.client_order_id, req.timestamp, r});
         };
+
+        // Rate throttle check (zero overhead when disabled via CRTP hook)
+        if (derived().is_rate_check_enabled() &&
+            !rate_tracker_.check_and_increment(req.account_id, req.timestamp))
+            { reject(RejectReason::RateThrottled); return; }
 
         if (!derived().on_validate_order(req))
             { reject(RejectReason::ExchangeSpecific); return; }
@@ -242,6 +255,16 @@ public:
                 OrderCancelRejected{id, 0, ts, RejectReason::UnknownOrder});
             return;
         }
+
+        // Rate throttle check (uses account_id from existing order)
+        if (derived().is_rate_check_enabled() &&
+            !rate_tracker_.check_and_increment(
+                order_index_[id]->account_id, ts)) {
+            order_listener_.on_order_cancel_rejected(
+                OrderCancelRejected{id, 0, ts, RejectReason::RateThrottled});
+            return;
+        }
+
         cancel_active_order(order_index_[id], ts,
                             CancelReason::UserRequested);
     }
@@ -262,6 +285,12 @@ public:
         if (req.order_id == 0 || req.order_id >= MaxOrderIds ||
             order_index_[req.order_id] == nullptr)
             { mod_reject(RejectReason::UnknownOrder); return; }
+
+        // Rate throttle check (uses account_id from existing order)
+        if (derived().is_rate_check_enabled() &&
+            !rate_tracker_.check_and_increment(
+                order_index_[req.order_id]->account_id, req.timestamp))
+            { mod_reject(RejectReason::RateThrottled); return; }
 
         if (req.new_quantity <= 0)
             { mod_reject(RejectReason::InvalidQuantity); return; }
@@ -397,6 +426,84 @@ public:
             }
         }
         return count;
+    }
+
+    // restore_order -- re-insert a previously serialized order into the book.
+    //
+    // Used for GTC cross-session persistence: after a session boundary,
+    // the exchange restores resting GTC orders from persistent storage.
+    //
+    // Validates: price bands, tick/lot size, expired GTD, duplicate ID,
+    // pool capacity.  On success, allocates from pool, inserts into book
+    // at the original price, and fires OrderAccepted.  On failure, fires
+    // OrderRejected.
+    //
+    // Restored orders are placed directly on the book -- they do NOT
+    // participate in matching (they are resting orders, not aggressors).
+
+    void restore_order(const SerializedOrder& s, Timestamp ts) {
+        auto reject = [&](RejectReason r) {
+            order_listener_.on_order_rejected(
+                OrderRejected{s.client_order_id, ts, r});
+        };
+
+        // Validate order ID is within range and not already taken.
+        if (s.id == 0 || s.id >= MaxOrderIds)
+            { reject(RejectReason::ExchangeSpecific); return; }
+        if (order_index_[s.id] != nullptr)
+            { reject(RejectReason::ExchangeSpecific); return; }
+
+        // Validate quantity.
+        if (s.remaining_quantity <= 0)
+            { reject(RejectReason::InvalidQuantity); return; }
+        if (config_.lot_size > 0 && (s.quantity % config_.lot_size) != 0)
+            { reject(RejectReason::InvalidQuantity); return; }
+
+        // Validate price (limit orders only).
+        if (s.type == OrderType::Limit || s.type == OrderType::StopLimit) {
+            if (s.price <= 0)
+                { reject(RejectReason::InvalidPrice); return; }
+            if (config_.tick_size > 0 && (s.price % config_.tick_size) != 0)
+                { reject(RejectReason::InvalidPrice); return; }
+            auto [band_low, band_high] =
+                derived().calculate_dynamic_bands(last_trade_price_);
+            if (band_low > 0 && s.price < band_low)
+                { reject(RejectReason::PriceBandViolation); return; }
+            if (band_high > 0 && s.price > band_high)
+                { reject(RejectReason::PriceBandViolation); return; }
+        }
+
+        // Validate GTD expiry.
+        if (s.tif == TimeInForce::GTD && s.gtd_expiry <= ts)
+            { reject(RejectReason::ExchangeSpecific); return; }
+
+        // CRTP hook for exchange-specific restore validation.
+        if (!derived().on_validate_restore(s))
+            { reject(RejectReason::ExchangeSpecific); return; }
+
+        // Allocate from pool.
+        Order* order = order_pool_.allocate();
+        if (order == nullptr)
+            { reject(RejectReason::PoolExhausted); return; }
+
+        // Populate order from serialized data.
+        deserialize_order(s, order);
+
+        // Register in index.
+        order_index_[s.id] = order;
+
+        // Advance next_order_id_ past the restored ID to avoid collision.
+        if (s.id >= next_order_id_) {
+            next_order_id_ = s.id + 1;
+        }
+
+        // Fire OrderAccepted.
+        order_listener_.on_order_accepted(OrderAccepted{
+            order->id, order->client_order_id, ts});
+
+        // Insert into book (resting, no matching).
+        insert_into_book(order, ts);
+        fire_top_of_book(ts);
     }
 
     // Session state management
@@ -685,7 +792,13 @@ public:
     }
 
     bool on_validate_order(const OrderRequest&) { return true; }
+    bool on_validate_restore(const SerializedOrder&) { return true; }
     bool is_tif_valid(TimeInForce) { return true; }
+
+    // Rate throttle hook. Default: disabled (zero overhead on hot path).
+    // Override to return true in exchange-derived class to enable per-account
+    // message rate limiting via ThrottleConfig in EngineConfig.
+    bool is_rate_check_enabled() { return false; }
     bool is_self_match(const Order&, const Order&) { return false; }
     SmpAction get_smp_action() { return SmpAction::CancelNewest; }
     ModifyPolicy get_modify_policy() { return ModifyPolicy::CancelReplace; }
@@ -712,6 +825,7 @@ protected:
     StopBook stop_book_;
     ObjectPool<Order, MaxOrders> order_pool_;
     ObjectPool<PriceLevel, MaxPriceLevels> level_pool_;
+    RateTracker<MaxAccounts> rate_tracker_;
     Price last_trade_price_{0};
     OrderId next_order_id_{1};
     OrderListenerT& order_listener_;
