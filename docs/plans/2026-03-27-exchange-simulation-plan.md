@@ -11,9 +11,9 @@ Build three binaries that together form a multi-client exchange simulation exerc
 
 1. **exchange-trader** -- autonomous trading client (TCP order entry, strategy engine, journal writer)
 2. **exchange-observer** -- market data subscriber (UDP multicast, ANSI terminal display)
-3. **journal-reconciler** -- post-trade reconciliation of client and exchange journals
+3. **journal-reconciler** -- post-trade reconciliation of trader journals vs observer journal
 
-The simulation connects N trader clients to the running exchange (cme-sim or ice-sim) via TCP, while the observer displays the live market data feed. After the run, the reconciler merges all journals and verifies consistency.
+The simulation connects N trader clients to the running exchange (cme-sim or ice-sim) via TCP, while the observer subscribes to the UDP multicast market data feed and records what it sees. Both perspectives capture the same events independently. After the run, the reconciler merges all trader journals and cross-references them against the observer's journal to verify consistency.
 
 ```
                           +-----------+
@@ -23,23 +23,22 @@ The simulation connects N trader clients to the running exchange (cme-sim or ice
                           +-----+-----+
                  TCP order entry |  UDP multicast market data
                   (iLink3/FIX)  |  (MDP3/iMpact)
-               +----------------+----------------+
-               |                |                |
-        +------+------+  +-----+------+   +-----+--------+
-        | trader-1    |  | trader-2   |   | observer     |
-        | (random-walk|  | (market-   |   | (book viewer)|
-        |  strategy)  |  |  maker)    |   +--------------+
-        +------+------+  +-----+------+
-               |                |
-               v                v
-        client_1.journal  client_2.journal
-               |                |
-               +-------+-------+
-                       v
-              +--------+--------+
-              | journal-reconciler|
-              | (merge + verify) |
-              +-----------------+
+          +-----+-----+---------+--------+------------------+
+          |     |      |        |        |                   |
+       +--+--+ +--+--+ +--+--+ +--+--+ +--+--+     +-------+------+
+       | T-1 | | T-2 | | T-3 | | T-4 | | T-5 |     | observer     |
+       +--+--+ +--+--+ +--+--+ +--+--+ +--+--+     | (MD journal) |
+          |       |       |       |       |          +-------+------+
+          v       v       v       v       v                  |
+        c1.j    c2.j    c3.j    c4.j    c5.j           observer.j
+          |       |       |       |       |                  |
+          +---+---+---+---+---+---+                          |
+              |                                              |
+              v   (consolidated traders)                     v
+        +-----+----------------------------------------------+--+
+        |              journal-reconciler                        |
+        |  traders consolidated journal  <-->  observer journal  |
+        +-------------------------------------------------------+
 ```
 
 ---
@@ -99,20 +98,32 @@ Strategies receive a `const ClientState&` (open orders, position, last fill pric
 
 ### 2.4 Journal Format
 
-Client journals use the same ACTION/EXPECT format from `journal_parser.h`:
+**Trader journals** use the ACTION/EXPECT format from `journal_parser.h`:
 
 ```
-ACTION ILINK3_NEW_ORDER ts=1711500000000000000 instrument=ES cl_ord_id=1 side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY
-EXPECT ORDER_ACCEPTED order_id=42 cl_ord_id=1
+ACTION ILINK3_NEW_ORDER ts=1711500000000000000 client_id=1 instrument=ES cl_ord_id=1 side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY
+EXPECT ORDER_ACCEPTED ts=1711500000012000000 order_id=42 cl_ord_id=1
+EXPECT EXEC_FILL ts=1711500000015000000 order_id=42 cl_ord_id=1 fill_price=50000000 fill_qty=10000 leaves_qty=0
 ```
 
 For ICE:
 ```
-ACTION ICE_FIX_NEW_ORDER ts=1711500000000000000 instrument=B cl_ord_id=1 side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY
-EXPECT TRADE order_id=42 cl_ord_id=1 fill_price=50000000 fill_qty=10000
+ACTION ICE_FIX_NEW_ORDER ts=1711500000000000000 client_id=2 instrument=B cl_ord_id=1 side=BUY price=50000000 qty=10000 type=LIMIT tif=DAY
+EXPECT ORDER_ACCEPTED ts=1711500000012000000 order_id=42 cl_ord_id=1
 ```
 
-EXPECT lines are written when execution reports are received (not predicted). The reconciler matches client ACTIONs against exchange journal EXPECTs by `cl_ord_id`.
+ACTION lines are written when the client sends an order. EXPECT lines are written when execution reports are received from the exchange (not predicted). Each EXPECT includes the nanosecond timestamp from the exec report.
+
+**Observer journal** uses EXPECT-style lines for each decoded market data message:
+
+```
+EXPECT MD_TRADE ts=1711500000020000000 instrument=ES price=50000000 qty=10000 aggressor_side=BUY
+EXPECT MD_BOOK_ADD ts=1711500000021000000 instrument=ES side=BUY price=49995000 qty=10000 order_count=1
+EXPECT MD_BOOK_UPDATE ts=1711500000022000000 instrument=ES side=ASK price=50005000 qty=20000 order_count=2
+EXPECT MD_BOOK_DELETE ts=1711500000023000000 instrument=ES side=BUY price=49990000
+```
+
+The reconciler cross-references consolidated trader journals against the observer journal.
 
 ---
 
@@ -124,9 +135,10 @@ tools/
   sim_client.h            -- SimClient: TCP conn + ProtocolCodec + order state + journal writer
   trading_strategy.h      -- StrategyTick + random-walk + market-maker implementations
   exchange_trader.cc      -- main() for exchange-trader binary
-  exchange_observer.cc    -- main() for exchange-observer binary
+  exchange_observer.cc    -- main() for exchange-observer binary (ANSI display + journal writer)
+  journal_reconciler.h    -- Reconciler core: merge, match, invariant checks
   journal_reconciler.cc   -- main() for journal-reconciler binary
-  BUILD.bazel             -- (amended with 3 new cc_binary + 1 cc_library + 3 cc_test targets)
+  BUILD.bazel             -- (amended with 3 new cc_binary + 2 cc_library + 4 cc_test targets)
 ```
 
 **Estimated line counts:**
@@ -137,8 +149,9 @@ tools/
 | `sim_client.h` | ~200 | TCP connection, order state map, P&L tracking, journal writer |
 | `trading_strategy.h` | ~200 | Strategy interface, random-walk, market-maker |
 | `exchange_trader.cc` | ~250 | CLI parsing, signal handler, main poll loop |
-| `exchange_observer.cc` | ~200 | CLI, multicast join, decode + display loop |
-| `journal_reconciler.cc` | ~250 | CLI, journal merge, match logic, report |
+| `exchange_observer.cc` | ~250 | CLI, multicast join, decode + ANSI display + journal writer |
+| `journal_reconciler.h` | ~200 | Consolidate traders, match vs observer, 8 invariant checks |
+| `journal_reconciler.cc` | ~150 | CLI parsing, read journals, print report |
 
 ---
 
@@ -250,21 +263,53 @@ Rate limiting: track `actions_this_second` counter, reset every second. Skip str
 
 ### 4.5 exchange_observer.cc
 
+CLI (updated with `--journal`):
+```
+exchange-observer --exchange cme|ice \
+    --group 239.0.31.1 --port 14310 \
+    --instrument ES \
+    --journal /tmp/observer.journal
+```
+
 ```
 main():
-  1. Parse CLI args (--exchange, --group, --port, --instrument)
+  1. Parse CLI args (--exchange, --group, --port, --instrument, --journal)
   2. Create UdpMulticastReceiver, join group
-  3. Allocate display state: 5-level book (bid/ask), last 10 trades, OHLCV, msg counter
-  4. Install SIGINT handler
-  5. Main loop (while running_):
+  3. Open journal file for writing (if --journal specified)
+  4. Allocate display state: 5-level book (bid/ask), last 10 trades, OHLCV, msg counter
+  5. Install SIGINT handler
+  6. Main loop (while running_):
      a. Set recv timeout to 100ms
      b. recv datagram
      c. Skip McastSeqHeader (4 bytes)
      d. Decode: MDP3 (decode_mdp3_message) or iMpact (decode_messages)
      e. Update display state from decoded messages
-     f. Every 100ms: render ANSI display to stderr
-  6. On exit: print summary (total msgs, trades, final book)
+     f. Write EXPECT lines to journal for each decoded event:
+        - RefreshBook46 entries -> MD_BOOK_ADD / MD_BOOK_UPDATE / MD_BOOK_DELETE
+        - TradeSummary48 entries -> MD_TRADE
+        - SecurityStatus30 -> MD_STATUS
+     g. Every 100ms: render ANSI display to stderr
+  7. On exit: print summary (total msgs, trades, final book state)
 ```
+
+Journal output per message type:
+
+| MDP3 Message | Observer Journal Line |
+|---|---|
+| RefreshBook46 (Add action) | `EXPECT MD_BOOK_ADD ts=... instrument=... side=... price=... qty=... order_count=...` |
+| RefreshBook46 (Change action) | `EXPECT MD_BOOK_UPDATE ts=... instrument=... side=... price=... qty=... order_count=...` |
+| RefreshBook46 (Delete action) | `EXPECT MD_BOOK_DELETE ts=... instrument=... side=... price=...` |
+| TradeSummary48 | `EXPECT MD_TRADE ts=... instrument=... price=... qty=... aggressor_side=...` |
+| SecurityStatus30 | `EXPECT MD_STATUS ts=... instrument=... state=...` |
+
+For ICE iMpact:
+
+| iMpact Message | Observer Journal Line |
+|---|---|
+| AddModifyOrder | `EXPECT MD_BOOK_ADD ts=... instrument=... side=... price=... qty=...` |
+| OrderWithdrawal | `EXPECT MD_BOOK_DELETE ts=... instrument=... side=... price=...` |
+| DealTrade | `EXPECT MD_TRADE ts=... instrument=... price=... qty=...` |
+| MarketStatus | `EXPECT MD_STATUS ts=... instrument=... state=...` |
 
 ANSI display (no FTXUI dependency -- raw escape codes for portability):
 ```
@@ -288,42 +333,111 @@ OHLCV: O=5000.00 H=5005.00 L=4998.50 C=5002.75 V=1234
 
 ### 4.6 journal_reconciler.cc
 
+CLI (updated -- reconciles traders vs observer):
+```
+journal-reconciler \
+    --observer-journal /tmp/observer.journal \
+    --client-journals /tmp/client_1.journal,/tmp/client_2.journal,...,/tmp/client_5.journal
+```
+
 ```
 main():
-  1. Parse CLI args (--exchange-journal, --client-journals)
+  1. Parse CLI args (--observer-journal, --client-journals)
   2. For each client journal:
-     a. Read all lines
-     b. Parse ACTION and EXPECT lines with timestamps
-  3. Read exchange journal (same format)
-  4. Merge all entries sorted by timestamp
-  5. Build reconciliation map:
-     - Key: (client_id, cl_ord_id)
-     - Value: {client_action, client_expects[], exchange_expects[]}
-  6. For each entry:
-     a. Match client ACTION to exchange EXPECT by cl_ord_id
-     b. Verify: order_id consistent, fill prices match, quantities correct
-     c. Classify: matched, unmatched (client sent, no exchange response),
-        phantom (exchange response, no client action)
-  7. Print report:
+     a. Read all lines, parse ACTION and EXPECT lines
+     b. Tag each entry with client_id (from filename or ACTION field)
+  3. Read observer journal (EXPECT-only lines)
+  4. Consolidate all trader entries, sort by timestamp
+  5. Run reconciliation checks (see Section 4.7 for invariants)
+  6. Print report
+```
 
+### 4.7 Reconciliation Invariants
+
+The reconciler verifies these invariants between the consolidated trader journals and the observer journal:
+
+**Invariant 1: Trade Matching**
+Every `MD_TRADE` in the observer journal must match exactly 2 `EXEC_FILL` entries in the consolidated trader journals (one aggressor, one resting). Match criteria: price and quantity must be equal. Ordering within the same nanosecond is by fill sequence.
+
+```
+Observer:  EXPECT MD_TRADE ts=T1 price=50000000 qty=10000
+Traders:   EXPECT EXEC_FILL ts=T1-delta order_id=42 fill_price=50000000 fill_qty=10000 (aggressor)
+           EXPECT EXEC_FILL ts=T1-delta order_id=17 fill_price=50000000 fill_qty=10000 (resting)
+```
+
+**Invariant 2: Book Add Traceability**
+Every `MD_BOOK_ADD` in the observer journal must trace to a client `ACTION *_NEW_ORDER` that was subsequently acknowledged (`EXPECT ORDER_ACCEPTED`). The price and side must match.
+
+**Invariant 3: Book Delete Traceability**
+Every `MD_BOOK_DELETE` in the observer journal must trace to either:
+- A client `ACTION *_CANCEL` (user cancel), or
+- An `EXEC_FILL` with `leaves_qty=0` (fully filled, removed from book)
+
+**Invariant 4: Event Ordering**
+The sequence of market-observable events in the observer journal must be consistent with the consolidated trader journal. Specifically:
+- If trader A's new order appears before trader B's cancel in wall-clock time, and both produce observable book events, the observer must see them in the same order.
+- Timestamps may differ due to client->exchange->multicast latency, but the relative ordering of events is ground truth.
+
+**Invariant 5: No Phantom Events**
+Every event in the observer journal must be traceable to a client action. An `MD_TRADE` with no matching `EXEC_FILL` pair is a phantom. An `MD_BOOK_ADD` with no matching `ORDER_ACCEPTED` is a phantom. Phantoms indicate a bug.
+
+**Invariant 6: No Lost Events**
+Every client action that was acknowledged by the exchange must have a corresponding observable effect in the observer journal:
+- `ORDER_ACCEPTED` -> `MD_BOOK_ADD` (unless immediately filled, which produces `MD_TRADE` instead)
+- `EXEC_FILL` -> `MD_TRADE`
+- `ORDER_CANCELLED` -> `MD_BOOK_DELETE`
+- `ORDER_REJECTED` -> no observer event expected (correct -- rejects are not market-observable)
+
+**Invariant 7: Final Book State**
+The observer's accumulated book state (net of all `MD_BOOK_ADD`, `MD_BOOK_UPDATE`, `MD_BOOK_DELETE` events) must equal the net of all client open orders minus fills and cancels. At simulation end, if all clients cancel their open orders (graceful shutdown), the observer's book should be empty.
+
+**Invariant 8: Fill Price/Quantity Consistency**
+For every matched trade, the fill price in the trader's `EXEC_FILL` must exactly equal the price in the observer's `MD_TRADE`. Quantities must also match exactly (no rounding or truncation).
+
+**Report output:**
+
+```
 Reconciliation Report
 =====================
-Clients: 2
-Total Actions:     500
-  Matched:         485  (97.0%)
-  Unmatched:        10  (2.0%)
-  Phantom:           5  (1.0%)
+Clients: 5
+Observer events:   2,450
 
-Fill Verification:
-  Fill count:      200
-  Price matches:   200  (100.0%)
-  Qty matches:     200  (100.0%)
+Trade Matching (Invariant 1):
+  Observer trades:     200
+  Matched (2 fills):   198  (99.0%)
+  Unmatched:             2  (1.0%)
 
-Latency Distribution (action -> response):
-  p50:    12 us
-  p95:    45 us
-  p99:   120 us
-  max:   350 us
+Book Traceability (Invariants 2-3):
+  MD_BOOK_ADD:         800
+  Traced to NEW_ORDER: 800  (100.0%)
+  MD_BOOK_DELETE:      750
+  Traced to CANCEL:    600  (80.0%)
+  Traced to FILL:      150  (20.0%)
+
+Event Ordering (Invariant 4):
+  Order violations:      0
+
+Phantom Events (Invariant 5):
+  Phantom trades:        0
+  Phantom book adds:     0
+
+Lost Events (Invariant 6):
+  ORDER_ACCEPTED w/o MD_BOOK_ADD or MD_TRADE:   0
+  EXEC_FILL w/o MD_TRADE:                       0
+  ORDER_CANCELLED w/o MD_BOOK_DELETE:            0
+
+Final Book State (Invariant 7):
+  Observer book levels remaining:  0  (clean shutdown)
+
+Fill Consistency (Invariant 8):
+  Price mismatches:    0
+  Qty mismatches:      0
+
+Latency Distribution (client action -> observer sees effect):
+  p50:    45 us
+  p95:   120 us
+  p99:   350 us
+  max:   800 us
 ```
 
 ---
@@ -340,19 +454,21 @@ T1 (tcp_client.h)
 T2 (trading_strategy.h)      |
  |                            v
  +---> T7 (exchange_trader.cc)
-       T8 (exchange_trader BUILD + integration)
 
-T4 (exchange_observer.cc)
+T4 (exchange_observer.cc + journal writer)
 
-T5 (journal_reconciler core logic)
+T5 (journal_reconciler.h -- invariant checks)
  |
  +--> T6 (journal_reconciler.cc main + BUILD)
 
+T8 (BUILD.bazel) depends on T1-T7
+T9 (integration test) depends on T7, T4, T6
+
 T8 depends on T7 depends on T3 + T2
 T3 depends on T1
-T4, T5 are independent
+T4, T5 are independent of each other and of T1-T3
 T6 depends on T5
-T9 (integration test) depends on T7, T4, T6
+T9 depends on T7, T4, T6
 ```
 
 ### Task List
@@ -362,12 +478,12 @@ T9 (integration test) depends on T7, T4, T6
 | T1 | Extract TcpClient to header + unit test | `tcp_client.h`, `tcp_client_test.cc` | ~120 | -- | Dev A |
 | T2 | Trading strategies + unit tests (deterministic seed) | `trading_strategy.h`, `trading_strategy_test.cc` | ~200 + ~150 | -- | Dev B |
 | T3 | SimClient: TCP conn + order state + journal writer + unit test | `sim_client.h`, `sim_client_test.cc` | ~200 + ~150 | T1 | Dev A |
-| T4 | exchange-observer binary + basic test | `exchange_observer.cc`, `exchange_observer_test.cc` | ~200 + ~80 | -- | Dev C |
-| T5 | Reconciler core logic (merge + match) + unit test | `journal_reconciler.h`, `journal_reconciler_test.cc` | ~180 + ~150 | -- | Dev D |
-| T6 | journal-reconciler binary (CLI + main) + BUILD target | `journal_reconciler.cc` | ~100 | T5 | Dev D |
+| T4 | exchange-observer binary (ANSI display + journal writer) + test | `exchange_observer.cc`, `exchange_observer_test.cc` | ~250 + ~100 | -- | Dev C |
+| T5 | Reconciler core: consolidate traders, match vs observer, 8 invariant checks + unit test | `journal_reconciler.h`, `journal_reconciler_test.cc` | ~200 + ~180 | -- | Dev D |
+| T6 | journal-reconciler binary (CLI + report) + BUILD target | `journal_reconciler.cc` | ~150 | T5 | Dev D |
 | T7 | exchange-trader binary (CLI + main loop) | `exchange_trader.cc` | ~250 | T2, T3 | Dev A |
 | T8 | BUILD.bazel targets for all 3 binaries + libraries | `tools/BUILD.bazel` | ~80 | T1-T7 | Dev A |
-| T9 | Integration test: start exchange, 2 clients, 5s run, reconcile | `tools/sim_integration_test.sh` | ~80 | T7, T6 | Dev B |
+| T9 | Integration test: 5 traders + observer, 5s run, reconcile | `tools/sim_integration_test.sh` | ~100 | T7, T4, T6 | Dev B |
 
 ### Commit Sequence
 
@@ -377,12 +493,12 @@ Each task = one commit. Commits must keep the build green.
 Commit 1: feat(tools): extract TcpClient to standalone header      [T1]
 Commit 2: feat(tools): add trading strategy interface + impls       [T2]
 Commit 3: feat(tools): add SimClient (order state + journal)        [T3]
-Commit 4: feat(tools): add exchange-observer binary                 [T4]
-Commit 5: feat(tools): add journal reconciler core logic            [T5]
+Commit 4: feat(tools): add exchange-observer with journal output    [T4]
+Commit 5: feat(tools): add journal reconciler core (8 invariants)   [T5]
 Commit 6: feat(tools): add journal-reconciler binary                [T6]
 Commit 7: feat(tools): add exchange-trader binary                   [T7]
 Commit 8: feat(tools): add BUILD targets for simulation binaries    [T8]
-Commit 9: test(tools): add simulation integration test              [T9]
+Commit 9: test(tools): add 5-trader simulation integration test     [T9]
 ```
 
 ---
@@ -394,10 +510,10 @@ Commit 9: test(tools): add simulation integration test              [T9]
 All four tasks are independent. Maximum parallelism.
 
 ```
-Dev A: T1 (tcp_client.h)            -- no deps
-Dev B: T2 (trading_strategy.h)      -- no deps
-Dev C: T4 (exchange_observer.cc)    -- no deps
-Dev D: T5 (journal reconciler core) -- no deps
+Dev A: T1 (tcp_client.h)                      -- no deps
+Dev B: T2 (trading_strategy.h)                -- no deps
+Dev C: T4 (exchange_observer + journal)       -- no deps
+Dev D: T5 (reconciler core, 8 invariants)     -- no deps
 ```
 
 ### Phase 2 -- Sequential Build-Up (T3, T6)
@@ -409,12 +525,12 @@ Dev B: idle (review T1, T4)
 Dev C: idle (review T2, T5)
 ```
 
-### Phase 3 -- Assembly (T7, T8)
+### Phase 3 -- Assembly (T7, T8, T9)
 
 ```
 Dev A: T7 (exchange_trader.cc)      -- depends on T2 + T3
 Dev A: T8 (BUILD.bazel)             -- depends on all library tasks
-Dev B: T9 (integration test)        -- depends on T7, T6
+Dev B: T9 (integration: 5 traders + observer + reconcile)
 Dev C: code review
 Dev D: code review
 ```
@@ -542,7 +658,8 @@ cc_binary(
 | `tcp_client_test.cc` | Connect to a TcpServer, send/recv length-prefixed messages, non-blocking recv returns 0 on empty, connection refused handling |
 | `trading_strategy_test.cc` | Deterministic output with fixed seed; random-walk generates 1-3 orders per side; market-maker always quotes bid+ask; position limit respected; ref_price adaptation |
 | `sim_client_test.cc` | Journal output format correctness; order state tracking (new -> ack -> fill updates position/P&L); cancel removes from open orders; status line format |
-| `journal_reconciler_test.cc` | Merge sort correctness; match by cl_ord_id; detect unmatched/phantom; fill price/qty verification; latency calculation |
+| `journal_reconciler_test.cc` | Trader consolidation (merge sort by ts); trade matching (2 fills per MD_TRADE); book add traceability; book delete traceability; ordering invariant; phantom detection; lost event detection; final book state check; fill price/qty consistency; latency calculation; edge cases (empty journals, single trader, all rejects) |
+| `exchange_observer_test.cc` | Journal output format for each MD message type; ANSI display rendering; instrument filtering; graceful shutdown writes final state |
 
 ### Failure Injection Tests
 
@@ -552,19 +669,36 @@ cc_binary(
 | Exchange drops TCP mid-session | exchange-trader | Detects disconnect, cancels pending, prints partial summary |
 | Malformed exec report (truncated SBE) | exchange-trader | Logs decode error, skips message, continues |
 | Multicast socket bind fails (port in use) | exchange-observer | Exits with clear error message |
-| Empty client journal | journal-reconciler | Reports 0 actions, no crash |
-| Mismatched cl_ord_ids | journal-reconciler | Reports as phantom/unmatched, does not crash |
-| Rate limit exceeded (strategy produces > --rate actions) | exchange-trader | Actions capped at --rate/sec, excess silently dropped |
+| Malformed MDP3 datagram (truncated) | exchange-observer | Logs decode error, increments error counter, continues |
+| Gap in multicast sequence numbers | exchange-observer | Logs gap warning, continues (no replay mechanism) |
+| Empty client journal | journal-reconciler | Reports 0 actions, all invariants trivially pass |
+| Observer has trades with no matching fills | journal-reconciler | Reported as phantom (Invariant 5 violation) |
+| Client fill with no observer MD_TRADE | journal-reconciler | Reported as lost event (Invariant 6 violation) |
+| Rate limit exceeded (strategy produces > --rate) | exchange-trader | Actions capped at --rate/sec, excess silently dropped |
 
 ### Integration Test
 
 `sim_integration_test.sh`:
 1. Start cme-sim on port 9200 with ES instrument
-2. Start exchange-trader #1 (random-walk, rate=5, 5 seconds)
-3. Start exchange-trader #2 (market-maker, rate=5, 5 seconds)
-4. Wait for both to finish (timeout 10s)
-5. Run journal-reconciler on all 3 journals
-6. Assert: match rate > 90%, no phantom entries, fill prices consistent
+2. Start exchange-observer (multicast group, `--journal /tmp/observer.journal`)
+3. Start 5 exchange-trader instances:
+   - Traders 1-3: random-walk strategy, rate=5
+   - Traders 4-5: market-maker strategy, rate=5
+   - Each with `--journal /tmp/client_N.journal`
+4. Run for 5 seconds, then SIGINT all traders (graceful cancel-all)
+5. SIGINT observer after traders exit (observer captures final book drain)
+6. Run journal-reconciler:
+   ```
+   journal-reconciler \
+       --observer-journal /tmp/observer.journal \
+       --client-journals /tmp/client_1.journal,...,/tmp/client_5.journal
+   ```
+7. Assert:
+   - Trade match rate = 100% (no phantoms, no lost trades)
+   - Book traceability = 100% (all adds/deletes traced)
+   - Final book state = empty (clean shutdown)
+   - Fill price/qty consistency = 100%
+   - No ordering violations
 
 ---
 
@@ -597,5 +731,8 @@ The existing `fix_encoder.h` encodes **execution reports** (exchange -> client).
 | ICE FIX client encoding not yet built | Certain | Medium | Simple to add (~50 lines) using existing helpers; T3 scope |
 | Non-blocking TCP recv complexity | Low | Low | Existing TcpClient is clean; just add fcntl O_NONBLOCK |
 | Strategy determinism for testing | Low | Medium | Seed via `std::mt19937(fixed_seed)` in tests |
-| Integration test flakiness | Medium | Low | Use generous timeouts (10s); check exit codes not timing |
-| Line count exceeding 200/commit | Medium | Medium | T7 (exchange_trader.cc, ~250 lines) is the largest; may need to split CLI parsing into a separate commit |
+| Integration test flakiness | Medium | Medium | Use generous timeouts (10s); check exit codes not timing; observer needs brief delay after traders exit to drain final multicast messages |
+| Line count exceeding 200/commit | Medium | Medium | T7 (exchange_trader.cc, ~250 lines) and T4 (exchange_observer.cc, ~250 lines) are the largest; may need to split CLI parsing into separate commits |
+| Reconciler invariant complexity (8 checks) | Medium | Medium | T5 is ~200 lines of logic + ~180 lines of tests; each invariant is independently testable with synthetic journals; unit tests use hand-crafted minimal journal snippets, not real exchange output |
+| Multicast sequence gap handling | Low | Low | Observer logs gaps but does not attempt replay; reconciler will flag any resulting lost events |
+| 5 concurrent TCP connections to exchange | Low | Low | cme-sim already supports concurrent clients via epoll (TcpServer); tested in existing E2E harness |
