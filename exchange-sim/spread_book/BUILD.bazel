@@ -14,3 +14,13 @@ cc_library(
     deps = [":spread_strategy"],
     visibility = ["//visibility:public"],
 )
+
+cc_library(
+    name = "spread_instrument_config",
+    hdrs = ["spread_instrument_config.h"],
+    deps = [
+        ":spread_strategy",
+        ":spread_strategy_registry",
+    ],
+    visibility = ["//visibility:public"],
+)
