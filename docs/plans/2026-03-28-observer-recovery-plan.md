@@ -11,23 +11,73 @@ observer joins after the simulator has been running, it misses all prior depth u
 and displays a stale/incomplete book until enough incremental messages arrive to
 reconstruct the current state. This is the classic "late joiner" problem.
 
+## Observer Startup Sequence (Production-Accurate)
+
+The observer must follow this sequence, matching how real exchange clients operate:
+
+```
+1. SECDEF       Join secdef channel, discover instruments (symbol → security_id,
+                tick size, lot size, trading hours). Wait until complete.
+                [Separate plan — see docs/plans/ for secdef implementation]
+
+2. SNAPSHOT     Request/receive full book snapshot for the target instrument.
+                This plan covers this step.
+
+3. INCREMENTAL  Switch to incremental feed. Process updates normally.
+
+4. GAP DETECT   Monitor sequence numbers. On gap detection:
+                - Buffer incoming incrementals
+                - Re-request snapshot (goto step 2)
+                - Apply snapshot, then replay buffered incrementals
+                - Resume normal processing
+```
+
+Note: Step 1 (secdef) is a prerequisite but is scoped as a separate plan.
+This plan assumes instrument configuration is already known (from config or
+a prior secdef phase) and focuses on steps 2-4.
+
+## Gap Detection & Auto-Recovery
+
+The observer must detect gaps in the incremental feed and automatically recover:
+
+- **CME MDP3**: `rpt_seq` per instrument is monotonically increasing. If observer
+  sees rpt_seq N+2 after N (gap of 1), it enters recovery mode.
+- **ICE iMpact**: `sequence_number` in BundleEnd is the block sequence. Gaps
+  indicate missed bundles.
+
+On gap detection:
+1. Set `recovering = true`
+2. Buffer all incoming incremental messages (don't apply to book)
+3. Initiate snapshot recovery (CmeRecovery or IceRecovery)
+4. Apply snapshot → set `recovering = false`
+5. Replay buffered incrementals that have rpt_seq > snapshot rpt_seq
+6. Resume normal incremental processing
+
 ## Design Overview
 
 ```
-                          Recovery Phase                    Steady State
-                     +---------------------+          +-------------------+
-                     |                     |          |                   |
-  CME Observer ----->| CmeRecovery         |--------->| Incremental MDP3  |
-                     | (snapshot multicast) |          | (existing path)   |
-                     +---------------------+          +-------------------+
+  Observer Lifecycle:
 
-  ICE Observer ----->| IceRecovery         |--------->| Incremental iMpact|
-                     | (TCP snapshot req)   |          | (existing path)   |
-                     +---------------------+          +-------------------+
-
-  No recovery ------>| NullRecovery        |--------->| Incremental feed  |
-                     | (empty book)         |          | (existing path)   |
-                     +---------------------+          +-------------------+
+  [1. SECDEF]          [2. SNAPSHOT]              [3. INCREMENTAL]
+  (separate plan)      (this plan)                (existing + gap detect)
+       |                    |                          |
+       v                    v                          v
+  +-----------+     +----------------+     +----------------------+
+  | Discover  |---->| CmeRecovery    |---->| Process incrementals |
+  | instruments|    | (snapshot mcast)|    | Monitor rpt_seq      |
+  +-----------+     +----------------+     +-------+--------------+
+                    | IceRecovery    |             |
+                    | (TCP snapshot) |    gap detected?
+                    +----------------+             |
+                    | NullRecovery   |             v
+                    | (empty book)   |     +----------------+
+                    +----------------+     | Auto-recover:  |
+                                           | buffer + snap  |
+                                           | + replay       |
+                                           +-------+--------+
+                                                   |
+                                                   v
+                                           resume incremental
 ```
 
 ### Data Flow — CME Snapshot Recovery
