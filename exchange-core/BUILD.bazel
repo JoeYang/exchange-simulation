@@ -414,3 +414,13 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "implied_fills_test",
+    srcs = ["implied_fills_test.cc"],
+    deps = [
+        ":matching_engine",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
