@@ -32,6 +32,8 @@ cc_test(
     srcs = ["impact_encoder_test.cc"],
     deps = [
         ":impact_encoder",
+        ":impact_decoder",
+        "//exchange-core:types",
         "@googletest//:gtest_main",
     ],
 )

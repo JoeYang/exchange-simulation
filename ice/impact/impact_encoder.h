@@ -275,4 +275,85 @@ inline size_t encode_instrument_definition(
     return static_cast<size_t>(p - buf);
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot encoding: encode a full book as SnapshotOrder messages.
+//
+// encode_snapshot_side() encodes all levels for one side. Each PriceLevel
+// produces one SnapshotOrder message. Iterates the linked list via lv->next.
+// Returns pointer past last byte written, or nullptr on overflow.
+// ---------------------------------------------------------------------------
+
+inline char* encode_snapshot_side(
+    char* buf, size_t buf_len,
+    int32_t instrument_id,
+    exchange::Side side,
+    const exchange::PriceLevel* first_level,
+    int64_t& next_order_id)
+{
+    char* p = buf;
+    uint8_t wire_side = encode_side(side);
+
+    for (const exchange::PriceLevel* lv = first_level; lv; lv = lv->next) {
+        SnapshotOrder msg{};
+        std::memset(&msg, 0, sizeof(msg));
+        msg.instrument_id = instrument_id;
+        msg.order_id      = next_order_id++;
+        msg.side           = wire_side;
+        msg.price          = engine_price_to_wire(lv->price);
+        msg.quantity       = engine_qty_to_wire(lv->total_quantity);
+        msg.sequence       = 0;  // snapshot orders use sequence=0
+
+        size_t remaining = buf_len - static_cast<size_t>(p - buf);
+        p = encode(p, remaining, msg);
+        if (!p) return nullptr;
+    }
+    return p;
+}
+
+// ---------------------------------------------------------------------------
+// encode_snapshot_orders() — full book snapshot as a single bundle.
+//
+// Wire layout: BundleStart + N * SnapshotOrder + BundleEnd.
+// BundleEnd uses sequence_number=0 as the snapshot end marker (per ICE
+// iMpact protocol: sequence 0 is reserved for snapshot termination).
+//
+// Returns total bytes written, or 0 on failure.
+// ---------------------------------------------------------------------------
+
+inline size_t encode_snapshot_orders(
+    char* buf, size_t buf_len,
+    int32_t instrument_id,
+    const exchange::PriceLevel* first_bid,
+    const exchange::PriceLevel* first_ask,
+    ImpactEncodeContext& ctx)
+{
+    // Count levels for the message_count field.
+    uint16_t msg_count = 0;
+    for (auto* lv = first_bid; lv; lv = lv->next) ++msg_count;
+    for (auto* lv = first_ask; lv; lv = lv->next) ++msg_count;
+
+    // BundleStart — snapshot bundles use sequence_number from ctx, ts=0.
+    char* p = write_bundle_start(buf, buf_len, ++ctx.seq_num, msg_count, 0);
+    if (!p) return 0;
+
+    // Encode bid and ask sides.
+    int64_t next_oid = 1;
+    size_t remaining = buf_len - static_cast<size_t>(p - buf);
+    p = encode_snapshot_side(p, remaining, instrument_id,
+                             exchange::Side::Buy, first_bid, next_oid);
+    if (!p) return 0;
+
+    remaining = buf_len - static_cast<size_t>(p - buf);
+    p = encode_snapshot_side(p, remaining, instrument_id,
+                             exchange::Side::Sell, first_ask, next_oid);
+    if (!p) return 0;
+
+    // BundleEnd with sequence_number=0 (snapshot end marker).
+    remaining = buf_len - static_cast<size_t>(p - buf);
+    p = write_bundle_end(p, remaining, 0);
+    if (!p) return 0;
+
+    return static_cast<size_t>(p - buf);
+}
+
 }  // namespace exchange::ice::impact

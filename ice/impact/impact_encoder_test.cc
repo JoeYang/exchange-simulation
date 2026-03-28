@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "ice/impact/impact_decoder.h"
 #include "gtest/gtest.h"
 
 namespace exchange::ice::impact {
@@ -542,6 +543,247 @@ TEST(ImpactEncoderTest, EncodeInstrumentDefinitionSymbolTruncation) {
     // Should be truncated to 7 chars + null
     EXPECT_EQ(std::string(msg.symbol, 7), "LONGERS");
     EXPECT_EQ(msg.symbol[7], '\0');
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot encoding: encode_snapshot_side / encode_snapshot_orders
+// ---------------------------------------------------------------------------
+
+// Helper: build a linked list of PriceLevels for testing.
+// Caller owns the PriceLevels (stack or heap).
+void link_levels(exchange::PriceLevel* levels, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        levels[i].prev = (i > 0) ? &levels[i - 1] : nullptr;
+        levels[i].next = (i + 1 < count) ? &levels[i + 1] : nullptr;
+    }
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotSideBids) {
+    // 3 bid levels at descending prices.
+    exchange::PriceLevel bids[3]{};
+    bids[0].price = 45010000;  bids[0].total_quantity = 50000;   bids[0].order_count = 3;
+    bids[1].price = 45000000;  bids[1].total_quantity = 100000;  bids[1].order_count = 5;
+    bids[2].price = 44990000;  bids[2].total_quantity = 20000;   bids[2].order_count = 1;
+    link_levels(bids, 3);
+
+    char buf[512];
+    int64_t next_oid = 1;
+    char* end = encode_snapshot_side(
+        buf, sizeof(buf), 12345, exchange::Side::Buy, &bids[0], next_oid);
+    ASSERT_NE(end, nullptr);
+
+    // Each SnapshotOrder = wire_size<SnapshotOrder>() = 3 + 29 = 32 bytes.
+    size_t expected = 3u * wire_size<SnapshotOrder>();
+    EXPECT_EQ(static_cast<size_t>(end - buf), expected);
+
+    // Decode each SnapshotOrder and verify.
+    const char* p = buf;
+    for (int i = 0; i < 3; ++i) {
+        SnapshotOrder msg{};
+        auto* after = decode(p, static_cast<size_t>(end - p), msg);
+        ASSERT_NE(after, nullptr) << "failed to decode snapshot order " << i;
+        EXPECT_EQ(msg.instrument_id, 12345);
+        EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Buy));
+        EXPECT_EQ(msg.order_id, i + 1);  // next_order_id increments
+        EXPECT_EQ(msg.price, bids[i].price);
+        EXPECT_EQ(msg.quantity, engine_qty_to_wire(bids[i].total_quantity));
+        p = after;
+    }
+    EXPECT_EQ(next_oid, 4);
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotSideAsks) {
+    // 2 ask levels at ascending prices.
+    exchange::PriceLevel asks[2]{};
+    asks[0].price = 45020000;  asks[0].total_quantity = 30000;  asks[0].order_count = 2;
+    asks[1].price = 45030000;  asks[1].total_quantity = 40000;  asks[1].order_count = 4;
+    link_levels(asks, 2);
+
+    char buf[256];
+    int64_t next_oid = 100;
+    char* end = encode_snapshot_side(
+        buf, sizeof(buf), 99, exchange::Side::Sell, &asks[0], next_oid);
+    ASSERT_NE(end, nullptr);
+
+    size_t expected = 2u * wire_size<SnapshotOrder>();
+    EXPECT_EQ(static_cast<size_t>(end - buf), expected);
+
+    const char* p = buf;
+    SnapshotOrder msg{};
+    decode(p, static_cast<size_t>(end - p), msg);
+    EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Sell));
+    EXPECT_EQ(msg.order_id, 100);
+    EXPECT_EQ(msg.price, 45020000);
+
+    p += wire_size<SnapshotOrder>();
+    decode(p, static_cast<size_t>(end - p), msg);
+    EXPECT_EQ(msg.order_id, 101);
+    EXPECT_EQ(msg.price, 45030000);
+
+    EXPECT_EQ(next_oid, 102);
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotSideEmpty) {
+    char buf[64];
+    int64_t next_oid = 1;
+    char* end = encode_snapshot_side(
+        buf, sizeof(buf), 12345, exchange::Side::Buy, nullptr, next_oid);
+    ASSERT_NE(end, nullptr);
+    EXPECT_EQ(end, buf);  // no bytes written for empty side
+    EXPECT_EQ(next_oid, 1);  // unchanged
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotOrdersFullBook) {
+    // 3 bids + 2 asks -> full snapshot with BundleStart and BundleEnd.
+    exchange::PriceLevel bids[3]{};
+    bids[0].price = 45010000;  bids[0].total_quantity = 50000;   bids[0].order_count = 3;
+    bids[1].price = 45000000;  bids[1].total_quantity = 100000;  bids[1].order_count = 5;
+    bids[2].price = 44990000;  bids[2].total_quantity = 20000;   bids[2].order_count = 1;
+    link_levels(bids, 3);
+
+    exchange::PriceLevel asks[2]{};
+    asks[0].price = 45020000;  asks[0].total_quantity = 30000;  asks[0].order_count = 2;
+    asks[1].price = 45030000;  asks[1].total_quantity = 40000;  asks[1].order_count = 4;
+    link_levels(asks, 2);
+
+    char buf[1024];
+    auto ctx = MakeCtx();
+    size_t n = encode_snapshot_orders(
+        buf, sizeof(buf), 12345, &bids[0], &asks[0], ctx);
+
+    // BundleStart(17) + 5 * SnapshotOrder(32) + BundleEnd(7) = 184
+    EXPECT_EQ(n, 184u);
+
+    // Decode and verify structure: BundleStart, 5 SnapshotOrders, BundleEnd.
+    const char* p = buf;
+    BundleStart bs{};
+    p = decode(p, n, bs);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(bs.message_count, 5u);  // 3 bids + 2 asks
+    // BundleEnd with sequence_number=0 signals snapshot end marker.
+    EXPECT_GT(bs.sequence_number, 0u);
+
+    // Decode 3 bid SnapshotOrders.
+    for (int i = 0; i < 3; ++i) {
+        SnapshotOrder msg{};
+        p = decode(p, static_cast<size_t>(buf + n - p), msg);
+        ASSERT_NE(p, nullptr);
+        EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Buy));
+        EXPECT_EQ(msg.price, bids[i].price);
+    }
+    // Decode 2 ask SnapshotOrders.
+    for (int i = 0; i < 2; ++i) {
+        SnapshotOrder msg{};
+        p = decode(p, static_cast<size_t>(buf + n - p), msg);
+        ASSERT_NE(p, nullptr);
+        EXPECT_EQ(msg.side, static_cast<uint8_t>(Side::Sell));
+        EXPECT_EQ(msg.price, asks[i].price);
+    }
+    // BundleEnd with sequence_number=0 (snapshot end marker).
+    BundleEnd be{};
+    p = decode(p, static_cast<size_t>(buf + n - p), be);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(be.sequence_number, 0u);
+
+    EXPECT_EQ(static_cast<size_t>(p - buf), n);
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotOrdersEmptyBook) {
+    char buf[256];
+    auto ctx = MakeCtx();
+    size_t n = encode_snapshot_orders(
+        buf, sizeof(buf), 12345, nullptr, nullptr, ctx);
+
+    // BundleStart(17) + 0 orders + BundleEnd(7) = 24
+    EXPECT_EQ(n, 24u);
+
+    const char* p = buf;
+    BundleStart bs{};
+    p = decode(p, n, bs);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(bs.message_count, 0u);
+
+    BundleEnd be{};
+    p = decode(p, static_cast<size_t>(buf + n - p), be);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(be.sequence_number, 0u);
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotOrdersBufferTooSmall) {
+    exchange::PriceLevel bid{};
+    bid.price = 45000000;
+    bid.total_quantity = 10000;
+    bid.order_count = 1;
+    bid.next = nullptr;
+
+    char buf[16];  // way too small for BundleStart alone
+    auto ctx = MakeCtx();
+    size_t n = encode_snapshot_orders(
+        buf, sizeof(buf), 12345, &bid, nullptr, ctx);
+    EXPECT_EQ(n, 0u);
+}
+
+TEST(ImpactEncoderTest, EncodeSnapshotOrdersRoundTrip) {
+    // Full round-trip: encode snapshot, decode with decoder, verify.
+    exchange::PriceLevel bids[2]{};
+    bids[0].price = 45010000;  bids[0].total_quantity = 50000;   bids[0].order_count = 3;
+    bids[1].price = 45000000;  bids[1].total_quantity = 100000;  bids[1].order_count = 5;
+    link_levels(bids, 2);
+
+    exchange::PriceLevel asks[1]{};
+    asks[0].price = 45020000;  asks[0].total_quantity = 30000;  asks[0].order_count = 2;
+
+    char buf[512];
+    auto ctx = MakeCtx();
+    size_t n = encode_snapshot_orders(
+        buf, sizeof(buf), 12345, &bids[0], &asks[0], ctx);
+    ASSERT_GT(n, 0u);
+
+    // Use decode_messages() visitor to verify.
+    struct Visitor {
+        int bundle_starts{0};
+        int bundle_ends{0};
+        int snapshot_orders{0};
+        int64_t prices[3]{};
+        uint8_t sides[3]{};
+
+        void on_bundle_start(const BundleStart& bs) {
+            ++bundle_starts;
+            EXPECT_EQ(bs.message_count, 3u);
+        }
+        void on_bundle_end(const BundleEnd& be) {
+            ++bundle_ends;
+            EXPECT_EQ(be.sequence_number, 0u);
+        }
+        void on_snapshot_order(const SnapshotOrder& so) {
+            if (snapshot_orders < 3) {
+                prices[snapshot_orders] = so.price;
+                sides[snapshot_orders] = so.side;
+            }
+            ++snapshot_orders;
+        }
+        // Stubs for other message types.
+        void on_add_modify_order(const AddModifyOrder&) {}
+        void on_order_withdrawal(const OrderWithdrawal&) {}
+        void on_deal_trade(const DealTrade&) {}
+        void on_market_status(const MarketStatus&) {}
+        void on_price_level(const PriceLevel&) {}
+        void on_instrument_def(const InstrumentDefinition&) {}
+    };
+
+    Visitor v;
+    size_t consumed = decode_messages(buf, n, v);
+    EXPECT_EQ(consumed, n);
+    EXPECT_EQ(v.bundle_starts, 1);
+    EXPECT_EQ(v.bundle_ends, 1);
+    EXPECT_EQ(v.snapshot_orders, 3);
+
+    EXPECT_EQ(v.prices[0], 45010000);
+    EXPECT_EQ(v.prices[1], 45000000);
+    EXPECT_EQ(v.prices[2], 45020000);
+    EXPECT_EQ(v.sides[0], static_cast<uint8_t>(Side::Buy));
+    EXPECT_EQ(v.sides[1], static_cast<uint8_t>(Side::Buy));
+    EXPECT_EQ(v.sides[2], static_cast<uint8_t>(Side::Sell));
 }
 
 }  // namespace
