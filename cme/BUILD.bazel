@@ -38,6 +38,26 @@ cc_test(
 )
 
 cc_library(
+    name = "cme_spreads",
+    hdrs = ["cme_spreads.h"],
+    deps = [
+        ":cme_products",
+        "//exchange-sim/spread_book:spread_instrument_config",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "cme_spreads_test",
+    srcs = ["cme_spreads_test.cc"],
+    deps = [
+        ":cme_spreads",
+        "//exchange-sim/spread_book:spread_strategy_registry",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "cme_simulator",
     hdrs = ["cme_simulator.h"],
     deps = [
