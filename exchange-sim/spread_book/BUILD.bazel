@@ -42,6 +42,21 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+cc_library(
+    name = "spread_book",
+    hdrs = ["spread_book.h"],
+    deps = [
+        ":implied_price_engine",
+        ":spread_strategy",
+        "//exchange-core:events",
+        "//exchange-core:listeners",
+        "//exchange-core:object_pool",
+        "//exchange-core:orderbook",
+        "//exchange-core:types",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 cc_test(
     name = "spread_strategy_test",
     srcs = ["spread_strategy_test.cc"],
