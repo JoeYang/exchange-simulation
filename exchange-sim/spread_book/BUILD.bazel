@@ -75,6 +75,17 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+cc_library(
+    name = "spread_simulator",
+    hdrs = ["spread_simulator.h"],
+    deps = [
+        ":spread_book",
+        ":spread_instrument_config",
+        ":spread_strategy_registry",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 cc_test(
     name = "spread_strategy_test",
     srcs = ["spread_strategy_test.cc"],
