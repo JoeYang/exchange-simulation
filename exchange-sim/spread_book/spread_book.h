@@ -187,17 +187,37 @@ public:
         listener.on_order_accepted(OrderAccepted{id, req.client_order_id,
                                                   req.timestamp});
 
-        // For IOC/FOK, matching is handled in T13 (TIF handling).
-        // For now, rest the order in the book.
-        if (req.tif == TimeInForce::IOC || req.tif == TimeInForce::FOK) {
-            // Will be implemented in T13. For now, cancel immediately.
-            remove_order(order, listener, CancelReason::IOCRemainder,
-                         req.timestamp);
-            return id;
+        // Attempt direct spread-vs-spread matching for all TIFs.
+        // GTC/DAY: match what's available, rest remainder.
+        // IOC: match what's available, cancel remainder.
+        // FOK: match all or nothing.
+        if (req.tif == TimeInForce::FOK) {
+            // Check if full quantity is available before matching.
+            Quantity available = available_crossing_qty(order);
+            if (available < order->remaining_quantity) {
+                // Cannot fill entirely -- reject FOK.
+                remove_order_no_book(order, listener, CancelReason::FOKFailed,
+                                     req.timestamp);
+                return id;
+            }
         }
 
-        // Rest in spread book
-        rest_order(order);
+        match_direct(order, listener, req.timestamp);
+
+        if (order->remaining_quantity > 0) {
+            if (req.tif == TimeInForce::IOC) {
+                remove_order_no_book(order, listener, CancelReason::IOCRemainder,
+                                     req.timestamp);
+            } else {
+                // GTC/DAY: rest remainder
+                rest_order(order);
+            }
+        } else {
+            // Fully filled -- clean up
+            order_index_[order->id] = nullptr;
+            order_pool_.deallocate(order);
+        }
+
         return id;
     }
 
@@ -334,6 +354,93 @@ private:
         order_index_[order->id] = nullptr;
         listener.on_order_cancelled(OrderCancelled{order->id, ts, reason});
         order_pool_.deallocate(order);
+    }
+
+    // Remove order that is NOT in the book (pre-resting cancel for IOC/FOK).
+    template <typename OrderListenerT>
+    void remove_order_no_book(Order* order, OrderListenerT& listener,
+                              CancelReason reason, Timestamp ts) {
+        order_index_[order->id] = nullptr;
+        listener.on_order_cancelled(OrderCancelled{order->id, ts, reason});
+        order_pool_.deallocate(order);
+    }
+
+    // Check if aggressor order's price crosses a resting order's price.
+    static bool crosses(Side aggressor_side, Price aggressor_price,
+                        Price resting_price) {
+        // Buy aggressor crosses if resting ask <= aggressor price.
+        // Sell aggressor crosses if resting bid >= aggressor price.
+        return (aggressor_side == Side::Buy)
+            ? resting_price <= aggressor_price
+            : resting_price >= aggressor_price;
+    }
+
+    // Calculate total available crossing quantity on the opposite side.
+    // Used for FOK feasibility check.
+    Quantity available_crossing_qty(const Order* aggressor) const {
+        const Side opp = (aggressor->side == Side::Buy) ? Side::Sell : Side::Buy;
+        const PriceLevel* lv = (opp == Side::Buy) ? book_.best_bid()
+                                                   : book_.best_ask();
+        Quantity total = 0;
+        while (lv && crosses(aggressor->side, aggressor->price, lv->price)) {
+            total += lv->total_quantity;
+            if (total >= aggressor->remaining_quantity) return total;
+            lv = lv->next;
+        }
+        return total;
+    }
+
+    // Direct spread-vs-spread FIFO matching.
+    // Matches the aggressor against resting orders on the opposite side.
+    // Emits one fill event per trade (matches engine convention).
+    template <typename OrderListenerT>
+    void match_direct(Order* aggressor, OrderListenerT& listener, Timestamp ts) {
+        while (aggressor->remaining_quantity > 0) {
+            // Get best opposite level.
+            PriceLevel* lv = (aggressor->side == Side::Buy)
+                ? book_.best_ask() : book_.best_bid();
+            if (!lv) break;
+            if (!crosses(aggressor->side, aggressor->price, lv->price)) break;
+
+            Order* resting = lv->head;
+            while (resting && aggressor->remaining_quantity > 0) {
+                Quantity fill_qty = std::min(aggressor->remaining_quantity,
+                                             resting->remaining_quantity);
+                Price fill_price = resting->price;
+
+                aggressor->filled_quantity += fill_qty;
+                aggressor->remaining_quantity -= fill_qty;
+                resting->filled_quantity += fill_qty;
+                resting->remaining_quantity -= fill_qty;
+                lv->total_quantity -= fill_qty;
+
+                // Single event per fill: fully filled or partial.
+                bool both_done = (aggressor->remaining_quantity == 0 &&
+                                  resting->remaining_quantity == 0);
+                if (both_done) {
+                    listener.on_order_filled(OrderFilled{
+                        aggressor->id, resting->id,
+                        fill_price, fill_qty, ts});
+                } else {
+                    listener.on_order_partially_filled(
+                        OrderPartiallyFilled{
+                            aggressor->id, resting->id,
+                            fill_price, fill_qty,
+                            aggressor->remaining_quantity,
+                            resting->remaining_quantity, ts});
+                }
+
+                // Clean up fully filled resting order.
+                Order* next = resting->next;
+                if (resting->remaining_quantity == 0) {
+                    PriceLevel* freed = book_.remove_order(resting);
+                    if (freed) level_pool_.deallocate(freed);
+                    order_index_[resting->id] = nullptr;
+                    order_pool_.deallocate(resting);
+                }
+                resting = next;
+            }
+        }
     }
 
     const SpreadStrategy& strategy_;
