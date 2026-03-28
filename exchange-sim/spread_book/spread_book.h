@@ -301,6 +301,48 @@ public:
         return true;
     }
 
+    // --- Implied-out matching ---
+    //
+    // Called when an outright instrument's BBO changes. Recomputes implied
+    // spread bid/ask from outright BBOs and matches against resting spread
+    // orders. If a spread order crosses the implied price, we execute:
+    //   1. Fill the spread order (resting in spread book).
+    //   2. Atomically fill the outright legs via apply_implied_fills().
+    //
+    // Returns the number of spread fills executed.
+
+    template <typename OrderListenerT>
+    int on_outright_bbo_change(OrderListenerT& listener, Timestamp ts) {
+        if (!bbo_provider_ || !best_order_provider_ || !fill_applier_)
+            return 0;
+
+        const auto& legs = strategy_.legs();
+        auto bbos = gather_leg_bbos();
+        if (bbos.size() != legs.size()) return 0;
+
+        int fills_executed = 0;
+
+        // Try implied-out bid (synthetic spread bid) vs resting spread asks.
+        fills_executed += match_implied_out_side(
+            Side::Buy, legs, bbos, listener, ts);
+
+        // Refresh BBOs after potential fills changed outright books.
+        if (fills_executed > 0) bbos = gather_leg_bbos();
+
+        // Try implied-out ask (synthetic spread ask) vs resting spread bids.
+        fills_executed += match_implied_out_side(
+            Side::Sell, legs, bbos, listener, ts);
+
+        return fills_executed;
+    }
+
+    // --- Implied-in matching ---
+    //
+    // Called when a new spread order arrives (after resting) or when outright
+    // BBOs change. For each resting spread order, compute the implied outright
+    // price for each leg and attempt atomic fills.
+    // Implemented in T16.
+
     // --- Accessors ---
 
     const SpreadStrategy& strategy() const { return strategy_; }
@@ -440,6 +482,140 @@ private:
                 resting = next;
             }
         }
+    }
+
+    // Match implied-out on one side: compute synthetic spread price from
+    // outright BBOs and match against resting spread orders on the opposite side.
+    //
+    // implied_side = Side::Buy means we compute the implied spread BID
+    //   (which crosses resting spread ASKs).
+    // implied_side = Side::Sell means we compute the implied spread ASK
+    //   (which crosses resting spread BIDs).
+    //
+    // For each crossing spread order, we:
+    //   1. Determine fill qty (min of implied qty and spread order remaining).
+    //   2. Build LegFill batch for outright engines.
+    //   3. Apply implied fills atomically.
+    //   4. If successful, fill the spread order.
+    template <typename OrderListenerT>
+    int match_implied_out_side(
+        Side implied_side,
+        const std::vector<StrategyLeg>& legs,
+        std::vector<LegBBO>& bbos,
+        OrderListenerT& listener,
+        Timestamp ts)
+    {
+        int fills = 0;
+
+        while (true) {
+            // Compute implied level.
+            auto implied = (implied_side == Side::Buy)
+                ? ImpliedPriceEngine::compute_implied_out_bid(
+                      legs, bbos, strategy_.tick_size())
+                : ImpliedPriceEngine::compute_implied_out_ask(
+                      legs, bbos, strategy_.tick_size());
+            if (!implied) break;
+
+            // Find resting spread orders on the opposite side.
+            // Implied bid crosses resting asks; implied ask crosses resting bids.
+            PriceLevel* lv = (implied_side == Side::Buy)
+                ? book_.best_ask() : book_.best_bid();
+            if (!lv) break;
+
+            // Check crossing: implied bid >= resting ask, or
+            //                  implied ask <= resting bid.
+            bool does_cross = (implied_side == Side::Buy)
+                ? implied->price >= lv->price
+                : implied->price <= lv->price;
+            if (!does_cross) break;
+
+            Order* spread_order = lv->head;
+            if (!spread_order) break;
+
+            // Determine fill quantity.
+            Quantity fill_qty = std::min(implied->quantity,
+                                         spread_order->remaining_quantity);
+            // Align to spread lot size.
+            if (strategy_.lot_size() > 0) {
+                fill_qty = (fill_qty / strategy_.lot_size()) * strategy_.lot_size();
+            }
+            if (fill_qty <= 0) break;
+
+            // Build leg fills: for each outright leg, get the best resting
+            // order on the execution side and build a LegFill.
+            bool leg_fills_ok = true;
+            std::vector<std::pair<uint32_t, LegFill>> leg_fill_batch;
+            leg_fill_batch.reserve(legs.size());
+
+            for (size_t i = 0; i < legs.size(); ++i) {
+                const auto& leg = legs[i];
+                // For implied-out bid: we execute buy-ratio legs as BUYS
+                // and sell-ratio legs as SELLS on the outright.
+                // The execution side for each leg:
+                Side leg_exec_side = (implied_side == Side::Buy)
+                    ? (leg.ratio > 0 ? Side::Buy : Side::Sell)
+                    : (leg.ratio > 0 ? Side::Sell : Side::Buy);
+                // We need the opposite side's resting order.
+                Side resting_side = (leg_exec_side == Side::Buy)
+                    ? Side::Sell : Side::Buy;
+
+                auto best_id = best_order_provider_(leg.instrument_id,
+                                                     resting_side);
+                if (!best_id) { leg_fills_ok = false; break; }
+
+                Quantity leg_qty = strategy_.leg_quantity(i, fill_qty);
+                // Execution price from BBO.
+                Price leg_price = (resting_side == Side::Buy)
+                    ? bbos[i].bid_price : bbos[i].ask_price;
+
+                leg_fill_batch.push_back({leg.instrument_id,
+                    LegFill{*best_id, leg_price, leg_qty}});
+            }
+
+            if (!leg_fills_ok) break;
+
+            // Apply outright fills atomically, one engine at a time.
+            bool all_applied = true;
+            for (const auto& [instr_id, fill] : leg_fill_batch) {
+                std::array<LegFill, 1> single = {fill};
+                if (!fill_applier_(instr_id, single, ts)) {
+                    all_applied = false;
+                    break;
+                }
+            }
+
+            if (!all_applied) break;
+
+            // Outright fills succeeded -- fill the spread order.
+            Price spread_fill_price = spread_order->price;
+            spread_order->filled_quantity += fill_qty;
+            spread_order->remaining_quantity -= fill_qty;
+            lv->total_quantity -= fill_qty;
+
+            if (spread_order->remaining_quantity == 0) {
+                listener.on_order_filled(OrderFilled{
+                    spread_order->id, spread_order->id,
+                    spread_fill_price, fill_qty, ts});
+                PriceLevel* freed = book_.remove_order(spread_order);
+                if (freed) level_pool_.deallocate(freed);
+                order_index_[spread_order->id] = nullptr;
+                order_pool_.deallocate(spread_order);
+            } else {
+                listener.on_order_partially_filled(
+                    OrderPartiallyFilled{
+                        spread_order->id, spread_order->id,
+                        spread_fill_price, fill_qty,
+                        spread_order->remaining_quantity,
+                        spread_order->remaining_quantity, ts});
+            }
+
+            ++fills;
+
+            // Refresh BBOs for next iteration (outright books changed).
+            bbos = gather_leg_bbos();
+        }
+
+        return fills;
     }
 
     const SpreadStrategy& strategy_;
