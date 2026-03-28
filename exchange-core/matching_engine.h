@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include "exchange-core/events.h"
@@ -86,6 +88,14 @@ struct AuctionResult {
     Quantity buy_surplus{0};   // unfilled buy qty at auction price
     Quantity sell_surplus{0};  // unfilled sell qty at auction price
     bool has_price{false};     // false if book is empty or no crossing
+};
+
+// --- Implied fill descriptor for SpreadBook multi-leg atomicity ---
+
+struct LegFill {
+    OrderId  order_id;
+    Price    fill_price;
+    Quantity fill_qty;
 };
 
 // --- Matching Engine ---
@@ -998,6 +1008,146 @@ public:
         for (; lv; lv = lv->next) {
             cb(lv->price, lv->total_quantity, lv->order_count);
         }
+    }
+
+    // apply_implied_fills -- atomically apply a batch of implied fills
+    // to resting orders.  Used by SpreadBook for multi-leg spread execution.
+    //
+    // Semantics (all-or-nothing):
+    //   1. VALIDATE every fill: order exists, has sufficient remaining_qty.
+    //   2. If ANY validation fails: return false, apply NOTHING, emit NOTHING.
+    //   3. If ALL pass: apply each fill (update qty, book levels), emit
+    //      OrderFilled/OrderPartiallyFilled + Trade + DepthUpdate for each,
+    //      then fire TopOfBook once at the end.
+
+    bool apply_implied_fills(std::span<const LegFill> fills, Timestamp ts) {
+        // --- Phase 1: validate all fills ---
+        for (const auto& fill : fills) {
+            if (fill.order_id == 0 || fill.order_id >= MaxOrderIds)
+                return false;
+            const Order* order = order_index_[fill.order_id];
+            if (order == nullptr) return false;
+            if (fill.fill_qty <= 0) return false;
+            if (order->remaining_quantity < fill.fill_qty) return false;
+        }
+
+        // --- Phase 2: apply all fills (guaranteed to succeed) ---
+        for (const auto& fill : fills) {
+            Order* order = order_index_[fill.order_id];
+
+            // Update order quantities
+            order->filled_quantity    += fill.fill_qty;
+            order->remaining_quantity -= fill.fill_qty;
+
+            // Update level total
+            order->level->total_quantity -= fill.fill_qty;
+
+            last_trade_price_ = fill.fill_price;
+
+            // Update per-account position
+            position_tracker_.update_fill(
+                order->account_id, order->side, fill.fill_qty);
+
+            // Determine if this order is fully consumed (visible tranche)
+            bool is_fully_filled = (order->remaining_quantity == 0);
+            bool has_hidden = (order->display_qty > 0 &&
+                               order->total_qty > order->filled_quantity);
+
+            // Fire order events.
+            // For implied fills there is no true aggressor; we use
+            // order->id for both aggressor_id and resting_id fields
+            // so downstream consumers can distinguish implied fills.
+            if (is_fully_filled && !has_hidden) {
+                order_listener_.on_order_filled(OrderFilled{
+                    order->id, order->id,
+                    fill.fill_price, fill.fill_qty, ts});
+            } else {
+                Quantity remaining = order->remaining_quantity;
+                // If iceberg tranche exhausted but hidden remains,
+                // report the next tranche size as remaining
+                if (is_fully_filled && has_hidden) {
+                    remaining = std::min(order->display_qty,
+                                         order->total_qty -
+                                             order->filled_quantity);
+                }
+                order_listener_.on_order_partially_filled(
+                    OrderPartiallyFilled{
+                        order->id, order->id,
+                        fill.fill_price, fill.fill_qty,
+                        remaining, remaining, ts});
+            }
+
+            // Fire Trade event and record in registry
+            md_listener_.on_trade(Trade{
+                fill.fill_price, fill.fill_qty,
+                order->id, order->id,
+                order->side, ts});
+            trade_registry_.record(
+                order->id, order->id,
+                fill.fill_price, fill.fill_qty, ts,
+                order->side,
+                order->account_id, order->account_id);
+
+            // Fire L3: OrderBookAction (Fill)
+            md_listener_.on_order_book_action(OrderBookAction{
+                order->id, order->side, fill.fill_price,
+                fill.fill_qty, OrderBookAction::Fill, ts});
+
+            // Handle book cleanup and L2
+            if (is_fully_filled) {
+                if (has_hidden) {
+                    // Iceberg: reveal next tranche, move to back of queue
+                    Quantity next = std::min(
+                        order->display_qty,
+                        order->total_qty - order->filled_quantity);
+                    order->remaining_quantity = next;
+
+                    PriceLevel* lv = order->level;
+                    list_remove(lv->head, lv->tail, order);
+                    list_push_back(lv->head, lv->tail, order);
+                    lv->total_quantity += next;
+
+                    md_listener_.on_order_book_action(OrderBookAction{
+                        order->id, order->side, order->price, next,
+                        OrderBookAction::Add, ts});
+                    md_listener_.on_depth_update(DepthUpdate{
+                        order->side, lv->price,
+                        lv->total_quantity, lv->order_count,
+                        DepthUpdate::Update, ts});
+                } else {
+                    // Fully consumed — remove from book
+                    PriceLevel* freed = book_.remove_order(order);
+                    if (freed) {
+                        md_listener_.on_depth_update(DepthUpdate{
+                            order->side, fill.fill_price,
+                            0, 0, DepthUpdate::Remove, ts});
+                        level_pool_.deallocate(freed);
+                    } else {
+                        PriceLevel* lv =
+                            find_level_by_price(order->side, fill.fill_price);
+                        if (lv) {
+                            md_listener_.on_depth_update(DepthUpdate{
+                                order->side, lv->price,
+                                lv->total_quantity, lv->order_count,
+                                DepthUpdate::Update, ts});
+                        }
+                    }
+                    order_index_[order->id] = nullptr;
+                    order_pool_.deallocate(order);
+                }
+            } else {
+                // Partially filled — update L2
+                PriceLevel* lv = order->level;
+                md_listener_.on_depth_update(DepthUpdate{
+                    order->side, lv->price,
+                    lv->total_quantity, lv->order_count,
+                    DepthUpdate::Update, ts});
+            }
+        }
+
+        // Fire TopOfBook once after all fills
+        fire_top_of_book(ts);
+        return true;
     }
 
 protected:

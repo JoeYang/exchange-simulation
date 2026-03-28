@@ -24,3 +24,13 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
 )
+
+cc_library(
+    name = "implied_price_engine",
+    hdrs = ["implied_price_engine.h"],
+    deps = [
+        ":spread_strategy",
+        "//exchange-core:types",
+    ],
+    visibility = ["//visibility:public"],
+)
