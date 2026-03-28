@@ -108,6 +108,12 @@ int run_sim(SimulatorT& sim,
     std::fprintf(stderr, "Published %zu instrument definition(s)\n",
                  products.size());
 
+    // -- Start snapshot multicast publisher --
+    UdpMulticastPublisher snapshot_mcast(cfg.snapshot_group.c_str(),
+                                         cfg.snapshot_port);
+    std::fprintf(stderr, "Snapshot multicast: %s:%u\n",
+                 cfg.snapshot_group.c_str(), cfg.snapshot_port);
+
     sim.start_trading_day(now());
     sim.open_market(now());
     std::fprintf(stderr, "Market open. Session state: Continuous\n");
@@ -186,6 +192,10 @@ int run_sim(SimulatorT& sim,
     auto last_secdef_publish = std::chrono::steady_clock::now();
     constexpr auto secdef_interval = std::chrono::seconds(30);
 
+    // -- Snapshot publish timer (every 5 seconds) --
+    auto last_snapshot_publish = std::chrono::steady_clock::now();
+    constexpr auto snapshot_interval = std::chrono::seconds(5);
+
     // -- Event loop --
     while (g_running.load(std::memory_order_relaxed)) {
         // 1. Poll TCP for incoming iLink3 messages (non-blocking).
@@ -221,6 +231,39 @@ int run_sim(SimulatorT& sim,
         if (now_tp - last_secdef_publish >= secdef_interval) {
             publish_secdefs(secdef_mcast, products);
             last_secdef_publish = now_tp;
+        }
+
+        // 5. Publish book snapshots every 5 seconds for late-joiner recovery.
+        if (now_tp - last_snapshot_publish >= snapshot_interval) {
+            char snap_buf[sbe::mdp3::MAX_SNAPSHOT_ENCODED_SIZE];
+            for (const auto& product : products) {
+                auto instrument_id =
+                    static_cast<int32_t>(product.instrument_id);
+                const auto* engine = sim.get_engine(product.instrument_id);
+                if (!engine) continue;
+
+                // Collect price levels from the order book.
+                sbe::mdp3::SnapshotEntry entries[256];
+                uint16_t num_entries = 0;
+                engine->for_each_level(Side::Buy, [&](Price p, Quantity q, int) {
+                    if (num_entries < 256) {
+                        entries[num_entries++] = {p, q, Side::Buy};
+                    }
+                });
+                engine->for_each_level(Side::Sell, [&](Price p, Quantity q, int) {
+                    if (num_entries < 256) {
+                        entries[num_entries++] = {p, q, Side::Sell};
+                    }
+                });
+
+                size_t n = sbe::mdp3::encode_snapshot(
+                    snap_buf, instrument_id,
+                    static_cast<uint64_t>(now()),
+                    md_pub.rpt_seq(),
+                    entries, num_entries);
+                snapshot_mcast.send(snap_buf, n);
+            }
+            last_snapshot_publish = now_tp;
         }
     }
 

@@ -12,10 +12,12 @@ struct SimConfig {
     uint16_t    ilink3_port{9100};
     std::string mdp3_group{"239.0.31.1"};
     uint16_t    mdp3_port{14310};
-    std::string secdef_group{"239.0.31.3"};  // secdef multicast group
-    uint16_t    secdef_port{14312};          // secdef multicast port
-    std::string shm_path;                    // empty = no shared memory transport
-    std::vector<std::string> products;       // empty = load all CME products
+    std::string secdef_group{"239.0.31.3"};    // secdef multicast group
+    uint16_t    secdef_port{14312};            // secdef multicast port
+    std::string snapshot_group{"239.0.31.2"};  // snapshot multicast group
+    uint16_t    snapshot_port{14311};          // snapshot multicast port
+    std::string shm_path;                      // empty = no shared memory transport
+    std::vector<std::string> products;         // empty = load all CME products
 
     // Parse from argv.  Returns true on success.
     // Usage: cme-sim --ilink3-port 9100 --mdp3-group 239.0.31.1 --mdp3-port 14310
@@ -33,6 +35,10 @@ struct SimConfig {
                 cfg.secdef_group = argv[++i];
             } else if (std::strcmp(argv[i], "--secdef-port") == 0 && i + 1 < argc) {
                 cfg.secdef_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+            } else if (std::strcmp(argv[i], "--snapshot-group") == 0 && i + 1 < argc) {
+                cfg.snapshot_group = argv[++i];
+            } else if (std::strcmp(argv[i], "--snapshot-port") == 0 && i + 1 < argc) {
+                cfg.snapshot_port = static_cast<uint16_t>(std::stoi(argv[++i]));
             } else if (std::strcmp(argv[i], "--shm-path") == 0 && i + 1 < argc) {
                 cfg.shm_path = argv[++i];
             } else if (std::strcmp(argv[i], "--products") == 0 && i + 1 < argc) {
@@ -56,6 +62,8 @@ struct SimConfig {
             "  --mdp3-port   PORT    MDP3 multicast port      (default: 14310)\n"
             "  --secdef-group ADDR   Secdef multicast group   (default: 239.0.31.3)\n"
             "  --secdef-port PORT    Secdef multicast port    (default: 14312)\n"
+            "  --snapshot-group ADDR Snapshot multicast group (default: 239.0.31.2)\n"
+            "  --snapshot-port PORT  Snapshot multicast port  (default: 14311)\n"
             "  --shm-path    PATH    Shared memory path       (default: none)\n"
             "  --products    SYM,..  Comma-separated symbols  (default: all)\n"
             "  -h, --help            Show this message\n",
