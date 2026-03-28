@@ -203,6 +203,7 @@ struct IcePipeline {
             void on_bundle_end(const impact::BundleEnd&) {}
             void on_snapshot_order(const impact::SnapshotOrder&) {}
             void on_price_level(const impact::PriceLevel&) {}
+            void on_instrument_def(const impact::InstrumentDefinition&) {}
 
             void on_add_modify_order(const impact::AddModifyOrder& m) {
                 std::string side = (m.side == 1) ? "BUY" : "SELL";

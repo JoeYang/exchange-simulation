@@ -680,6 +680,7 @@ struct IceVisitor {
 
     void on_snapshot_order(const ice_ns::SnapshotOrder& /*msg*/) {}
     void on_price_level(const ice_ns::PriceLevel& /*msg*/) {}
+    void on_instrument_def(const ice_ns::InstrumentDefinition& /*msg*/) {}
 };
 
 // ---------------------------------------------------------------------------

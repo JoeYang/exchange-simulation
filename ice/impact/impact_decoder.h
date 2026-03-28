@@ -23,6 +23,7 @@ namespace exchange::ice::impact {
 //   void on_market_status(const MarketStatus&);
 //   void on_snapshot_order(const SnapshotOrder&);
 //   void on_price_level(const PriceLevel&);
+//   void on_instrument_def(const InstrumentDefinition&);
 //
 // Returns total bytes consumed. Stops at the first message that cannot be
 // fully read (truncated buffer). This is not an error — the caller can
@@ -103,6 +104,11 @@ size_t decode_messages(const char* buf, size_t len, VisitorT& visitor) {
                 detail::try_decode_and_dispatch<PriceLevel>(
                     msg_buf, remaining,
                     &VisitorT::on_price_level, visitor);
+                break;
+            case MessageType::InstrumentDefinition:
+                detail::try_decode_and_dispatch<InstrumentDefinition>(
+                    msg_buf, remaining,
+                    &VisitorT::on_instrument_def, visitor);
                 break;
             default:
                 // Unknown type — skip forward using body_length

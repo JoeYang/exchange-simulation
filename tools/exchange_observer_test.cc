@@ -733,6 +733,7 @@ struct TestIceVisitor {
 
     void on_snapshot_order(const ice::SnapshotOrder&) {}
     void on_price_level(const ice::PriceLevel&) {}
+    void on_instrument_def(const ice::InstrumentDefinition&) {}
 };
 
 // Build an iMpact stream containing BundleStart + AddModifyOrder + BundleEnd.

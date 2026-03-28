@@ -11,14 +11,15 @@ namespace exchange::ice::impact {
 // ---------------------------------------------------------------------------
 
 enum class MessageType : char {
-    AddModifyOrder  = 'E',
-    OrderWithdrawal = 'F',
-    DealTrade       = 'T',
-    MarketStatus    = 'M',
-    BundleStart     = 'S',
-    BundleEnd       = 'e',  // ICE wire uses context-dependent disambiguation
-    SnapshotOrder   = 'D',
-    PriceLevel      = 'L',
+    AddModifyOrder        = 'E',
+    OrderWithdrawal       = 'F',
+    DealTrade             = 'T',
+    MarketStatus          = 'M',
+    BundleStart           = 'S',
+    BundleEnd             = 'e',  // ICE wire uses context-dependent disambiguation
+    SnapshotOrder         = 'D',
+    PriceLevel            = 'L',
+    InstrumentDefinition  = 'I',
 };
 
 // ---------------------------------------------------------------------------
@@ -206,6 +207,31 @@ struct PriceLevel {
 static_assert(sizeof(PriceLevel) == 19,
     "PriceLevel must be 19 bytes");
 static_assert(std::is_trivially_copyable_v<PriceLevel>);
+
+// ---------------------------------------------------------------------------
+// InstrumentDefinition ('I') — security definition for an instrument.
+//
+// Published at startup and periodically (every 30s) to allow late joiners
+// to discover available instruments and their metadata.
+// ---------------------------------------------------------------------------
+
+struct InstrumentDefinition {
+    static constexpr char TYPE = static_cast<char>(MessageType::InstrumentDefinition);
+
+    int32_t  instrument_id;      // offset 0
+    char     symbol[8];          // offset 4, null-padded
+    char     description[32];    // offset 12, null-padded
+    char     product_group[16];  // offset 44, null-padded
+    int64_t  tick_size;          // offset 60, engine fixed-point
+    int64_t  lot_size;           // offset 68, engine fixed-point
+    int64_t  max_order_size;     // offset 76, engine fixed-point
+    uint8_t  match_algo;         // offset 84, 0=FIFO, 1=GTBPR
+    char     currency[4];        // offset 85, null-padded ("USD\0", "GBP\0")
+};
+
+static_assert(sizeof(InstrumentDefinition) == 89,
+    "InstrumentDefinition must be 89 bytes");
+static_assert(std::is_trivially_copyable_v<InstrumentDefinition>);
 
 #pragma pack(pop)
 

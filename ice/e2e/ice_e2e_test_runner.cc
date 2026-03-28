@@ -248,6 +248,7 @@ IceE2EResult IceE2ETestRunner::verify_md(
         void on_bundle_end(const impact::BundleEnd&) {}
         void on_snapshot_order(const impact::SnapshotOrder&) {}
         void on_price_level(const impact::PriceLevel&) {}
+        void on_instrument_def(const impact::InstrumentDefinition&) {}
 
         void on_add_modify_order(const impact::AddModifyOrder& m) {
             visited = true;

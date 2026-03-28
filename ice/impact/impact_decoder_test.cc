@@ -20,6 +20,7 @@ struct RecordingVisitor {
     std::vector<MarketStatus>   statuses;
     std::vector<SnapshotOrder>  snapshots;
     std::vector<PriceLevel>     price_levels;
+    std::vector<InstrumentDefinition> instrument_defs;
 
     void on_bundle_start(const BundleStart& m)    { bundle_starts.push_back(m); }
     void on_bundle_end(const BundleEnd& m)        { bundle_ends.push_back(m); }
@@ -29,6 +30,7 @@ struct RecordingVisitor {
     void on_market_status(const MarketStatus& m)  { statuses.push_back(m); }
     void on_snapshot_order(const SnapshotOrder& m) { snapshots.push_back(m); }
     void on_price_level(const PriceLevel& m)      { price_levels.push_back(m); }
+    void on_instrument_def(const InstrumentDefinition& m) { instrument_defs.push_back(m); }
 };
 
 // --- Single message decode ---
@@ -157,6 +159,80 @@ TEST(ImpactDecoderTest, DecodePriceLevel) {
     ASSERT_EQ(v.price_levels.size(), 1u);
     EXPECT_EQ(v.price_levels[0].price, 45000000);
     EXPECT_EQ(v.price_levels[0].order_count, 7u);
+}
+
+TEST(ImpactDecoderTest, DecodeInstrumentDefinition) {
+    InstrumentDefinition orig{};
+    orig.instrument_id = 1;
+    std::memset(orig.symbol, 0, sizeof(orig.symbol));
+    std::memcpy(orig.symbol, "B", 1);
+    std::memset(orig.description, 0, sizeof(orig.description));
+    std::memcpy(orig.description, "Brent Crude", 11);
+    std::memset(orig.product_group, 0, sizeof(orig.product_group));
+    std::memcpy(orig.product_group, "Energy", 6);
+    orig.tick_size = 100;
+    orig.lot_size = 10000;
+    orig.max_order_size = 50000000;
+    orig.match_algo = 0;
+    std::memset(orig.currency, 0, sizeof(orig.currency));
+    std::memcpy(orig.currency, "USD", 3);
+
+    char buf[128];
+    char* end = encode(buf, sizeof(buf), orig);
+    ASSERT_NE(end, nullptr);
+
+    RecordingVisitor v;
+    size_t consumed = decode_messages(buf, static_cast<size_t>(end - buf), v);
+    EXPECT_EQ(consumed, static_cast<size_t>(end - buf));
+    ASSERT_EQ(v.instrument_defs.size(), 1u);
+
+    const auto& m = v.instrument_defs[0];
+    EXPECT_EQ(m.instrument_id, 1);
+    EXPECT_EQ(std::string(m.symbol, 1), "B");
+    EXPECT_EQ(m.tick_size, 100);
+    EXPECT_EQ(m.lot_size, 10000);
+    EXPECT_EQ(m.match_algo, 0u);
+    EXPECT_EQ(std::string(m.currency, 3), "USD");
+}
+
+TEST(ImpactDecoderTest, DecodeInstrumentDefInterleavedWithOtherMsgs) {
+    // Encode an InstrumentDefinition followed by a MarketStatus.
+    // Verify both are decoded correctly.
+    char buf[256];
+    char* p = buf;
+
+    InstrumentDefinition idef{};
+    idef.instrument_id = 7;
+    std::memset(idef.symbol, 0, sizeof(idef.symbol));
+    std::memcpy(idef.symbol, "I", 1);
+    idef.tick_size = 50;
+    idef.lot_size = 10000;
+    idef.max_order_size = 100000000;
+    idef.match_algo = 1;  // GTBPR
+    std::memset(idef.currency, 0, sizeof(idef.currency));
+    std::memcpy(idef.currency, "EUR", 3);
+    std::memset(idef.description, 0, sizeof(idef.description));
+    std::memset(idef.product_group, 0, sizeof(idef.product_group));
+
+    p = encode(p, sizeof(buf) - static_cast<size_t>(p - buf), idef);
+    ASSERT_NE(p, nullptr);
+
+    MarketStatus ms{};
+    ms.instrument_id = 7;
+    ms.trading_status = static_cast<uint8_t>(TradingStatus::Continuous);
+    p = encode(p, sizeof(buf) - static_cast<size_t>(p - buf), ms);
+    ASSERT_NE(p, nullptr);
+
+    RecordingVisitor v;
+    size_t consumed = decode_messages(buf, static_cast<size_t>(p - buf), v);
+    EXPECT_EQ(consumed, static_cast<size_t>(p - buf));
+
+    ASSERT_EQ(v.instrument_defs.size(), 1u);
+    EXPECT_EQ(v.instrument_defs[0].instrument_id, 7);
+    EXPECT_EQ(v.instrument_defs[0].match_algo, 1u);
+
+    ASSERT_EQ(v.statuses.size(), 1u);
+    EXPECT_EQ(v.statuses[0].instrument_id, 7);
 }
 
 // --- Multi-message stream decode ---

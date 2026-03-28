@@ -48,6 +48,10 @@ TEST(ImpactMessagesTest, PriceLevelSize) {
     EXPECT_EQ(sizeof(PriceLevel), 19u);
 }
 
+TEST(ImpactMessagesTest, InstrumentDefinitionSize) {
+    EXPECT_EQ(sizeof(InstrumentDefinition), 89u);
+}
+
 // ---------------------------------------------------------------------------
 // Field offset verification
 // ---------------------------------------------------------------------------
@@ -119,6 +123,18 @@ TEST(ImpactMessagesTest, PriceLevelOffsets) {
     EXPECT_EQ(offsetof(PriceLevel, order_count), 17u);
 }
 
+TEST(ImpactMessagesTest, InstrumentDefinitionOffsets) {
+    EXPECT_EQ(offsetof(InstrumentDefinition, instrument_id), 0u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, symbol), 4u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, description), 12u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, product_group), 44u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, tick_size), 60u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, lot_size), 68u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, max_order_size), 76u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, match_algo), 84u);
+    EXPECT_EQ(offsetof(InstrumentDefinition, currency), 85u);
+}
+
 // ---------------------------------------------------------------------------
 // Wire size helpers
 // ---------------------------------------------------------------------------
@@ -132,6 +148,7 @@ TEST(ImpactMessagesTest, WireSizes) {
     EXPECT_EQ(wire_size<MarketStatus>(), 3u + 5u);
     EXPECT_EQ(wire_size<SnapshotOrder>(), 3u + 29u);
     EXPECT_EQ(wire_size<PriceLevel>(), 3u + 19u);
+    EXPECT_EQ(wire_size<InstrumentDefinition>(), 3u + 89u);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +176,7 @@ TEST(ImpactMessagesTest, MessageTypeEnum) {
     EXPECT_EQ(static_cast<char>(MessageType::BundleStart), 'S');
     EXPECT_EQ(static_cast<char>(MessageType::SnapshotOrder), 'D');
     EXPECT_EQ(static_cast<char>(MessageType::PriceLevel), 'L');
+    EXPECT_EQ(static_cast<char>(MessageType::InstrumentDefinition), 'I');
 }
 
 TEST(ImpactMessagesTest, YesNoEnum) {
@@ -178,6 +196,7 @@ TEST(ImpactMessagesTest, TypeConstants) {
     EXPECT_EQ(BundleStart::TYPE, 'S');
     EXPECT_EQ(SnapshotOrder::TYPE, 'D');
     EXPECT_EQ(PriceLevel::TYPE, 'L');
+    EXPECT_EQ(InstrumentDefinition::TYPE, 'I');
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +383,43 @@ TEST(ImpactMessagesTest, PriceLevelRoundTrip) {
     EXPECT_EQ(decoded.price, 750000);
     EXPECT_EQ(decoded.quantity, 500u);
     EXPECT_EQ(decoded.order_count, 12u);
+}
+
+TEST(ImpactMessagesTest, InstrumentDefinitionRoundTrip) {
+    InstrumentDefinition msg{};
+    msg.instrument_id = 1;
+    std::memset(msg.symbol, 0, sizeof(msg.symbol));
+    std::memcpy(msg.symbol, "B", 1);
+    std::memset(msg.description, 0, sizeof(msg.description));
+    std::memcpy(msg.description, "Brent Crude Futures", 19);
+    std::memset(msg.product_group, 0, sizeof(msg.product_group));
+    std::memcpy(msg.product_group, "Energy", 6);
+    msg.tick_size = 100;
+    msg.lot_size = 10000;
+    msg.max_order_size = 50000000;
+    msg.match_algo = 0;  // FIFO
+    std::memset(msg.currency, 0, sizeof(msg.currency));
+    std::memcpy(msg.currency, "USD", 3);
+
+    char buf[128];
+    auto* end = encode(buf, sizeof(buf), msg);
+    ASSERT_NE(end, nullptr);
+    EXPECT_EQ(end - buf, wire_size<InstrumentDefinition>());
+
+    InstrumentDefinition decoded{};
+    auto* read_end = decode(buf, sizeof(buf), decoded);
+    ASSERT_NE(read_end, nullptr);
+
+    EXPECT_EQ(decoded.instrument_id, 1);
+    EXPECT_EQ(std::string(decoded.symbol, 1), "B");
+    EXPECT_EQ(decoded.symbol[1], '\0');
+    EXPECT_EQ(std::string(decoded.description, 19), "Brent Crude Futures");
+    EXPECT_EQ(std::string(decoded.product_group, 6), "Energy");
+    EXPECT_EQ(decoded.tick_size, 100);
+    EXPECT_EQ(decoded.lot_size, 10000);
+    EXPECT_EQ(decoded.max_order_size, 50000000);
+    EXPECT_EQ(decoded.match_algo, 0u);
+    EXPECT_EQ(std::string(decoded.currency, 3), "USD");
 }
 
 // ---------------------------------------------------------------------------

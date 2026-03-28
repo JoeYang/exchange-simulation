@@ -19,9 +19,11 @@ struct Visitor {
     MarketStatus   ms{};
     SnapshotOrder  so{};
     PriceLevel     pl{};
+    InstrumentDefinition idef{};
 
     int bs_count{0}, be_count{0}, amo_count{0}, ow_count{0};
     int dt_count{0}, ms_count{0}, so_count{0}, pl_count{0};
+    int idef_count{0};
 
     void on_bundle_start(const BundleStart& m)    { bs = m; ++bs_count; }
     void on_bundle_end(const BundleEnd& m)        { be = m; ++be_count; }
@@ -31,6 +33,7 @@ struct Visitor {
     void on_market_status(const MarketStatus& m)  { ms = m; ++ms_count; }
     void on_snapshot_order(const SnapshotOrder& m) { so = m; ++so_count; }
     void on_price_level(const PriceLevel& m)      { pl = m; ++pl_count; }
+    void on_instrument_def(const InstrumentDefinition& m) { idef = m; ++idef_count; }
 };
 
 // ---------------------------------------------------------------------------
