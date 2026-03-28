@@ -241,7 +241,6 @@ public:
     }
 
     // --- Modify (cancel-replace) ---
-    // Implemented in T14.
 
     template <typename OrderListenerT>
     bool modify_order(const SpreadModifyRequest& req,
