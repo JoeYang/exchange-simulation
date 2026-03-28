@@ -140,3 +140,15 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "spread_e2e_test",
+    srcs = ["spread_e2e_test.cc"],
+    deps = [
+        ":spread_instrument_config",
+        ":spread_simulator",
+        "//exchange-sim:exchange_simulator",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
