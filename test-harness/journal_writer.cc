@@ -135,6 +135,9 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::IceFixCancel:      os << "ICE_FIX_CANCEL";    break;
         case ParsedAction::IceFixReplace:     os << "ICE_FIX_REPLACE";   break;
         case ParsedAction::IceFixMassCancel:  os << "ICE_FIX_MASS_CANCEL"; break;
+        case ParsedAction::KrxFixNewOrder:    os << "KRX_FIX_NEW_ORDER";  break;
+        case ParsedAction::KrxFixCancel:      os << "KRX_FIX_CANCEL";    break;
+        case ParsedAction::KrxFixReplace:     os << "KRX_FIX_REPLACE";   break;
         case ParsedAction::SessionStart:      os << "SESSION_START";      break;
         case ParsedAction::SessionOpen:       os << "SESSION_OPEN";       break;
         case ParsedAction::SessionClose:      os << "SESSION_CLOSE";      break;
@@ -301,6 +304,40 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
             emit("ts");
             emit("instrument");
             emit("account");
+            break;
+
+        case ParsedAction::KrxFixNewOrder:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("account");
+            emit("side");
+            emit("price");
+            emit("qty");
+            emit("type");
+            emit("tif");
+            emit("display_qty");
+            emit("program_trading");
+            emit("investor_type");
+            emit("board_id");
+            break;
+
+        case ParsedAction::KrxFixCancel:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("orig_cl_ord_id");
+            emit("side");
+            break;
+
+        case ParsedAction::KrxFixReplace:
+            emit("ts");
+            emit("instrument");
+            emit("cl_ord_id");
+            emit("orig_cl_ord_id");
+            emit("price");
+            emit("qty");
+            emit("side");
             break;
 
         case ParsedAction::SessionStart:

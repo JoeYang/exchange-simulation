@@ -168,6 +168,12 @@ Journal JournalParser::parse_lines(const std::vector<std::string>& lines,
                 atype = ParsedAction::IceFixReplace;
             } else if (type_str == "ICE_FIX_MASS_CANCEL") {
                 atype = ParsedAction::IceFixMassCancel;
+            } else if (type_str == "KRX_FIX_NEW_ORDER") {
+                atype = ParsedAction::KrxFixNewOrder;
+            } else if (type_str == "KRX_FIX_CANCEL") {
+                atype = ParsedAction::KrxFixCancel;
+            } else if (type_str == "KRX_FIX_REPLACE") {
+                atype = ParsedAction::KrxFixReplace;
             } else if (type_str == "SESSION_START") {
                 atype = ParsedAction::SessionStart;
             } else if (type_str == "SESSION_OPEN") {

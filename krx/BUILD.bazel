@@ -1,0 +1,35 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+cc_library(
+    name = "krx_exchange",
+    hdrs = ["krx_exchange.h"],
+    deps = ["//exchange-core:matching_engine"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_exchange_test",
+    srcs = ["krx_exchange_test.cc"],
+    deps = [
+        ":krx_exchange",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "krx_products",
+    hdrs = ["krx_products.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_products_test",
+    srcs = ["krx_products_test.cc"],
+    deps = [
+        ":krx_products",
+        "@googletest//:gtest_main",
+    ],
+)
