@@ -112,6 +112,7 @@ cc_binary(
         "//ice/fix:ice_fix_exec_publisher",
         "//ice/fix:ice_fix_gateway",
         "//ice/fix:ice_fix_messages",
+        "//ice/impact:impact_encoder",
         "//ice/impact:impact_publisher",
         "//tools:shm_listener",
         "//tools:shm_transport",

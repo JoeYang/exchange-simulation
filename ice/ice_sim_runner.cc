@@ -21,6 +21,7 @@
 #include "ice/ice_products.h"
 #include "ice/ice_sim_config.h"
 #include "ice/ice_simulator.h"
+#include "ice/impact/impact_encoder.h"
 #include "ice/impact/impact_publisher.h"
 #include "tools/shm_listener.h"
 #include "tools/shm_transport.h"
@@ -28,6 +29,7 @@
 #include "tools/udp_multicast.h"
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -106,12 +108,34 @@ struct SymbolRouter {
     }
 };
 
+// Publish InstrumentDefinition for all products on the given multicast socket.
+void publish_secdefs(
+    const std::vector<exchange::ice::IceProductConfig>& products,
+    exchange::UdpMulticastPublisher& mcast)
+{
+    using namespace exchange::ice::impact;
+    ImpactEncodeContext ctx{};
+    char buf[MAX_IMPACT_ENCODED_SIZE];
+
+    for (const auto& p : products) {
+        size_t len = encode_instrument_definition(buf, sizeof(buf), p, ctx);
+        if (len > 0) {
+            auto rc = mcast.send(buf, len);
+            if (rc == exchange::SendResult::kError) {
+                std::fprintf(stderr, "secdef multicast send error: %s\n",
+                             p.symbol.c_str());
+            }
+        }
+    }
+}
+
 // run_sim -- shared event loop for both SHM and non-SHM modes.
 template <typename SimulatorT>
 int run_sim(SimulatorT& sim,
             exchange::ice::fix::IceFixExecPublisher& exec_pub,
             exchange::ice::impact::ImpactFeedPublisher& md_pub,
             const std::unordered_map<std::string, uint32_t>& symbol_map,
+            const std::vector<exchange::ice::IceProductConfig>& products,
             const exchange::ice::IceSimConfig& cfg)
 {
     using namespace exchange;
@@ -205,7 +229,17 @@ int run_sim(SimulatorT& sim,
 
     TcpServer tcp(tcp_cfg);
     std::fprintf(stderr, "FIX gateway listening on port %u\n", tcp.port());
+
+    // -- Publish initial security definitions on iMpact channel --
+    publish_secdefs(products, mcast);
+    std::fprintf(stderr, "Published %zu secdef(s) on iMpact channel\n",
+                 products.size());
+
     std::fprintf(stderr, "Simulator ready. Press Ctrl+C to stop.\n");
+
+    // -- Secdef re-publish timer (every 30 seconds) --
+    auto last_secdef = std::chrono::steady_clock::now();
+    constexpr auto SECDEF_INTERVAL = std::chrono::seconds(30);
 
     // -- Event loop --
     while (g_running.load(std::memory_order_relaxed)) {
@@ -234,6 +268,13 @@ int run_sim(SimulatorT& sim,
                 }
             }
             md_pub.clear();
+        }
+
+        // 4. Periodic secdef re-publish (every 30 seconds).
+        auto now_tp = std::chrono::steady_clock::now();
+        if (now_tp - last_secdef >= SECDEF_INTERVAL) {
+            publish_secdefs(products, mcast);
+            last_secdef = now_tp;
         }
     }
 
@@ -312,12 +353,12 @@ int main(int argc, char* argv[]) {
         IceSimulator<CompositeOL, CompositeML> sim(composite_ol, composite_ml);
         sim.load_products(products);
 
-        return run_sim(sim, exec_pub, md_pub, symbol_map, cfg);
+        return run_sim(sim, exec_pub, md_pub, symbol_map, products, cfg);
     }
 
     // -- Standard mode: direct listeners, no SHM --
     IceSimulator<IceFixExecPublisher, ImpactFeedPublisher> sim(exec_pub, md_pub);
     sim.load_products(products);
 
-    return run_sim(sim, exec_pub, md_pub, symbol_map, cfg);
+    return run_sim(sim, exec_pub, md_pub, symbol_map, products, cfg);
 }
