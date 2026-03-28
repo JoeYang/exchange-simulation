@@ -16,3 +16,23 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "krx_fix_gateway",
+    hdrs = ["krx_fix_gateway.h"],
+    deps = [
+        ":krx_fix_messages",
+        "//exchange-core:matching_engine",
+        "//ice/fix:fix_parser",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_fix_gateway_test",
+    srcs = ["krx_fix_gateway_test.cc"],
+    deps = [
+        ":krx_fix_gateway",
+        "@googletest//:gtest_main",
+    ],
+)
