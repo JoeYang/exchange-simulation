@@ -95,6 +95,7 @@ cc_library(
     deps = [
         ":mdp3_messages",
         ":sbe_header",
+        "//cme:cme_products",
         "//exchange-core:events",
     ],
     visibility = ["//visibility:public"],
@@ -105,6 +106,8 @@ cc_test(
     srcs = ["mdp3_encoder_test.cc"],
     deps = [
         ":mdp3_encoder",
+        ":mdp3_decoder",
+        "//cme:cme_products",
         "@googletest//:gtest_main",
     ],
 )

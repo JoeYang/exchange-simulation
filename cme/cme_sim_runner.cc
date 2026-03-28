@@ -17,6 +17,7 @@
 #include "cme/cme_products.h"
 #include "cme/cme_simulator.h"
 #include "cme/codec/ilink3_decoder.h"
+#include "cme/codec/mdp3_encoder.h"
 #include "cme/ilink3_gateway.h"
 #include "cme/ilink3_report_publisher.h"
 #include "cme/mdp3_feed_publisher.h"
@@ -28,6 +29,7 @@
 #include "tools/udp_multicast.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
@@ -65,6 +67,20 @@ auto make_clock() {
     };
 }
 
+// Publish secdef messages for all products on the secdef multicast channel.
+void publish_secdefs(
+    exchange::UdpMulticastPublisher& secdef_pub,
+    const std::vector<exchange::cme::CmeProductConfig>& products)
+{
+    using namespace exchange::cme::sbe::mdp3;
+    char buf[MAX_MDP3_ENCODED_SIZE];
+    auto total = static_cast<uint32_t>(products.size());
+    for (const auto& product : products) {
+        size_t n = encode_instrument_definition(buf, product, total);
+        secdef_pub.send(buf, n);
+    }
+}
+
 // run_sim -- shared event loop for both SHM and non-SHM modes.
 //
 // Templated on the simulator type so the gateway and engine dispatch are
@@ -73,12 +89,24 @@ template <typename SimulatorT>
 int run_sim(SimulatorT& sim,
             exchange::cme::ILink3ReportPublisher& report_pub,
             exchange::cme::Mdp3FeedPublisher& md_pub,
-            const exchange::cme::SimConfig& cfg)
+            const exchange::cme::SimConfig& cfg,
+            const std::vector<exchange::cme::CmeProductConfig>& products)
 {
     using namespace exchange;
     using namespace exchange::cme;
 
     auto now = make_clock();
+
+    // -- Start secdef multicast publisher --
+    UdpMulticastPublisher secdef_mcast(cfg.secdef_group.c_str(),
+                                       cfg.secdef_port);
+    std::fprintf(stderr, "Secdef multicast: %s:%u\n",
+                 cfg.secdef_group.c_str(), cfg.secdef_port);
+
+    // Publish instrument definitions before opening the market.
+    publish_secdefs(secdef_mcast, products);
+    std::fprintf(stderr, "Published %zu instrument definition(s)\n",
+                 products.size());
 
     sim.start_trading_day(now());
     sim.open_market(now());
@@ -154,6 +182,10 @@ int run_sim(SimulatorT& sim,
     std::fprintf(stderr, "iLink3 gateway listening on port %u\n", tcp.port());
     std::fprintf(stderr, "Simulator ready. Press Ctrl+C to stop.\n");
 
+    // -- Secdef re-publish timer (every 30 seconds) --
+    auto last_secdef_publish = std::chrono::steady_clock::now();
+    constexpr auto secdef_interval = std::chrono::seconds(30);
+
     // -- Event loop --
     while (g_running.load(std::memory_order_relaxed)) {
         // 1. Poll TCP for incoming iLink3 messages (non-blocking).
@@ -182,6 +214,13 @@ int run_sim(SimulatorT& sim,
                 }
             }
             md_pub.clear();
+        }
+
+        // 4. Re-publish secdef messages every 30 seconds.
+        auto now_tp = std::chrono::steady_clock::now();
+        if (now_tp - last_secdef_publish >= secdef_interval) {
+            publish_secdefs(secdef_mcast, products);
+            last_secdef_publish = now_tp;
         }
     }
 
@@ -271,12 +310,12 @@ int main(int argc, char* argv[]) {
         CmeSimulator<CompositeOL, CompositeML> sim(composite_ol, composite_ml);
         sim.load_products(products);
 
-        return run_sim(sim, report_pub, md_pub, cfg);
+        return run_sim(sim, report_pub, md_pub, cfg, products);
     }
 
     // -- Standard mode: direct listeners, no SHM --
     CmeSimulator<ILink3ReportPublisher, Mdp3FeedPublisher> sim(report_pub, md_pub);
     sim.load_products(products);
 
-    return run_sim(sim, report_pub, md_pub, cfg);
+    return run_sim(sim, report_pub, md_pub, cfg, products);
 }

@@ -9,6 +9,9 @@
 #include "cme/codec/mdp3_decoder.h"
 #include "ice/ice_products.h"
 #include "ice/impact/impact_decoder.h"
+#include "tools/cme_secdef.h"
+#include "tools/ice_secdef.h"
+#include "tools/instrument_info.h"
 #include "tools/udp_multicast.h"
 
 #include <algorithm>
@@ -18,8 +21,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <memory>
 #include <string>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -41,20 +46,29 @@ struct ObserverConfig {
     std::string instrument;   // symbol filter (e.g. "ES", "B")
     std::string journal_path; // output journal file (empty = no journal)
     bool        transitions{false}; // print book transitions
+
+    // Secdef auto-discovery (optional).
+    std::string secdef_group{"239.0.31.3"};  // CME secdef multicast group
+    uint16_t    secdef_port{14312};          // CME secdef multicast port
+    bool        auto_discover{false};        // enable secdef discovery
 };
 
 static void print_usage(const char* prog) {
     std::fprintf(stderr,
         "Usage: %s --exchange cme|ice --group ADDR --port PORT\n"
-        "          --instrument SYMBOL [--journal FILE]\n"
+        "          [--instrument SYMBOL] [--journal FILE]\n"
+        "          [--auto-discover] [--secdef-group ADDR] [--secdef-port PORT]\n"
         "\n"
-        "  --exchange    cme or ice\n"
-        "  --group       Multicast group address (e.g. 239.0.31.1)\n"
-        "  --port        Multicast port\n"
-        "  --instrument  Instrument symbol to filter (e.g. ES, B)\n"
-        "  --journal     Output journal file path (optional)\n"
-        "  --transitions Print real-time book transitions\n"
-        "  -h, --help    Show this message\n",
+        "  --exchange       cme or ice\n"
+        "  --group          Multicast group address (e.g. 239.0.31.1)\n"
+        "  --port           Multicast port\n"
+        "  --instrument     Instrument symbol to filter (e.g. ES, B)\n"
+        "  --journal        Output journal file path (optional)\n"
+        "  --transitions    Print real-time book transitions\n"
+        "  --auto-discover  Discover instruments via secdef before observing\n"
+        "  --secdef-group   Secdef multicast group (default: 239.0.31.3)\n"
+        "  --secdef-port    Secdef multicast port (default: 14312)\n"
+        "  -h, --help       Show this message\n",
         prog);
 }
 
@@ -72,6 +86,12 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
             cfg.journal_path = argv[++i];
         } else if (std::strcmp(argv[i], "--transitions") == 0) {
             cfg.transitions = true;
+        } else if (std::strcmp(argv[i], "--auto-discover") == 0) {
+            cfg.auto_discover = true;
+        } else if ((std::strcmp(argv[i], "--secdef-group") == 0) && i + 1 < argc) {
+            cfg.secdef_group = argv[++i];
+        } else if ((std::strcmp(argv[i], "--secdef-port") == 0) && i + 1 < argc) {
+            cfg.secdef_port = static_cast<uint16_t>(std::stoi(argv[++i]));
         } else if (std::strcmp(argv[i], "-h") == 0 ||
                    std::strcmp(argv[i], "--help") == 0) {
             return false;
@@ -81,10 +101,15 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
         }
     }
 
-    if (cfg.exchange.empty() || cfg.group.empty() || cfg.port == 0 ||
-        cfg.instrument.empty()) {
-        std::fprintf(stderr, "Error: --exchange, --group, --port, and "
-                             "--instrument are required.\n");
+    if (cfg.exchange.empty() || cfg.group.empty() || cfg.port == 0) {
+        std::fprintf(stderr, "Error: --exchange, --group, and --port "
+                             "are required.\n");
+        return false;
+    }
+    // --instrument is required unless --auto-discover is set.
+    if (cfg.instrument.empty() && !cfg.auto_discover) {
+        std::fprintf(stderr, "Error: --instrument is required "
+                             "(or use --auto-discover).\n");
         return false;
     }
     if (cfg.exchange != "cme" && cfg.exchange != "ice") {
@@ -712,21 +737,77 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Resolve instrument ID.
+    // Resolve instrument ID -- either via secdef discovery or hardcoded lookup.
     int32_t instrument_id = -1;
-    bool is_price9 = false; // CME uses PRICE9 (1e-9), ICE uses raw fixed-point
+    bool is_price9 = (cfg.exchange == "cme");
 
-    if (cfg.exchange == "cme") {
-        instrument_id = resolve_cme_security_id(cfg.instrument);
-        is_price9 = true;
+    if (cfg.auto_discover) {
+        // Create exchange-appropriate secdef consumer.
+        std::unique_ptr<exchange::SecdefConsumer> consumer;
+        if (cfg.exchange == "cme") {
+            consumer = std::make_unique<exchange::CmeSecdefConsumer>(
+                cfg.secdef_group, cfg.secdef_port);
+        } else {
+            // ICE secdef uses the same multicast channel as market data.
+            consumer = std::make_unique<exchange::IceSecdefConsumer>(
+                cfg.group, cfg.port);
+        }
+
+        std::fprintf(stderr, "Discovering instruments via secdef...\n");
+        auto instruments = consumer->discover();
+
+        if (instruments.empty()) {
+            std::fprintf(stderr,
+                "Error: secdef discovery found no instruments.\n");
+            return 1;
+        }
+
+        // Log discovered instruments.
+        std::fprintf(stderr, "Discovered %zu instrument(s):\n",
+                     instruments.size());
+        for (const auto& [sym, info] : instruments) {
+            std::fprintf(stderr, "  %-8s id=%-6u tick=%-6ld lot=%-6ld %s\n",
+                         sym.c_str(), info.security_id,
+                         static_cast<long>(info.tick_size),
+                         static_cast<long>(info.lot_size),
+                         info.currency.c_str());
+        }
+
+        if (!cfg.instrument.empty()) {
+            // Filter to the requested symbol.
+            auto it = instruments.find(cfg.instrument);
+            if (it == instruments.end()) {
+                std::fprintf(stderr,
+                    "Error: instrument '%s' not found in secdef.\n",
+                    cfg.instrument.c_str());
+                return 1;
+            }
+            instrument_id = static_cast<int32_t>(it->second.security_id);
+        } else if (instruments.size() == 1) {
+            // Exactly one instrument -- use it.
+            const auto& [sym, info] = *instruments.begin();
+            cfg.instrument = sym;
+            instrument_id = static_cast<int32_t>(info.security_id);
+        } else {
+            std::fprintf(stderr,
+                "Error: multiple instruments discovered. "
+                "Use --instrument to select one.\n");
+            return 1;
+        }
     } else {
-        instrument_id = resolve_ice_instrument_id(cfg.instrument);
-    }
+        // Legacy hardcoded lookup.
+        if (cfg.exchange == "cme") {
+            instrument_id = resolve_cme_security_id(cfg.instrument);
+        } else {
+            instrument_id = resolve_ice_instrument_id(cfg.instrument);
+        }
 
-    if (instrument_id < 0) {
-        std::fprintf(stderr, "Error: unknown instrument '%s' for exchange '%s'\n",
-                     cfg.instrument.c_str(), cfg.exchange.c_str());
-        return 1;
+        if (instrument_id < 0) {
+            std::fprintf(stderr,
+                "Error: unknown instrument '%s' for exchange '%s'\n",
+                cfg.instrument.c_str(), cfg.exchange.c_str());
+            return 1;
+        }
     }
 
     // Open journal.

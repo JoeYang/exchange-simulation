@@ -415,6 +415,9 @@ cc_binary(
     name = "exchange-observer",
     srcs = ["exchange_observer.cc"],
     deps = [
+        ":cme_secdef",
+        ":ice_secdef",
+        ":instrument_info",
         ":udp_multicast",
         "//cme/codec:mdp3_decoder",
         "//ice/impact:impact_decoder",

@@ -2,8 +2,10 @@
 
 #include "cme/codec/mdp3_messages.h"
 #include "cme/codec/sbe_header.h"
+#include "cme/cme_products.h"
 #include "exchange-core/events.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 
@@ -274,8 +276,163 @@ inline size_t encode_market_status(
     return static_cast<size_t>(p - buf);
 }
 
+// Encode CmeProductConfig -> MDInstrumentDefinitionFuture54.
+//
+// Wire layout:
+//   MessageHeader(8) + root(224)
+//   + GroupHeader(3) + NoEvents: 1 entry (9B)
+//   + GroupHeader(3) + NoMDFeedTypes: 1 entry (4B)
+//   + GroupHeader(3) + NoInstAttrib: 0 entries
+//   + GroupHeader(3) + NoLotTypeRules: 1 entry (5B)
+// Total = 8 + 224 + (3+9) + (3+4) + 3 + (3+5) = 262 bytes.
+//
+// tot_num_reports: the total count of instruments in this secdef cycle.
+// Receivers use this to know when they've received all definitions.
+inline size_t encode_instrument_definition(
+    char* buf,
+    const cme::CmeProductConfig& product,
+    uint32_t tot_num_reports = 1)
+{
+    auto hdr = make_header<MDInstrumentDefinitionFuture54>();
+    char* p = hdr.encode_to(buf);
+
+    // -- Root block (224 bytes) --
+    MDInstrumentDefinitionFuture54 root{};
+    std::memset(&root, 0, sizeof(root));
+
+    root.match_event_indicator = 0;
+    root.tot_num_reports = tot_num_reports;
+    root.security_update_action = static_cast<char>(SecurityUpdateAction::Add);
+    root.last_update_time = 0;
+    root.md_security_trading_status =
+        static_cast<uint8_t>(SecurityTradingStatus::ReadyToTrade);
+    root.appl_id = 300;  // CME channel 300 = instrument definitions
+    root.market_segment_id = 0;
+    root.underlying_product = 0;
+
+    // security_exchange: "XCME" (4-char, no padding needed)
+    std::memcpy(root.security_exchange, "XCME", 4);
+
+    // security_group: space-padded 6-char from product_group
+    std::memset(root.security_group, ' ', sizeof(root.security_group));
+    size_t sg_len = std::min(product.product_group.size(),
+                             sizeof(root.security_group));
+    std::memcpy(root.security_group, product.product_group.c_str(), sg_len);
+
+    // asset: space-padded 6-char from symbol
+    std::memset(root.asset, ' ', sizeof(root.asset));
+    size_t asset_len = std::min(product.symbol.size(), sizeof(root.asset));
+    std::memcpy(root.asset, product.symbol.c_str(), asset_len);
+
+    // symbol: space-padded 20-char
+    std::memset(root.symbol, ' ', sizeof(root.symbol));
+    size_t sym_len = std::min(product.symbol.size(), sizeof(root.symbol));
+    std::memcpy(root.symbol, product.symbol.c_str(), sym_len);
+
+    root.security_id = static_cast<int32_t>(product.instrument_id);
+
+    // security_type: "FUT   " (space-padded 6-char)
+    std::memcpy(root.security_type, "FUT   ", 6);
+
+    // cfi_code: "FXXXXX"
+    std::memcpy(root.cfi_code, "FXXXXX", 6);
+
+    // maturity: null (sim doesn't model expiry)
+    root.maturity_month_year.year = UINT16_NULL;
+    root.maturity_month_year.month = UINT8_NULL;
+    root.maturity_month_year.day = UINT8_NULL;
+    root.maturity_month_year.week = UINT8_NULL;
+
+    // currency / settl_currency
+    std::memcpy(root.currency, "USD", 3);
+    std::memcpy(root.settl_currency, "USD", 3);
+
+    root.match_algorithm = 'F';  // FIFO for all CME sim products
+    root.min_trade_vol = 1;
+    root.max_trade_vol = engine_qty_to_wire(product.max_order_size);
+
+    root.min_price_increment = engine_price_to_price9(product.tick_size);
+
+    // display_factor: 1.0 / PRICE_SCALE = 0.0001
+    // Encoded as Decimal9 mantissa: 0.0001 * 1e9 = 100000
+    root.display_factor = Decimal9{100000};
+
+    root.main_fraction = UINT8_NULL;
+    root.sub_fraction = UINT8_NULL;
+    root.price_display_format = UINT8_NULL;
+
+    std::memset(root.unit_of_measure, 0, sizeof(root.unit_of_measure));
+    root.unit_of_measure_qty = PRICE9{INT64_NULL};
+    root.trading_reference_price = PRICE9{INT64_NULL};
+    root.settl_price_type = 0;
+    root.open_interest_qty = INT32_NULL;
+    root.cleared_volume = INT32_NULL;
+    root.high_limit_price = PRICE9{INT64_NULL};
+    root.low_limit_price = PRICE9{INT64_NULL};
+    root.max_price_variation = PRICE9{INT64_NULL};
+    root.decay_quantity = INT32_NULL;
+    root.decay_start_date = UINT16_NULL;
+    root.original_contract_size = INT32_NULL;
+    root.contract_multiplier = INT32_NULL;
+    root.contract_multiplier_unit = INT8_NULL;
+    root.flow_schedule_type = INT8_NULL;
+    root.min_price_increment_amount = PRICE9{INT64_NULL};
+    root.user_defined_instrument = 'N';
+    root.trading_reference_date = UINT16_NULL;
+    root.instrument_guid = UINT64_NULL;
+
+    std::memcpy(p, &root, sizeof(root));
+    p += sizeof(root);
+
+    // -- NoEvents group: 1 entry (Activation event) --
+    GroupHeader gh_events{};
+    gh_events.block_length = InstrDefEventEntry::BLOCK_LENGTH;
+    gh_events.num_in_group = 1;
+    p = gh_events.encode_to(p);
+
+    InstrDefEventEntry event{};
+    event.event_type = static_cast<uint8_t>(EventType::Activation);
+    event.event_time = 0;
+    std::memcpy(p, &event, sizeof(event));
+    p += sizeof(event);
+
+    // -- NoMDFeedTypes group: 1 entry (GBX = book, depth 10) --
+    GroupHeader gh_feeds{};
+    gh_feeds.block_length = InstrDefFeedTypeEntry::BLOCK_LENGTH;
+    gh_feeds.num_in_group = 1;
+    p = gh_feeds.encode_to(p);
+
+    InstrDefFeedTypeEntry feed{};
+    std::memcpy(feed.md_feed_type, "GBX", 3);
+    feed.market_depth = 10;
+    std::memcpy(p, &feed, sizeof(feed));
+    p += sizeof(feed);
+
+    // -- NoInstAttrib group: 0 entries --
+    GroupHeader gh_attribs{};
+    gh_attribs.block_length = InstrDefAttribEntry::BLOCK_LENGTH;
+    gh_attribs.num_in_group = 0;
+    p = gh_attribs.encode_to(p);
+
+    // -- NoLotTypeRules group: 1 entry --
+    GroupHeader gh_lots{};
+    gh_lots.block_length = InstrDefLotTypeEntry::BLOCK_LENGTH;
+    gh_lots.num_in_group = 1;
+    p = gh_lots.encode_to(p);
+
+    InstrDefLotTypeEntry lot{};
+    lot.lot_type = 1;  // round lot
+    // DecimalQty mantissa with exponent -4: lot_size / PRICE_SCALE
+    lot.min_lot_size = static_cast<int32_t>(product.lot_size / PRICE_SCALE);
+    std::memcpy(p, &lot, sizeof(lot));
+    p += sizeof(lot);
+
+    return static_cast<size_t>(p - buf);
+}
+
 // Maximum buffer size needed for any single MDP3 encoded message.
-// TopOfBook produces the largest: 8 + 11 + 3 + 64 + 8 = 94 bytes.
-constexpr size_t MAX_MDP3_ENCODED_SIZE = 128;
+// InstrumentDef54 produces the largest: 262 bytes (see encode above).
+// Round up to 512 for comfortable headroom.
+constexpr size_t MAX_MDP3_ENCODED_SIZE = 512;
 
 }  // namespace exchange::cme::sbe::mdp3

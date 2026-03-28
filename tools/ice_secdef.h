@@ -83,9 +83,9 @@ public:
                 void on_add_modify_order(const AddModifyOrder&) {}
                 void on_order_withdrawal(const OrderWithdrawal&) {}
                 void on_deal_trade(const DealTrade&) {}
-                void on_market_status(const MarketStatus&) {}
+                void on_market_status(const ice::impact::MarketStatus&) {}
                 void on_snapshot_order(const SnapshotOrder&) {}
-                void on_price_level(const PriceLevel&) {}
+                void on_price_level(const ice::impact::PriceLevel&) {}
 
                 void on_instrument_def(const InstrumentDefinition& msg) {
                     // Extract symbol: trim trailing nulls.

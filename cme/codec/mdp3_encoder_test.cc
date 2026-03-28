@@ -1,4 +1,6 @@
 #include "cme/codec/mdp3_encoder.h"
+#include "cme/codec/mdp3_decoder.h"
+#include "cme/cme_products.h"
 
 #include <cstring>
 #include <string>
@@ -403,6 +405,163 @@ TEST(Mdp3EncoderTest, RptSeqIncrementsAcrossCalls) {
     encode_top_of_book(buf, tob, ctx);
     // TopOfBook writes 2 entries, each incrementing rpt_seq.
     EXPECT_EQ(ctx.rpt_seq, 4u);
+}
+
+// ---------------------------------------------------------------------------
+// InstrumentDefinition encoding (encode + decode round-trip)
+// ---------------------------------------------------------------------------
+
+TEST(Mdp3EncoderTest, EncodeInstrumentDefinitionES) {
+    char buf[MAX_MDP3_ENCODED_SIZE];
+
+    exchange::cme::CmeProductConfig es{
+        1, "ES", "E-mini S&P 500", "Equity Index",
+        /*tick_size=*/  2500,
+        /*lot_size=*/   10000,
+        /*max_order=*/  10000 * 2000,
+        /*band_pct=*/   5
+    };
+
+    size_t n = encode_instrument_definition(buf, es, 8);
+    // MessageHeader(8) + root(224) + GH(3)+event(9) + GH(3)+feed(4)
+    //   + GH(3) + GH(3)+lot(5) = 262
+    EXPECT_EQ(n, 262u);
+
+    // Decode with the existing decoder.
+    auto [hdr, body] = decode_header(buf);
+    EXPECT_EQ(hdr.template_id, MD_INSTRUMENT_DEFINITION_FUTURE_54_ID);
+    EXPECT_EQ(hdr.block_length, 224u);
+    EXPECT_EQ(hdr.schema_id, MDP3_SCHEMA_ID);
+
+    DecodedInstrumentDef54 decoded{};
+    auto rc = decode_instrument_def_54(body, n - sizeof(MessageHeader), hdr, decoded);
+    ASSERT_EQ(rc, DecodeResult::kOk);
+
+    // Verify root fields.
+    EXPECT_EQ(decoded.root.tot_num_reports, 8u);
+    EXPECT_EQ(decoded.root.security_update_action,
+              static_cast<char>(SecurityUpdateAction::Add));
+    EXPECT_EQ(decoded.root.security_id, 1);
+    EXPECT_EQ(decoded.root.match_algorithm, 'F');
+    EXPECT_EQ(std::string(decoded.root.currency, 3), "USD");
+    EXPECT_EQ(decoded.root.min_trade_vol, 1u);
+    EXPECT_EQ(decoded.root.max_trade_vol,
+              static_cast<uint32_t>(2000));  // 20000000 / 10000
+
+    // symbol: "ES" followed by spaces (20-char field)
+    EXPECT_EQ(std::string(decoded.root.symbol, 2), "ES");
+    // Remaining should be spaces.
+    for (size_t i = 2; i < sizeof(decoded.root.symbol); ++i) {
+        EXPECT_EQ(decoded.root.symbol[i], ' ') << "index=" << i;
+    }
+
+    // min_price_increment round-trip.
+    EXPECT_EQ(decoded.root.min_price_increment.mantissa,
+              2500LL * ENGINE_TO_PRICE9_FACTOR);
+    EXPECT_DOUBLE_EQ(decoded.root.min_price_increment.to_double(), 0.25);
+
+    // display_factor: 0.0001
+    EXPECT_EQ(decoded.root.display_factor.mantissa, 100000LL);
+    EXPECT_DOUBLE_EQ(decoded.root.display_factor.to_double(), 0.0001);
+
+    // security_group: "Equity" (truncated to 6 chars)
+    EXPECT_EQ(std::string(decoded.root.security_group, 6), "Equity");
+
+    // Repeating groups.
+    EXPECT_EQ(decoded.num_events, 1u);
+    EXPECT_EQ(decoded.events[0].event_type,
+              static_cast<uint8_t>(EventType::Activation));
+
+    EXPECT_EQ(decoded.num_feed_types, 1u);
+    EXPECT_EQ(std::string(decoded.feed_types[0].md_feed_type, 3), "GBX");
+    EXPECT_EQ(decoded.feed_types[0].market_depth, 10);
+
+    EXPECT_EQ(decoded.num_attribs, 0u);
+
+    EXPECT_EQ(decoded.num_lot_types, 1u);
+    EXPECT_EQ(decoded.lot_types[0].lot_type, 1);
+    EXPECT_EQ(decoded.lot_types[0].min_lot_size, 1);  // 10000 / 10000
+}
+
+TEST(Mdp3EncoderTest, EncodeInstrumentDefinitionCL) {
+    char buf[MAX_MDP3_ENCODED_SIZE];
+
+    exchange::cme::CmeProductConfig cl{
+        3, "CL", "Crude Oil WTI", "Energy",
+        /*tick_size=*/  100,
+        /*lot_size=*/   10000,
+        /*max_order=*/  10000 * 1000,
+        /*band_pct=*/   7
+    };
+
+    size_t n = encode_instrument_definition(buf, cl, 1);
+    EXPECT_EQ(n, 262u);
+
+    auto [hdr, body] = decode_header(buf);
+    DecodedInstrumentDef54 decoded{};
+    auto rc = decode_instrument_def_54(body, n - sizeof(MessageHeader), hdr, decoded);
+    ASSERT_EQ(rc, DecodeResult::kOk);
+
+    EXPECT_EQ(decoded.root.security_id, 3);
+    EXPECT_EQ(decoded.root.tot_num_reports, 1u);
+    EXPECT_EQ(decoded.root.max_trade_vol, 1000u);
+
+    // tick_size = 100 -> 0.01 in real terms
+    EXPECT_EQ(decoded.root.min_price_increment.mantissa,
+              100LL * ENGINE_TO_PRICE9_FACTOR);
+    EXPECT_DOUBLE_EQ(decoded.root.min_price_increment.to_double(), 0.01);
+}
+
+TEST(Mdp3EncoderTest, EncodeInstrumentDefLongSymbolTruncated) {
+    char buf[MAX_MDP3_ENCODED_SIZE];
+
+    // Symbol longer than 20 chars should be truncated, not overflow.
+    exchange::cme::CmeProductConfig product{
+        99, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "Test", "Test",
+        2500, 10000, 10000 * 100, 5
+    };
+
+    size_t n = encode_instrument_definition(buf, product, 1);
+    EXPECT_EQ(n, 262u);
+
+    auto [hdr, body] = decode_header(buf);
+    DecodedInstrumentDef54 decoded{};
+    auto rc = decode_instrument_def_54(body, n - sizeof(MessageHeader), hdr, decoded);
+    ASSERT_EQ(rc, DecodeResult::kOk);
+
+    // Symbol truncated to 20 chars.
+    EXPECT_EQ(std::string(decoded.root.symbol, 20), "ABCDEFGHIJKLMNOPQRST");
+}
+
+TEST(Mdp3EncoderTest, EncodeInstrumentDefDispatchRoundTrip) {
+    // Encode, then use decode_mdp3_message() dispatch to verify the full path.
+    char buf[MAX_MDP3_ENCODED_SIZE];
+
+    exchange::cme::CmeProductConfig es{
+        1, "ES", "E-mini S&P 500", "Equity Index",
+        2500, 10000, 10000 * 2000, 5
+    };
+
+    size_t n = encode_instrument_definition(buf, es, 3);
+
+    bool visited = false;
+    struct Visitor {
+        bool& visited;
+        void operator()(const DecodedInstrumentDef54& def) {
+            visited = true;
+            EXPECT_EQ(def.root.security_id, 1);
+            EXPECT_EQ(def.num_events, 1u);
+            EXPECT_EQ(def.num_lot_types, 1u);
+        }
+        void operator()(const DecodedRefreshBook46&) { FAIL(); }
+        void operator()(const DecodedTradeSummary48&) { FAIL(); }
+        void operator()(const DecodedSecurityStatus30&) { FAIL(); }
+        void operator()(const DecodedSnapshot53&) { FAIL(); }
+    };
+
+    auto rc = decode_mdp3_message(buf, n, Visitor{visited});
+    EXPECT_EQ(rc, DecodeResult::kOk);
+    EXPECT_TRUE(visited);
 }
 
 }  // namespace

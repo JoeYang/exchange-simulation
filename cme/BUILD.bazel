@@ -160,6 +160,7 @@ cc_binary(
         ":mdp3_feed_publisher",
         ":sim_config",
         "//cme/codec:ilink3_decoder",
+        "//cme/codec:mdp3_encoder",
         "//exchange-core:composite_listener",
         "//tools:shm_listener",
         "//tools:shm_transport",
