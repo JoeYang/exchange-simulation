@@ -1,8 +1,10 @@
 #pragma once
 
 #include "ice/impact/impact_messages.h"
+#include "ice/ice_products.h"
 #include "exchange-core/events.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 
@@ -208,6 +210,62 @@ inline size_t encode_market_status(
     std::memset(&msg, 0, sizeof(msg));
     msg.instrument_id  = ctx.instrument_id;
     msg.trading_status = encode_trading_status(evt.state);
+
+    p = encode(p, buf_len - static_cast<size_t>(p - buf), msg);
+    if (!p) return 0;
+
+    p = write_bundle_end(p, buf_len - static_cast<size_t>(p - buf), seq);
+    if (!p) return 0;
+    return static_cast<size_t>(p - buf);
+}
+
+// ---------------------------------------------------------------------------
+// Encode IceProductConfig -> bundled InstrumentDefinition.
+//
+// Produces BundleStart + InstrumentDefinition + BundleEnd on the wire.
+// Returns total bytes written, or 0 on failure.
+// ---------------------------------------------------------------------------
+
+inline size_t encode_instrument_definition(
+    char* buf, size_t buf_len,
+    const IceProductConfig& product,
+    ImpactEncodeContext& ctx)
+{
+    uint32_t seq = ++ctx.seq_num;
+    int64_t ts = 0;  // secdef bundles use ts=0 (no market event timestamp)
+    char* p = write_bundle_start(buf, buf_len, seq, 1, ts);
+    if (!p) return 0;
+
+    InstrumentDefinition msg{};
+    std::memset(&msg, 0, sizeof(msg));
+
+    msg.instrument_id = static_cast<int32_t>(product.instrument_id);
+
+    // Copy symbol, null-padded (truncate if longer than field)
+    auto sym_len = std::min(product.symbol.size(), sizeof(msg.symbol) - 1);
+    std::memcpy(msg.symbol, product.symbol.data(), sym_len);
+
+    auto desc_len = std::min(product.description.size(),
+                             sizeof(msg.description) - 1);
+    std::memcpy(msg.description, product.description.data(), desc_len);
+
+    auto pg_len = std::min(product.product_group.size(),
+                           sizeof(msg.product_group) - 1);
+    std::memcpy(msg.product_group, product.product_group.data(), pg_len);
+
+    msg.tick_size      = product.tick_size;
+    msg.lot_size       = product.lot_size;
+    msg.max_order_size = product.max_order_size;
+    msg.match_algo     = static_cast<uint8_t>(product.match_algo);
+
+    // Currency: Energy/Equity Index = "USD", Softs with GBP products = "GBP",
+    // default "USD". Simplified mapping for the simulator.
+    const char* ccy = "USD";
+    if (product.product_group == "Softs" &&
+        (product.symbol == "C")) {
+        ccy = "GBP";  // London Cocoa is GBP-denominated
+    }
+    std::memcpy(msg.currency, ccy, 3);
 
     p = encode(p, buf_len - static_cast<size_t>(p - buf), msg);
     if (!p) return 0;

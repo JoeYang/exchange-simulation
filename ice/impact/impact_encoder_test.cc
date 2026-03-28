@@ -416,5 +416,133 @@ TEST(ImpactEncoderTest, EncodeFailsOnSmallBuffer) {
     EXPECT_EQ(n, 0u);
 }
 
+// ---------------------------------------------------------------------------
+// InstrumentDefinition encoding
+// ---------------------------------------------------------------------------
+
+TEST(ImpactEncoderTest, EncodeInstrumentDefinitionBrent) {
+    char buf[MAX_IMPACT_ENCODED_SIZE];
+    ImpactEncodeContext ctx{};
+
+    IceProductConfig brent{};
+    brent.instrument_id = 1;
+    brent.symbol = "B";
+    brent.description = "Brent Crude Futures";
+    brent.product_group = "Energy";
+    brent.tick_size = 100;
+    brent.lot_size = 10000;
+    brent.max_order_size = 50000000;
+    brent.match_algo = IceMatchAlgo::FIFO;
+
+    size_t n = encode_instrument_definition(buf, sizeof(buf), brent, ctx);
+    // BundleStart(3+14) + InstrumentDefinition(3+89) + BundleEnd(3+4) = 116
+    EXPECT_EQ(n, 116u);
+
+    // Verify BundleStart
+    auto bs = decode_bundle_start(buf);
+    EXPECT_EQ(bs.sequence_number, 1u);
+    EXPECT_EQ(bs.message_count, 1u);
+
+    // Decode the InstrumentDefinition
+    const char* p = buf + wire_size<BundleStart>();
+    InstrumentDefinition msg{};
+    auto* after = decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
+    ASSERT_NE(after, nullptr);
+
+    EXPECT_EQ(msg.instrument_id, 1);
+    EXPECT_EQ(std::string(msg.symbol, 1), "B");
+    EXPECT_EQ(msg.symbol[1], '\0');
+    EXPECT_EQ(std::string(msg.description, 19), "Brent Crude Futures");
+    EXPECT_EQ(std::string(msg.product_group, 6), "Energy");
+    EXPECT_EQ(msg.tick_size, 100);
+    EXPECT_EQ(msg.lot_size, 10000);
+    EXPECT_EQ(msg.max_order_size, 50000000);
+    EXPECT_EQ(msg.match_algo, 0u);  // FIFO
+    EXPECT_EQ(std::string(msg.currency, 3), "USD");
+
+    // Verify BundleEnd
+    auto be = decode_bundle_end(after);
+    EXPECT_EQ(be.sequence_number, 1u);
+
+    EXPECT_EQ(ctx.seq_num, 1u);
+}
+
+TEST(ImpactEncoderTest, EncodeInstrumentDefinitionGTBPR) {
+    char buf[MAX_IMPACT_ENCODED_SIZE];
+    ImpactEncodeContext ctx{};
+
+    IceProductConfig euribor{};
+    euribor.instrument_id = 7;
+    euribor.symbol = "I";
+    euribor.description = "Three-Month Euribor";
+    euribor.product_group = "STIR";
+    euribor.tick_size = 50;
+    euribor.lot_size = 10000;
+    euribor.max_order_size = 100000000;
+    euribor.match_algo = IceMatchAlgo::GTBPR;
+
+    size_t n = encode_instrument_definition(buf, sizeof(buf), euribor, ctx);
+    EXPECT_EQ(n, 116u);
+
+    const char* p = buf + wire_size<BundleStart>();
+    InstrumentDefinition msg{};
+    auto* after = decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
+    ASSERT_NE(after, nullptr);
+
+    EXPECT_EQ(msg.instrument_id, 7);
+    EXPECT_EQ(msg.match_algo, 1u);  // GTBPR
+    EXPECT_EQ(msg.tick_size, 50);
+    EXPECT_EQ(std::string(msg.currency, 3), "USD");
+}
+
+TEST(ImpactEncoderTest, EncodeInstrumentDefinitionGBPCurrency) {
+    char buf[MAX_IMPACT_ENCODED_SIZE];
+    ImpactEncodeContext ctx{};
+
+    IceProductConfig cocoa{};
+    cocoa.instrument_id = 4;
+    cocoa.symbol = "C";
+    cocoa.description = "London Cocoa";
+    cocoa.product_group = "Softs";
+    cocoa.tick_size = 10000;
+    cocoa.lot_size = 10000;
+    cocoa.max_order_size = 10000000;
+    cocoa.match_algo = IceMatchAlgo::FIFO;
+
+    size_t n = encode_instrument_definition(buf, sizeof(buf), cocoa, ctx);
+    EXPECT_EQ(n, 116u);
+
+    const char* p = buf + wire_size<BundleStart>();
+    InstrumentDefinition msg{};
+    decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
+    EXPECT_EQ(std::string(msg.currency, 3), "GBP");
+}
+
+TEST(ImpactEncoderTest, EncodeInstrumentDefinitionSymbolTruncation) {
+    char buf[MAX_IMPACT_ENCODED_SIZE];
+    ImpactEncodeContext ctx{};
+
+    IceProductConfig product{};
+    product.instrument_id = 99;
+    product.symbol = "LONGERSYM";  // 9 chars, field is 8
+    product.description = "Test";
+    product.product_group = "Test";
+    product.tick_size = 100;
+    product.lot_size = 10000;
+    product.max_order_size = 10000000;
+    product.match_algo = IceMatchAlgo::FIFO;
+
+    size_t n = encode_instrument_definition(buf, sizeof(buf), product, ctx);
+    EXPECT_EQ(n, 116u);
+
+    const char* p = buf + wire_size<BundleStart>();
+    InstrumentDefinition msg{};
+    decode(p, sizeof(buf) - wire_size<BundleStart>(), msg);
+
+    // Should be truncated to 7 chars + null
+    EXPECT_EQ(std::string(msg.symbol, 7), "LONGERS");
+    EXPECT_EQ(msg.symbol[7], '\0');
+}
+
 }  // namespace
 }  // namespace exchange::ice::impact
