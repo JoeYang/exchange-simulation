@@ -1,0 +1,33 @@
+# KRX E2E: VI trigger + dual session
+# VI triggering and call auction are tested at the engine integration level
+# (krx_integration_test.cc) since they require reference price configuration.
+#
+# This journal tests dual session lifecycle:
+#   Regular session: place and fill orders
+#   Session close
+#   After-hours session: place and fill independent orders
+#
+# Product: KS (KOSPI200 Futures)
+
+# --- Regular session ---
+
+ACTION SESSION_START ts=1000 state=CONTINUOUS
+
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=2 account=2 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+EXPECT KRX_MD_TRADE price=3500000
+
+# --- Close regular, start after-hours ---
+
+ACTION SESSION_CLOSE ts=5000
+
+ACTION SESSION_START ts=6000 state=AFTER_HOURS
+
+# After-hours order — independent from regular session
+ACTION KRX_FIX_NEW_ORDER ts=7000 instrument=KS cl_ord_id=3 account=3 side=BUY price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+EXPECT KRX_MD_QUOTE bid_price=3510000

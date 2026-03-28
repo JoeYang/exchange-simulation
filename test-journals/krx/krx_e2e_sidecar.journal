@@ -1,0 +1,23 @@
+# KRX E2E: Sidecar (program trading flag handling)
+# Tests: program and non-program orders are accepted in normal conditions.
+# Sidecar activation/deactivation is tested at the unit/integration level
+# (krx_exchange_test.cc / krx_integration_test.cc) since it requires
+# direct simulator API calls not exposed as journal actions.
+#
+# Product: KS (KOSPI200 Futures)
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Non-program order accepted
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY program_trading=0
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+
+# Program order accepted (sidecar not active)
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY program_trading=1
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+EXPECT KRX_MD_TRADE price=3500000
+
+# Another non-program order
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=3 side=BUY price=3490000 qty=10000 type=LIMIT tif=DAY program_trading=0
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+EXPECT KRX_MD_QUOTE bid_price=3490000

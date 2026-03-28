@@ -1,0 +1,22 @@
+# KRX E2E: Basic KOSPI200 futures limit order lifecycle
+# Tests: add -> partial fill -> cancel remainder
+#
+# Product: KS (KOSPI200 Futures)
+# Tick size: 500 (0.05 index pts)
+# Lot size: 10000 (1 contract)
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Place a buy limit order for 3 contracts at 350.0000 (3500000 fixed-point)
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=30000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+# Place a sell limit order for 1 contract at the same price -> partial fill
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+EXPECT KRX_MD_TRADE price=3500000
+
+# Cancel the remaining 2 contracts of buy order
+ACTION KRX_FIX_CANCEL ts=3000 instrument=KS cl_ord_id=3 orig_cl_ord_id=1
+EXPECT KRX_EXEC_CANCELLED
