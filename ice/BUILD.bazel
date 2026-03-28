@@ -99,6 +99,26 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "ice_spreads",
+    hdrs = ["ice_spreads.h"],
+    deps = [
+        ":ice_products",
+        "//exchange-sim/spread_book:spread_instrument_config",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_spreads_test",
+    srcs = ["ice_spreads_test.cc"],
+    deps = [
+        ":ice_products",
+        ":ice_spreads",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- ICE Live Simulator Binary ---
 cc_binary(
     name = "ice-sim",
