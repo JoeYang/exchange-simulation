@@ -34,3 +34,14 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
 )
+
+cc_test(
+    name = "spread_strategy_test",
+    srcs = ["spread_strategy_test.cc"],
+    deps = [
+        ":spread_instrument_config",
+        ":spread_strategy",
+        ":spread_strategy_registry",
+        "@googletest//:gtest_main",
+    ],
+)
