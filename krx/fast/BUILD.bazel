@@ -51,3 +51,23 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "fast_publisher",
+    hdrs = ["fast_publisher.h"],
+    deps = [
+        ":fast_encoder",
+        "//exchange-core:listeners",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "fast_publisher_test",
+    srcs = ["fast_publisher_test.cc"],
+    deps = [
+        ":fast_publisher",
+        ":fast_decoder",
+        "@googletest//:gtest_main",
+    ],
+)
