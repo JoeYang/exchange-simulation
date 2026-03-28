@@ -67,3 +67,22 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "implied_price_engine_test",
+    srcs = ["implied_price_engine_test.cc"],
+    deps = [
+        ":implied_price_engine",
+        ":spread_strategy",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "circular_guard_test",
+    srcs = ["circular_guard_test.cc"],
+    deps = [
+        ":circular_guard",
+        "@googletest//:gtest_main",
+    ],
+)
