@@ -334,6 +334,82 @@ cc_test(
     ],
 )
 
+# --- Secdef: InstrumentInfo + SecdefConsumer ---
+cc_library(
+    name = "instrument_info",
+    hdrs = ["instrument_info.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "secdef_consumer",
+    hdrs = ["secdef_consumer.h"],
+    deps = [":instrument_info"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "instrument_info_test",
+    srcs = ["instrument_info_test.cc"],
+    deps = [
+        ":instrument_info",
+        ":secdef_consumer",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# --- Secdef: CmeSecdefConsumer ---
+cc_library(
+    name = "cme_secdef",
+    hdrs = ["cme_secdef.h"],
+    deps = [
+        ":instrument_info",
+        ":secdef_consumer",
+        ":udp_multicast",
+        "//cme/codec:mdp3_decoder",
+        "//cme/codec:mdp3_encoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "cme_secdef_test",
+    srcs = ["cme_secdef_test.cc"],
+    deps = [
+        ":cme_secdef",
+        ":udp_multicast",
+        "//cme:cme_products",
+        "//cme/codec:mdp3_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# --- Secdef: IceSecdefConsumer ---
+cc_library(
+    name = "ice_secdef",
+    hdrs = ["ice_secdef.h"],
+    deps = [
+        ":instrument_info",
+        ":secdef_consumer",
+        ":udp_multicast",
+        "//ice/impact:impact_decoder",
+        "//ice/impact:impact_encoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_secdef_test",
+    srcs = ["ice_secdef_test.cc"],
+    deps = [
+        ":ice_secdef",
+        ":udp_multicast",
+        "//ice:ice_products",
+        "//ice/impact:impact_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Simulation Exercise: Exchange Observer ---
 cc_binary(
     name = "exchange-observer",
