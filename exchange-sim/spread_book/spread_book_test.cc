@@ -437,10 +437,11 @@ TEST_F(SpreadBookImpliedTest, ImpliedOutBidMatchesRestingAsk) {
     leg1_bbo_ = {.bid_price = 1000000, .bid_qty = 10000,
                   .ask_price = 1005000, .ask_qty = 10000};
 
-    // For implied-out bid (synthetic buy spread): we buy front (need resting
-    // ask on front) and sell back (need resting bid on back).
-    leg0_best_ask_id_ = 101;  // front month resting ask (we buy from it)
-    leg1_best_bid_id_ = 202;  // back month resting bid (we sell to it)
+    // For implied-out bid: synthetic spread bid from outright bid(leg0) and
+    // ask(leg1). To execute: sell leg0 (hit resting Buy) and buy leg1 (hit
+    // resting Sell).
+    leg0_best_bid_id_ = 101;  // front month resting bid (we sell to it)
+    leg1_best_ask_id_ = 202;  // back month resting ask (we buy from it)
 
     int fills = book_.on_outright_bbo_change(listener_, 2000);
     EXPECT_EQ(fills, 1);
@@ -465,8 +466,8 @@ TEST_F(SpreadBookImpliedTest, ImpliedOutNoCross) {
     leg1_bbo_ = {.bid_price = 1000000, .bid_qty = 10000,
                   .ask_price = 1005000, .ask_qty = 10000};
 
-    leg0_best_ask_id_ = 101;
-    leg1_best_bid_id_ = 202;
+    leg0_best_bid_id_ = 101;
+    leg1_best_ask_id_ = 202;
 
     int fills = book_.on_outright_bbo_change(listener_, 2000);
     EXPECT_EQ(fills, 0);
@@ -482,8 +483,8 @@ TEST_F(SpreadBookImpliedTest, ImpliedOutFailedFillApplier) {
                   .ask_price = 1010000, .ask_qty = 10000};
     leg1_bbo_ = {.bid_price = 1000000, .bid_qty = 10000,
                   .ask_price = 1005000, .ask_qty = 10000};
-    leg0_best_ask_id_ = 101;
-    leg1_best_bid_id_ = 202;
+    leg0_best_bid_id_ = 101;
+    leg1_best_ask_id_ = 202;
 
     fill_applier_should_fail_ = true;
 

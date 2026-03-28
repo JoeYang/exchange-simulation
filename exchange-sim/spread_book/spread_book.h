@@ -570,15 +570,19 @@ private:
 
             for (size_t i = 0; i < legs.size(); ++i) {
                 const auto& leg = legs[i];
-                // For implied-out bid: we execute buy-ratio legs as BUYS
-                // and sell-ratio legs as SELLS on the outright.
-                // The execution side for each leg:
-                Side leg_exec_side = (implied_side == Side::Buy)
+                // Implied-out bid (implied_side=Buy): synthetic spread BID
+                // derived from outright bids (positive legs) and asks (negative
+                // legs). To execute: match outright resting bids for positive
+                // legs (sell to them) and resting asks for negative legs (buy
+                // from them). So resting_side = Buy for positive, Sell for
+                // negative.
+                //
+                // Implied-out ask (implied_side=Sell): derived from outright
+                // asks (positive legs) and bids (negative legs). Resting_side
+                // = Sell for positive, Buy for negative.
+                Side resting_side = (implied_side == Side::Buy)
                     ? (leg.ratio > 0 ? Side::Buy : Side::Sell)
                     : (leg.ratio > 0 ? Side::Sell : Side::Buy);
-                // We need the opposite side's resting order.
-                Side resting_side = (leg_exec_side == Side::Buy)
-                    ? Side::Sell : Side::Buy;
 
                 auto best_id = best_order_provider_(leg.instrument_id,
                                                      resting_side);
