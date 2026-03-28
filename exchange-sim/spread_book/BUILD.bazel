@@ -35,6 +35,13 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+cc_library(
+    name = "circular_guard",
+    hdrs = ["circular_guard.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
 cc_test(
     name = "spread_strategy_test",
     srcs = ["spread_strategy_test.cc"],
