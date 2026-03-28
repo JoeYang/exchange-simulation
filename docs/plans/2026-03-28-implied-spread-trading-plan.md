@@ -1,9 +1,14 @@
 # Implied/Spread Trading Implementation Plan
 
 **Date:** 2026-03-28
-**Status:** Draft
+**Status:** Draft (revised after review)
 **Scope:** SpreadBook abstraction, implied pricing, atomic multi-leg matching
-**Estimate:** ~2,680 lines across 20 tasks in 8 phases
+**Estimate:** ~3,500 lines across 25 tasks in 8 phases
+**Design invariant:** Single-threaded execution assumed throughout. SpreadBook,
+implied price engine, and all MatchingEngine interactions run on one thread with
+no concurrent access. This eliminates lock contention and simplifies atomicity
+guarantees. If multi-threading is ever introduced, a full concurrency audit is
+required.
 
 ## Problem
 
@@ -13,48 +18,10 @@ spread bid at -5 combined with a front-month offer at 100 implies a back-month o
 at 105. Without implied pricing, the simulator cannot model real exchange behavior for
 spread-heavy markets (interest rates, energy).
 
-## Options Analysis
+## Decision: SpreadBook Abstraction (Option C)
 
-### Option A: Inline in MatchingEngine
-
-Embed spread logic directly into `match_continuous()`.
-
-| Pros | Cons |
-|---|---|
-| No new components | Violates SRP; engine grows 500+ lines |
-| Direct book access | Every outright instrument must know about every spread |
-| | Cannot disable spreads without #ifdef |
-| | Testing becomes combinatorial nightmare |
-
-### Option B: External Spread Coordinator (pub/sub)
-
-MatchingEngine publishes BBO updates; external coordinator subscribes, computes
-implied prices, sends synthetic orders back.
-
-| Pros | Cons |
-|---|---|
-| Zero engine changes | Race conditions between BBO publish and synthetic order |
-| Clean separation | Double-matching latency (event round-trip) |
-| | Cannot guarantee atomicity of multi-leg fills |
-| | Synthetic order ID management is fragile |
-
-### Option C: SpreadBook Abstraction (Recommended)
-
-New `SpreadBook` component in `exchange-sim/` that sits alongside `MatchingEngine`
-instances. It holds references to outright `OrderBook`s, manages its own spread
-`OrderBook`, and coordinates atomic multi-leg fills via a single new engine method:
-`apply_implied_fill()` (~60 lines).
-
-| Pros | Cons |
-|---|---|
-| ONE core change (60 lines) | New component to maintain |
-| Atomic multi-leg guarantee | Requires OrderBook read access |
-| Clean enable/disable | Slightly more indirection than Option A |
-| Testable in isolation | |
-| Matches CME/ICE production architecture | |
-
-**Decision: Option C.** Minimal core invasion, production-accurate architecture,
-testable in isolation.
+Minimal core invasion (two small engine changes), production-accurate architecture,
+testable in isolation. See git history for full options analysis.
 
 ## Architecture
 
@@ -68,53 +35,71 @@ testable in isolation.
                          |  MatchingEngine[ES_front]  MatchingEngine[ES_back]
                          |    |  OrderBook (bids/asks)   |  OrderBook       |
                          |    |          \               |        /         |
-                         |    |           \              |       /          |
-                         |    |            v             v      v           |
+                         |    |           v              v       v          |
                          |    |         SpreadBook[ES_CAL]                  |
                          |    |           |  spread OrderBook               |
                          |    |           |  strategy definitions            |
                          |    |           |  implied price engine            |
                          |    |           |                                 |
-                         |    |           +---> apply_implied_fill()        |
+                         |    |           +---> apply_implied_fills()       |
                          |    |                   on leg engines             |
-                         |    |                                             |
                          +--------------------------------------------------+
 
-  Data flow (implied-out):         Data flow (implied-in):
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~       ~~~~~~~~~~~~~~~~~~~~~~~~
-  1. Outright fill/BBO change      1. Spread order arrives
-  2. SpreadBook recalculates       2. SpreadBook checks outright BBOs
-     implied spread prices         3. If legs cross implied spread:
-  3. If implied spread crosses:       apply_implied_fill() on each
-     execute spread match              outright engine
-  4. apply_implied_fill() on       4. Fill spread order
-     each outright engine
+  Implied-out flow:                    Implied-in flow:
+  1. Outright fill/BBO change          1. Spread order arrives
+  2. SpreadBook recalculates           2. SpreadBook checks outright BBOs
+     implied spread prices             3. If legs cross implied spread:
+  3. If implied spread crosses:           apply_implied_fills(batch)
+     execute spread match              4. Fill spread order
+  4. apply_implied_fills(batch)
+     on each outright engine
 
   Circular dependency handling:
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  A->B spread + B->C spread + C->A spread can create infinite loops.
+  A->B + B->C + C->A can create infinite loops.
   Solution: depth-limited propagation (max_depth=3, configurable).
-  Each implied price recalc carries a depth counter; propagation
-  stops when depth reaches limit.
 ```
 
-### Core Engine Change
+### Core Engine Changes (TWO methods)
 
-Single new method on `MatchingEngine` (~60 lines):
+**1. Batch implied fill (replaces single apply_implied_fill):**
 
 ```cpp
-// Apply an implied fill to an outright order at the given price/qty.
-// Called by SpreadBook after it determines a multi-leg match is valid.
-// Bypasses normal order flow -- directly reduces resting qty and emits
-// fill events. Returns false if order no longer exists or has
-// insufficient remaining qty.
-bool apply_implied_fill(OrderId order_id, Price fill_price,
-                        Quantity fill_qty, Timestamp ts);
+// Apply implied fills atomically: validate ALL legs, then apply ALL or NONE.
+// LegFill = {OrderId, Price, Quantity, Side}.
+// Returns false and applies nothing if any leg fails validation.
+bool apply_implied_fills(std::span<const LegFill> fills, Timestamp ts);
 ```
 
-This method: validates order exists, reduces remaining qty, emits
-`OrderFilled`/`Trade` events, updates book levels, triggers stop checks.
-No validation (price bands, session state) -- the SpreadBook is trusted.
+Semantics: iterate fills, validate each (order exists, sufficient remaining qty,
+correct side). If any validation fails, return false with zero side effects. On
+success, apply all fills, emit events, update book levels. ~80 lines.
+
+**2. Best-order accessor (~5 lines):**
+
+```cpp
+// Returns OrderId of head-of-queue order at best price level for given side.
+// Returns nullopt if side is empty.
+std::optional<OrderId> best_order_id(Side side) const;
+```
+
+SpreadBook needs this to identify which outright orders to include in implied
+fills without reaching into OrderBook internals.
+
+### Spread Events
+
+New event types for implied fill attribution:
+- `SpreadFill` or `implied` flag on existing `Trade`/`OrderFilled` events
+- `ImpliedTopOfBook` update to market data listeners
+- `ImpliedDepthUpdate` to market data listeners
+
+### Non-Unity Leg Ratios
+
+`SpreadStrategy` must include per-leg ratios. Two engine tiers:
+- **2-leg simple:** direct price offset, ratio = 1:1 (calendar, intercommodity)
+- **N-leg complex:** weighted combination (butterfly 1:-2:1, condor 1:-1:-1:1)
+
+Implied price engine handles tick size normalization (leg tick != spread tick)
+and lot size GCD calculation (legs with different lot sizes).
 
 ### SpreadBook Components
 
@@ -122,93 +107,103 @@ All in `exchange-sim/spread_book/`:
 
 | File | Purpose | ~Lines |
 |---|---|---|
-| `spread_strategy.h` | Strategy definition (legs, ratios, price formula) | 80 |
-| `implied_price_engine.h` | Compute implied prices from outright BBOs | 150 |
-| `spread_book.h` | Spread order management + matching coordination | 350 |
-| `spread_book.cc` | Implementation | 200 |
+| `spread_strategy.h` | Strategy def (legs, ratios, tick normalization, lot GCD) | 120 |
+| `spread_instrument_config.h` | Spread instrument secdef + registration | 80 |
+| `implied_price_engine.h` | 2-leg simple + N-leg complex implied pricing | 200 |
+| `spread_book.h/.cc` | Spread order mgmt + matching + TIF handling | 600 |
 | `circular_guard.h` | Depth-limited propagation guard | 40 |
 
 ## Task Breakdown
 
 | # | Task | Phase | Dep | Component | ~Lines |
 |---|---|---|---|---|---|
-| 1 | `SpreadStrategy` struct: legs, ratios, implied price formula | P1 | -- | exchange-sim | 80 |
-| 2 | `SpreadStrategyRegistry`: register/lookup strategies by spread ID | P1 | 1 | exchange-sim | 100 |
-| 3 | Unit tests for strategy definitions and registry | P1 | 1,2 | test | 120 |
-| 4 | `ImpliedPriceEngine`: compute implied bid/ask from outright BBOs | P2 | 1 | exchange-sim | 150 |
-| 5 | `CircularGuard`: depth counter for propagation loops | P2 | -- | exchange-sim | 40 |
-| 6 | Unit tests for implied price calc + circular guard | P2 | 4,5 | test | 150 |
-| 7 | `apply_implied_fill()` on MatchingEngine | P3 | -- | exchange-core | 60 |
-| 8 | Unit tests for `apply_implied_fill()` | P3 | 7 | test | 180 |
-| 9 | `SpreadBook` core: spread-side OrderBook, order entry/cancel | P4 | 1,2 | exchange-sim | 250 |
-| 10 | Implied-out matching: outright BBO change triggers spread match | P4 | 4,9 | exchange-sim | 150 |
-| 11 | Implied-in matching: spread order triggers outright implied fills | P4 | 4,7,9 | exchange-sim | 150 |
-| 12 | Atomic multi-leg fill coordinator (all-or-nothing) | P4 | 10,11 | exchange-sim | 100 |
-| 13 | Unit tests for SpreadBook (implied-out, implied-in, atomic fills) | P4 | 9-12 | test | 250 |
-| 14 | `ExchangeSimulator` integration: SpreadBook lifecycle, routing | P5 | 9,12 | exchange-sim | 120 |
-| 15 | Integration tests: multi-instrument spread scenarios | P5 | 14 | test | 200 |
-| 16 | CME spread types: calendar, butterfly, condor, crack | P6 | 2,14 | cme | 100 |
-| 17 | ICE spread types: calendar, strip, crack | P6 | 2,14 | ice | 80 |
-| 18 | E2E journal tests: spread fill journal invariants | P7 | 15-17 | test | 150 |
-| 19 | Failure injection: partial fill rollback, circular loops, stale BBO | P7 | 13,15 | test | 150 |
-| 20 | Performance benchmark: implied price recalc latency | P8 | 14 | benchmarks | 50 |
-| | | | | **Total** | **~2,680** |
+| 1 | `SpreadStrategy`: legs, ratios, tick normalization, lot GCD | P1 | -- | exchange-sim | 120 |
+| 2 | `SpreadStrategyRegistry`: register/lookup by spread ID | P1 | 1 | exchange-sim | 100 |
+| 3 | `SpreadInstrumentConfig`: spread secdef + registration in simulator | P1 | 1,2 | exchange-sim | 80 |
+| 4 | Unit tests: strategy defs, registry, secdef | P1 | 1-3 | test | 150 |
+| 5 | `ImpliedPriceEngine` (2-leg simple): price offset from outright BBOs | P2 | 1 | exchange-sim | 120 |
+| 6 | `ImpliedPriceEngine` (N-leg complex): weighted combination, tick/lot normalization | P2 | 5 | exchange-sim | 80 |
+| 7 | `CircularGuard`: depth counter for propagation loops | P2 | -- | exchange-sim | 40 |
+| 8 | Unit tests: implied price calc (2-leg + N-leg) + circular guard | P2 | 5-7 | test | 180 |
+| 9 | `apply_implied_fills(span<LegFill>)` batch method on MatchingEngine | P3 | -- | exchange-core | 80 |
+| 10 | `best_order_id(Side)` accessor on MatchingEngine | P3 | -- | exchange-core | 5 |
+| 11 | Unit tests: batch implied fills (all-or-nothing) + best_order_id | P3 | 9,10 | test | 200 |
+| 12 | `SpreadBook` core: spread-side OrderBook, order entry/cancel | P4 | 1-3 | exchange-sim | 250 |
+| 13 | Spread order TIF handling: IOC (partial OK) / FOK (all-or-nothing) | P4 | 12 | exchange-sim | 80 |
+| 14 | Spread order modification: cancel-replace | P4 | 12 | exchange-sim | 60 |
+| 15 | Implied-out matching: outright BBO change triggers spread match | P4 | 5,12 | exchange-sim | 150 |
+| 16 | Implied-in matching: spread order triggers outright implied fills | P4 | 5,9,10,12 | exchange-sim | 150 |
+| 17 | Atomic multi-leg fill coordinator (zero-or-all via batch method) | P4 | 15,16 | exchange-sim | 80 |
+| 18 | Spread event attribution: SpreadFill, ImpliedTopOfBook, ImpliedDepthUpdate | P4 | 15,16 | exchange-sim | 100 |
+| 19 | Unit tests: SpreadBook (implied-out, implied-in, TIF, cancel-replace, events) | P4 | 12-18 | test | 300 |
+| 20 | `ExchangeSimulator` integration: SpreadBook lifecycle, routing | P5 | 12,17 | exchange-sim | 120 |
+| 21 | Integration tests: multi-instrument spread scenarios | P5 | 20 | test | 200 |
+| 22 | CME spread types: calendar, butterfly, condor, crack | P6 | 2,20 | cme | 100 |
+| 23 | ICE spread types: calendar, strip, crack | P6 | 2,20 | ice | 80 |
+| 24 | E2E journal tests: spread fill journal invariants | P7 | 21-23 | test | 150 |
+| 25 | Failure injection: partial fill rollback, circular loops, stale BBO, TIF edge cases | P7 | 19,21 | test | 175 |
+| | | | | **Total** | **~3,450** |
 
 ## Dependency DAG
 
 ```
-Phase 1 (Strategy)          Phase 2 (Pricing)       Phase 3 (Engine)
-  T1 ----+----> T3            T4 ----> T6             T7 ----> T8
-  T2 ----+                    T5 ----> T6
-  |      |                    |
-  |      |                    |
-  v      v                    v
+Phase 1 (Strategy + Secdef)    Phase 2 (Pricing)        Phase 3 (Engine)
+  T1 ----> T2 ----> T3           T5 ----> T6              T9  ---+---> T11
+  T1 ----> T3                    T7 ------+---> T8         T10 --+
+  T1..T3 ----> T4                T5,T6 ---+
+       |                              |
+       v                              v
 Phase 4 (SpreadBook Core)
-  T9 <-- T1,T2
-  T10 <-- T4,T9
-  T11 <-- T4,T7,T9
-  T12 <-- T10,T11
-  T13 <-- T9..T12
+  T12 <-- T1,T2,T3
+  T13 <-- T12                    (TIF handling)
+  T14 <-- T12                    (cancel-replace)
+  T15 <-- T5,T12                 (implied-out)
+  T16 <-- T5,T9,T10,T12         (implied-in)
+  T17 <-- T15,T16               (atomic coordinator)
+  T18 <-- T15,T16               (events)
+  T19 <-- T12..T18               (SpreadBook tests)
        |
        v
-Phase 5 (Integration)       Phase 6 (Exchange-Specific)
-  T14 <-- T9,T12               T16 <-- T2,T14
-  T15 <-- T14                  T17 <-- T2,T14
-       |                            |
-       v                            v
-Phase 7 (Validation)         Phase 8 (Perf)
-  T18 <-- T15,T16,T17         T20 <-- T14
-  T19 <-- T13,T15
+Phase 5 (Integration)          Phase 6 (Exchange-Specific)
+  T20 <-- T12,T17                 T22 <-- T2,T20  (CME)
+  T21 <-- T20                     T23 <-- T2,T20  (ICE)
+       |                               |
+       v                               v
+Phase 7 (Validation)
+  T24 <-- T21,T22,T23
+  T25 <-- T19,T21
 ```
 
 **Parallelism:** Phases 1, 2, and 3 are independent -- all three can run
-concurrently. Phase 6 tasks (T16, T17) are independent of each other.
+concurrently. Within Phase 4, T13/T14 and T15/T16 can proceed in parallel
+once T12 is done. Phase 6 tasks (T22, T23) are independent of each other.
 
 ## Dev Dispatch
 
 | Wave | Tasks | Assignee | Rationale |
 |---|---|---|---|
-| 1 | T1, T2, T3 | Dev A | Strategy foundation -- sequential chain |
-| 1 | T4, T5, T6 | Dev B | Pricing engine -- independent of strategy impl |
-| 1 | T7, T8 | Dev C | Core engine change -- zero external deps |
-| 2 | T9, T10, T11, T12, T13 | Dev A | SpreadBook core -- sequential chain, one dev avoids rebase conflicts |
-| 3 | T14, T15 | Dev A | Integration -- depends on SpreadBook |
-| 3 | T16 | Dev B | CME spreads -- independent |
-| 3 | T17 | Dev C | ICE spreads -- independent |
-| 4 | T18, T19 | Dev B | Validation tests |
-| 4 | T20 | Dev C | Performance benchmark |
+| 1 | T1, T2, T3, T4 | Dev A | Strategy + secdef foundation -- sequential |
+| 1 | T5, T6, T7, T8 | Dev B | Pricing engine -- independent of strategy impl |
+| 1 | T9, T10, T11 | Dev C | Core engine changes -- zero external deps |
+| 2 | T12, T13, T14, T15, T16, T17, T18, T19 | Dev A | SpreadBook -- sequential, one dev avoids conflicts |
+| 3 | T20, T21 | Dev A | Integration -- depends on SpreadBook |
+| 3 | T22 | Dev B | CME spreads -- independent |
+| 3 | T23 | Dev C | ICE spreads -- independent |
+| 4 | T24, T25 | Dev B | Validation + failure injection |
 
-**Estimated waves:** 4 waves with 3 devs, ~10-12 working sessions.
+**Estimated waves:** 4 waves with 3 devs, ~12-14 working sessions.
 
 ## Success Criteria
 
-1. `bazel test //...` passes with all 20 tasks merged
-2. `apply_implied_fill()` is the ONLY change to `exchange-core/matching_engine.h`
+1. `bazel test //...` passes with all 25 tasks merged
+2. `apply_implied_fills()` and `best_order_id()` are the ONLY changes to `exchange-core/`
 3. Implied-out: outright order at 100 + calendar spread at -5 produces implied back-month at 105
 4. Implied-in: spread order triggers atomic fills on both outright legs
-5. Circular dependency: 3-way circular spread resolves within depth limit without infinite loop
-6. Atomic guarantee: partial leg failure rolls back all fills (no torn state)
-7. Journal reconciler validates spread fills (trade matching, book traceability)
-8. Implied price recalc latency < 1us (single spread, warm cache)
-9. CME calendar/butterfly/condor/crack spread types registered and tested
-10. ICE calendar/strip/crack spread types registered and tested
+5. Batch atomicity: `apply_implied_fills()` applies zero fills if any leg fails validation
+6. Non-unity ratios: butterfly (1:-2:1) implied prices computed correctly
+7. Circular dependency: 3-way circular spread resolves within depth limit
+8. Spread TIF: IOC partially fills, FOK rejects if any leg insufficient
+9. Spread cancel-replace modifies price/qty atomically
+10. SpreadFill events carry implied attribution; ImpliedTopOfBook published to listeners
+11. Journal reconciler validates spread fills
+12. CME calendar/butterfly/condor/crack + ICE calendar/strip/crack tested
