@@ -410,12 +410,98 @@ cc_test(
     ],
 )
 
+# --- Display State (shared between observer and recovery strategies) ---
+cc_library(
+    name = "display_state",
+    hdrs = ["display_state.h"],
+    visibility = ["//visibility:public"],
+)
+
+# --- Recovery Strategy interface + NullRecovery ---
+cc_library(
+    name = "recovery_strategy",
+    hdrs = ["recovery_strategy.h"],
+    deps = [":display_state"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "null_recovery",
+    hdrs = ["null_recovery.h"],
+    deps = [":recovery_strategy"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "null_recovery_test",
+    srcs = ["null_recovery_test.cc"],
+    deps = [
+        ":display_state",
+        ":null_recovery",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# --- CME Recovery Strategy ---
+cc_library(
+    name = "cme_recovery",
+    hdrs = ["cme_recovery.h"],
+    deps = [
+        ":display_state",
+        ":recovery_strategy",
+        ":udp_multicast",
+        "//cme/codec:mdp3_decoder",
+        "//cme/codec:mdp3_encoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "cme_recovery_test",
+    srcs = ["cme_recovery_test.cc"],
+    deps = [
+        ":cme_recovery",
+        ":display_state",
+        ":udp_multicast",
+        "//cme/codec:mdp3_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# --- ICE Recovery Strategy ---
+cc_library(
+    name = "ice_recovery",
+    hdrs = ["ice_recovery.h"],
+    deps = [
+        ":display_state",
+        ":recovery_strategy",
+        ":tcp_client",
+        "//ice/impact:impact_decoder",
+        "//ice/impact:impact_messages",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "ice_recovery_test",
+    srcs = ["ice_recovery_test.cc"],
+    deps = [
+        ":display_state",
+        ":ice_recovery",
+        ":tcp_server",
+        "//ice/impact:impact_encoder",
+        "//ice/impact:impact_messages",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Simulation Exercise: Exchange Observer ---
 cc_binary(
     name = "exchange-observer",
     srcs = ["exchange_observer.cc"],
     deps = [
         ":cme_secdef",
+        ":display_state",
         ":ice_secdef",
         ":instrument_info",
         ":udp_multicast",
@@ -431,6 +517,7 @@ cc_test(
     name = "exchange_observer_test",
     srcs = ["exchange_observer_test.cc"],
     deps = [
+        ":display_state",
         "//cme/codec:mdp3_decoder",
         "//ice/impact:impact_decoder",
         "@googletest//:gtest_main",
