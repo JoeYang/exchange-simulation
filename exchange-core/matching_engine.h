@@ -1010,6 +1010,18 @@ public:
         }
     }
 
+    // best_order_id -- return the OrderId at the head of the best price
+    // level for the given side.  Returns nullopt if that side is empty.
+    // Used by SpreadBook to identify outright orders for implied fills
+    // without reaching into OrderBook internals.
+
+    std::optional<OrderId> best_order_id(Side side) const {
+        const PriceLevel* lv = (side == Side::Buy)
+            ? book_.best_bid() : book_.best_ask();
+        if (lv && lv->head) return lv->head->id;
+        return std::nullopt;
+    }
+
     // apply_implied_fills -- atomically apply a batch of implied fills
     // to resting orders.  Used by SpreadBook for multi-leg spread execution.
     //
