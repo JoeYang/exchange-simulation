@@ -71,3 +71,14 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "fast_codec_test",
+    srcs = ["fast_codec_test.cc"],
+    deps = [
+        ":fast_decoder",
+        ":fast_encoder",
+        "//exchange-core:events",
+        "@googletest//:gtest_main",
+    ],
+)
