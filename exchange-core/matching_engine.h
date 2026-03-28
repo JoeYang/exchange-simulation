@@ -989,6 +989,17 @@ public:
         return last_trade <= stop.level->price;
     }
 
+    // Iterate price levels on the given side, firing cb(price, total_qty, order_count)
+    // for each level. Bids: descending price. Asks: ascending price.
+    template <typename Callback>
+    void for_each_level(Side side, Callback&& cb) const {
+        const PriceLevel* lv = (side == Side::Buy)
+            ? book_.best_bid() : book_.best_ask();
+        for (; lv; lv = lv->next) {
+            cb(lv->price, lv->total_quantity, lv->order_count);
+        }
+    }
+
 protected:
     EngineConfig config_;
     SessionState current_state_{SessionState::Continuous};  // backward compatible

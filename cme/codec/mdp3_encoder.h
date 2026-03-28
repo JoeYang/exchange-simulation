@@ -430,9 +430,77 @@ inline size_t encode_instrument_definition(
     return static_cast<size_t>(p - buf);
 }
 
+// ---------------------------------------------------------------------------
+// Encode SnapshotFullRefreshOrderBook53 with N SnapshotOrderBookEntry entries.
+//
+// Wire layout: MessageHeader(8) + root(28) + GroupHeader(3) + N * entry(29)
+//
+// SnapshotEntry: a single price level to encode. Caller collects these from
+// for_each_level() for both bid and ask sides.
+// ---------------------------------------------------------------------------
+
+struct SnapshotEntry {
+    Price    price;
+    Quantity qty;
+    Side     side;
+};
+
+inline size_t encode_snapshot(
+    char* buf,
+    int32_t security_id,
+    uint64_t transact_time,
+    uint32_t last_msg_seq_num_processed,
+    const SnapshotEntry* entries,
+    uint16_t num_entries,
+    uint32_t tot_num_reports = 1,
+    uint32_t current_chunk = 1)
+{
+    auto hdr = make_header<SnapshotFullRefreshOrderBook53>();
+    char* p = hdr.encode_to(buf);
+
+    // Root block.
+    SnapshotFullRefreshOrderBook53 root{};
+    std::memset(&root, 0, sizeof(root));
+    root.last_msg_seq_num_processed = last_msg_seq_num_processed;
+    root.tot_num_reports = tot_num_reports;
+    root.security_id = security_id;
+    root.no_chunks = tot_num_reports;  // 1 chunk per snapshot (no fragmentation)
+    root.current_chunk = current_chunk;
+    root.transact_time = transact_time;
+    std::memcpy(p, &root, sizeof(root));
+    p += sizeof(root);
+
+    // NoMDEntries group header.
+    GroupHeader gh{};
+    gh.block_length = SnapshotOrderBookEntry::BLOCK_LENGTH;
+    gh.num_in_group = static_cast<uint8_t>(
+        std::min(static_cast<uint16_t>(255), num_entries));
+    p = gh.encode_to(p);
+
+    // Entries: each level becomes one SnapshotOrderBookEntry.
+    uint64_t order_id = 1;
+    for (uint16_t i = 0; i < num_entries; ++i) {
+        const auto& e = entries[i];
+        SnapshotOrderBookEntry entry{};
+        std::memset(&entry, 0, sizeof(entry));
+        entry.order_id = order_id++;
+        entry.md_order_priority = UINT64_NULL;  // not used for aggregate snapshot
+        entry.md_entry_px = engine_price_to_price9(e.price);
+        entry.md_display_qty = engine_qty_to_wire(e.qty);
+        entry.md_entry_type = (e.side == Side::Buy)
+            ? static_cast<char>(MDEntryTypeBook::Bid)
+            : static_cast<char>(MDEntryTypeBook::Offer);
+        std::memcpy(p, &entry, sizeof(entry));
+        p += sizeof(entry);
+    }
+
+    return static_cast<size_t>(p - buf);
+}
+
 // Maximum buffer size needed for any single MDP3 encoded message.
-// InstrumentDef54 produces the largest: 262 bytes (see encode above).
-// Round up to 512 for comfortable headroom.
+// Snapshot53 with 256 entries: 8 + 28 + 3 + 256*29 = 7463 bytes.
+// Other messages are much smaller (InstrumentDef54 = 262 bytes).
+constexpr size_t MAX_SNAPSHOT_ENCODED_SIZE = 8192;
 constexpr size_t MAX_MDP3_ENCODED_SIZE = 512;
 
 }  // namespace exchange::cme::sbe::mdp3

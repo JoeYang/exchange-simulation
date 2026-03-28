@@ -564,5 +564,74 @@ TEST(Mdp3EncoderTest, EncodeInstrumentDefDispatchRoundTrip) {
     EXPECT_TRUE(visited);
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot encoding
+// ---------------------------------------------------------------------------
+
+TEST(Mdp3EncoderTest, EncodeSnapshotRoundTrip) {
+    char buf[MAX_SNAPSHOT_ENCODED_SIZE];
+
+    // 3 bids + 2 asks.
+    SnapshotEntry entries[] = {
+        {45002500, 100000, Side::Buy},   // 4500.25, 10 lots
+        {45002400, 200000, Side::Buy},   // 4500.24, 20 lots
+        {45002300, 50000,  Side::Buy},   // 4500.23, 5 lots
+        {45002600, 150000, Side::Sell},  // 4500.26, 15 lots
+        {45002700, 80000,  Side::Sell},  // 4500.27, 8 lots
+    };
+
+    size_t n = encode_snapshot(buf, 12345, 1000000000u, 42,
+                                entries, 5);
+
+    // Expected size: 8 (hdr) + 28 (root) + 3 (group) + 5*29 (entries) = 184
+    EXPECT_EQ(n, 8u + 28u + 3u + 5u * 29u);
+
+    // Decode with the standard decoder.
+    auto dh = decode_header(buf);
+    EXPECT_EQ(dh.hdr.template_id, SNAPSHOT_FULL_REFRESH_ORDER_BOOK_53_ID);
+    EXPECT_EQ(dh.hdr.block_length, SnapshotFullRefreshOrderBook53::BLOCK_LENGTH);
+
+    DecodedSnapshot53 snap{};
+    auto rc = decode_snapshot_53(dh.body, n - sizeof(MessageHeader), dh.hdr, snap);
+    EXPECT_EQ(rc, DecodeResult::kOk);
+
+    // Verify root fields.
+    EXPECT_EQ(snap.root.security_id, 12345);
+    EXPECT_EQ(snap.root.last_msg_seq_num_processed, 42u);
+    EXPECT_EQ(snap.root.transact_time, 1000000000u);
+
+    // Verify entries.
+    ASSERT_EQ(snap.num_md_entries, 5u);
+
+    // Entry 0: bid at 4500.25
+    EXPECT_EQ(snap.md_entries[0].md_entry_type,
+              static_cast<char>(MDEntryTypeBook::Bid));
+    EXPECT_EQ(snap.md_entries[0].md_entry_px.mantissa,
+              45002500LL * ENGINE_TO_PRICE9_FACTOR);
+    EXPECT_EQ(snap.md_entries[0].md_display_qty, 10);  // 100000 / 10000
+
+    // Entry 3: ask at 4500.26
+    EXPECT_EQ(snap.md_entries[3].md_entry_type,
+              static_cast<char>(MDEntryTypeBook::Offer));
+    EXPECT_EQ(snap.md_entries[3].md_entry_px.mantissa,
+              45002600LL * ENGINE_TO_PRICE9_FACTOR);
+    EXPECT_EQ(snap.md_entries[3].md_display_qty, 15);
+}
+
+TEST(Mdp3EncoderTest, EncodeSnapshotEmpty) {
+    char buf[MAX_SNAPSHOT_ENCODED_SIZE];
+    size_t n = encode_snapshot(buf, 99, 500u, 0, nullptr, 0);
+
+    // 8 (hdr) + 28 (root) + 3 (group) + 0 entries = 39
+    EXPECT_EQ(n, 39u);
+
+    auto dh = decode_header(buf);
+    DecodedSnapshot53 snap{};
+    auto rc = decode_snapshot_53(dh.body, n - sizeof(MessageHeader), dh.hdr, snap);
+    EXPECT_EQ(rc, DecodeResult::kOk);
+    EXPECT_EQ(snap.num_md_entries, 0u);
+    EXPECT_EQ(snap.root.security_id, 99);
+}
+
 }  // namespace
 }  // namespace exchange::cme::sbe::mdp3
