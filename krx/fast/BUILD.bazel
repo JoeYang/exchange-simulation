@@ -15,3 +15,22 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "fast_encoder",
+    hdrs = ["fast_encoder.h"],
+    deps = [
+        ":fast_types",
+        "//exchange-core:events",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "fast_encoder_test",
+    srcs = ["fast_encoder_test.cc"],
+    deps = [
+        ":fast_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
