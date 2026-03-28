@@ -397,6 +397,13 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "price", "qty", "side"};
     static const std::vector<std::string> known_ice_fix_mass_cancel =
         {"ts", "instrument", "account"};
+    static const std::vector<std::string> known_krx_fix_new_order =
+        {"ts", "instrument", "cl_ord_id", "account", "side", "price", "qty",
+         "type", "tif", "display_qty", "program_trading", "investor_type", "board_id"};
+    static const std::vector<std::string> known_krx_fix_cancel =
+        {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "side"};
+    static const std::vector<std::string> known_krx_fix_replace =
+        {"ts", "instrument", "cl_ord_id", "orig_cl_ord_id", "price", "qty", "side"};
     static const std::vector<std::string> known_session_start =
         {"ts", "state"};
     static const std::vector<std::string> known_session_open =
@@ -425,6 +432,9 @@ std::string JournalWriter::action_to_action_line(const ParsedAction& action) {
         case ParsedAction::IceFixCancel:      known = &known_ice_fix_cancel;     break;
         case ParsedAction::IceFixReplace:     known = &known_ice_fix_replace;    break;
         case ParsedAction::IceFixMassCancel:  known = &known_ice_fix_mass_cancel; break;
+        case ParsedAction::KrxFixNewOrder:    known = &known_krx_fix_new_order;  break;
+        case ParsedAction::KrxFixCancel:      known = &known_krx_fix_cancel;     break;
+        case ParsedAction::KrxFixReplace:     known = &known_krx_fix_replace;    break;
         case ParsedAction::SessionStart:      known = &known_session_start;      break;
         case ParsedAction::SessionOpen:       known = &known_session_open;       break;
         case ParsedAction::SessionClose:      known = &known_session_close;      break;
