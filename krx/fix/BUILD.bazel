@@ -36,3 +36,23 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "krx_fix_exec_publisher",
+    hdrs = ["krx_fix_exec_publisher.h"],
+    deps = [
+        "//exchange-core:listeners",
+        "//exchange-core:types",
+        "//ice/fix:fix_encoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_fix_exec_publisher_test",
+    srcs = ["krx_fix_exec_publisher_test.cc"],
+    deps = [
+        ":krx_fix_exec_publisher",
+        "@googletest//:gtest_main",
+    ],
+)
