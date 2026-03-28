@@ -9,14 +9,20 @@
 #include "cme/codec/mdp3_decoder.h"
 #include "ice/ice_products.h"
 #include "ice/impact/impact_decoder.h"
+#include "tools/cme_recovery.h"
 #include "tools/cme_secdef.h"
+#include "tools/display_state.h"
+#include "tools/ice_recovery.h"
 #include "tools/ice_secdef.h"
 #include "tools/instrument_info.h"
+#include "tools/null_recovery.h"
+#include "tools/recovery_strategy.h"
 #include "tools/udp_multicast.h"
 
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -51,6 +57,12 @@ struct ObserverConfig {
     std::string secdef_group{"239.0.31.3"};  // CME secdef multicast group
     uint16_t    secdef_port{14312};          // CME secdef multicast port
     bool        auto_discover{false};        // enable secdef discovery
+
+    // Recovery options.
+    std::string recovery{"none"};            // "none", "snapshot", or "tcp"
+    std::string snapshot_group{"239.0.31.2"}; // CME snapshot multicast group
+    uint16_t    snapshot_port{14311};         // snapshot port (CME mcast or ICE TCP)
+    std::string snapshot_host{"127.0.0.1"};  // ICE snapshot TCP host
 };
 
 static void print_usage(const char* prog) {
@@ -68,6 +80,10 @@ static void print_usage(const char* prog) {
         "  --auto-discover  Discover instruments via secdef before observing\n"
         "  --secdef-group   Secdef multicast group (default: 239.0.31.3)\n"
         "  --secdef-port    Secdef multicast port (default: 14312)\n"
+        "  --recovery       Recovery mode: none|snapshot|tcp (default: none)\n"
+        "  --snapshot-group Snapshot multicast group (default: 239.0.31.2)\n"
+        "  --snapshot-port  Snapshot port (default: 14311)\n"
+        "  --snapshot-host  ICE snapshot TCP host (default: 127.0.0.1)\n"
         "  -h, --help       Show this message\n",
         prog);
 }
@@ -92,6 +108,14 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
             cfg.secdef_group = argv[++i];
         } else if ((std::strcmp(argv[i], "--secdef-port") == 0) && i + 1 < argc) {
             cfg.secdef_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if ((std::strcmp(argv[i], "--recovery") == 0) && i + 1 < argc) {
+            cfg.recovery = argv[++i];
+        } else if ((std::strcmp(argv[i], "--snapshot-group") == 0) && i + 1 < argc) {
+            cfg.snapshot_group = argv[++i];
+        } else if ((std::strcmp(argv[i], "--snapshot-port") == 0) && i + 1 < argc) {
+            cfg.snapshot_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if ((std::strcmp(argv[i], "--snapshot-host") == 0) && i + 1 < argc) {
+            cfg.snapshot_host = argv[++i];
         } else if (std::strcmp(argv[i], "-h") == 0 ||
                    std::strcmp(argv[i], "--help") == 0) {
             return false;
@@ -116,135 +140,28 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
         std::fprintf(stderr, "Error: --exchange must be 'cme' or 'ice'.\n");
         return false;
     }
+    if (cfg.recovery != "none" && cfg.recovery != "snapshot" &&
+        cfg.recovery != "tcp") {
+        std::fprintf(stderr, "Error: --recovery must be 'none', 'snapshot', "
+                             "or 'tcp'.\n");
+        return false;
+    }
+    // Validate recovery mode vs exchange.
+    if (cfg.exchange == "cme" && cfg.recovery == "tcp") {
+        std::fprintf(stderr, "Error: --recovery tcp is not valid for CME "
+                             "(use 'snapshot').\n");
+        return false;
+    }
+    if (cfg.exchange == "ice" && cfg.recovery == "snapshot") {
+        std::fprintf(stderr, "Error: --recovery snapshot is not valid for ICE "
+                             "(use 'tcp').\n");
+        return false;
+    }
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Display state: 5-level book, last 10 trades, OHLCV, message counters.
-// ---------------------------------------------------------------------------
-
-static constexpr int BOOK_DEPTH  = 5;
-static constexpr int TRADE_DEPTH = 10;
-
-struct BookLevel {
-    int64_t  price{0};
-    int32_t  qty{0};
-    int32_t  order_count{0};
-};
-
-struct TradeEntry {
-    int64_t  price{0};
-    int32_t  qty{0};
-    uint8_t  aggressor_side{0}; // 1=Buy, 2=Sell
-    uint64_t timestamp_ns{0};
-};
-
-struct DisplayState {
-    BookLevel bids[BOOK_DEPTH]{};
-    BookLevel asks[BOOK_DEPTH]{};
-    int       bid_levels{0};
-    int       ask_levels{0};
-
-    TradeEntry trades[TRADE_DEPTH]{};
-    int        trade_count{0};
-    int        trade_write_idx{0}; // circular buffer index
-
-    // OHLCV
-    int64_t  open_price{0};
-    int64_t  high_price{0};
-    int64_t  low_price{0};
-    int64_t  close_price{0};
-    int64_t  volume{0};
-
-    // Counters
-    uint64_t total_messages{0};
-    uint64_t messages_this_second{0};
-    uint64_t msgs_per_sec{0};      // last completed second
-    uint64_t decode_errors{0};
-    uint64_t total_trades{0};
-
-    // Sequence tracking
-    uint32_t last_seq{0};
-    uint64_t seq_gaps{0};
-};
-
-// Add a trade to the circular buffer and update OHLCV.
-static void record_trade(DisplayState& ds, int64_t price, int32_t qty,
-                          uint8_t aggressor, uint64_t ts) {
-    auto& t = ds.trades[ds.trade_write_idx];
-    t.price = price;
-    t.qty = qty;
-    t.aggressor_side = aggressor;
-    t.timestamp_ns = ts;
-    ds.trade_write_idx = (ds.trade_write_idx + 1) % TRADE_DEPTH;
-    if (ds.trade_count < TRADE_DEPTH) ++ds.trade_count;
-    ++ds.total_trades;
-
-    // OHLCV
-    if (ds.open_price == 0) ds.open_price = price;
-    if (price > ds.high_price || ds.high_price == 0) ds.high_price = price;
-    if (price < ds.low_price || ds.low_price == 0) ds.low_price = price;
-    ds.close_price = price;
-    ds.volume += qty;
-}
-
-// Update a book side from a single entry. Simple model: treat each level as
-// a price-level slot. For New/Change, insert or update; for Delete, remove.
-// This is a simplified book that maintains up to BOOK_DEPTH sorted levels.
-static void update_book_side(BookLevel* levels, int& count,
-                              int64_t price, int32_t qty, int32_t orders,
-                              bool is_delete, bool is_bid) {
-    if (is_delete) {
-        // Remove the level matching this price.
-        for (int i = 0; i < count; ++i) {
-            if (levels[i].price == price) {
-                for (int j = i; j < count - 1; ++j)
-                    levels[j] = levels[j + 1];
-                --count;
-                levels[count] = BookLevel{};
-                return;
-            }
-        }
-        return;
-    }
-
-    // Check if the price already exists -- update in place.
-    for (int i = 0; i < count; ++i) {
-        if (levels[i].price == price) {
-            levels[i].qty = qty;
-            levels[i].order_count = orders;
-            return;
-        }
-    }
-
-    // Insert new level, maintaining sort order.
-    // Bids: descending price. Asks: ascending price.
-    BookLevel entry{price, qty, orders};
-    if (count < BOOK_DEPTH) {
-        levels[count] = entry;
-        ++count;
-    } else {
-        // Replace worst level if this price is better.
-        int worst = count - 1;
-        bool better = is_bid ? (price > levels[worst].price)
-                             : (price < levels[worst].price);
-        if (!better) return;
-        levels[worst] = entry;
-    }
-
-    // Sort: bids descending, asks ascending.
-    if (is_bid) {
-        std::sort(levels, levels + count,
-                  [](const BookLevel& a, const BookLevel& b) {
-                      return a.price > b.price;
-                  });
-    } else {
-        std::sort(levels, levels + count,
-                  [](const BookLevel& a, const BookLevel& b) {
-                      return a.price < b.price;
-                  });
-    }
-}
+// DisplayState, BookLevel, TradeEntry, update_book_side(), record_trade()
+// are now in tools/display_state.h (shared with recovery strategies).
 
 // ---------------------------------------------------------------------------
 // Price formatting helpers
@@ -709,6 +626,55 @@ struct IceVisitor {
 };
 
 // ---------------------------------------------------------------------------
+// Observer lifecycle logging
+// ---------------------------------------------------------------------------
+
+static void log_observer(const char* msg) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm_buf;
+    localtime_r(&ts.tv_sec, &tm_buf);
+    std::fprintf(stderr, "[%02d:%02d:%02d.%09ld] OBSERVER: %s\n",
+                 tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                 ts.tv_nsec, msg);
+}
+
+static void log_observer_fmt(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+
+static void log_observer_fmt(const char* fmt, ...) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm_buf;
+    localtime_r(&ts.tv_sec, &tm_buf);
+    std::fprintf(stderr, "[%02d:%02d:%02d.%09ld] OBSERVER: ",
+                 tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+                 ts.tv_nsec);
+    va_list args;
+    va_start(args, fmt);
+    std::vfprintf(stderr, fmt, args);
+    va_end(args);
+    std::fprintf(stderr, "\n");
+}
+
+// ---------------------------------------------------------------------------
+// Recovery strategy factory
+// ---------------------------------------------------------------------------
+
+static std::unique_ptr<RecoveryStrategy> create_recovery_strategy(
+    const ObserverConfig& cfg, int32_t instrument_id)
+{
+    if (cfg.recovery == "snapshot") {
+        return std::make_unique<CmeRecovery>(
+            cfg.snapshot_group, cfg.snapshot_port, instrument_id);
+    }
+    if (cfg.recovery == "tcp") {
+        return std::make_unique<IceRecovery>(
+            cfg.snapshot_host, cfg.snapshot_port, instrument_id);
+    }
+    return std::make_unique<NullRecovery>();
+}
+
+// ---------------------------------------------------------------------------
 // Instrument resolution
 // ---------------------------------------------------------------------------
 
@@ -810,6 +776,20 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // -- Create recovery strategy and perform startup recovery --
+    auto strategy = create_recovery_strategy(cfg, instrument_id);
+
+    DisplayState ds{};
+
+    if (cfg.recovery != "none") {
+        log_observer_fmt("Starting %s recovery for %s (id=%d)...",
+                         cfg.recovery.c_str(), cfg.instrument.c_str(),
+                         instrument_id);
+        strategy->recover(cfg.instrument, ds);
+        log_observer_fmt("Recovery complete. Book: %d bid levels, %d ask levels.",
+                         ds.bid_levels, ds.ask_levels);
+    }
+
     // Open journal.
     JournalWriter journal(cfg.journal_path);
 
@@ -823,6 +803,8 @@ int main(int argc, char* argv[]) {
     }
     bool trans_color = (trans_out != nullptr) && isatty(fileno(trans_out));
     TransitionLogger transitions(trans_out, trans_color);
+
+    log_observer("Switching to incremental feed.");
 
     // Join multicast group.
     exchange::UdpMulticastReceiver receiver;
@@ -844,8 +826,6 @@ int main(int argc, char* argv[]) {
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    DisplayState ds{};
-
     // Prepare visitors.
     CmeVisitor cme_visitor{ds, journal, transitions, instrument_id, cfg.instrument};
     IceVisitor ice_visitor{ds, journal, transitions, instrument_id, cfg.instrument, 0};
@@ -855,9 +835,14 @@ int main(int argc, char* argv[]) {
     auto last_display = std::chrono::steady_clock::now();
     auto last_second  = std::chrono::steady_clock::now();
 
-    std::fprintf(stderr, "Listening on %s:%u for %s %s ...\n",
-                 cfg.group.c_str(), cfg.port, cfg.exchange.c_str(),
-                 cfg.instrument.c_str());
+    log_observer_fmt("Listening on %s:%u for %s %s ...",
+                     cfg.group.c_str(), cfg.port, cfg.exchange.c_str(),
+                     cfg.instrument.c_str());
+
+    // Recovery state: buffer incrementals during recovery, replay after.
+    bool recovering = false;
+    struct BufferedMsg { std::vector<char> data; uint32_t seq; };
+    std::vector<BufferedMsg> recovery_buffer;
 
     while (g_running) {
         ssize_t n = receiver.receive(buf, sizeof(buf));
@@ -875,11 +860,50 @@ int main(int argc, char* argv[]) {
             exchange::McastSeqHeader seq_hdr;
             std::memcpy(&seq_hdr, buf, sizeof(seq_hdr));
 
-            // Gap detection.
+            // Gap detection: if we see a sequence gap, trigger recovery.
             if (ds.last_seq != 0 && seq_hdr.seq_num != ds.last_seq + 1) {
                 ++ds.seq_gaps;
+
+                // Auto-recover if recovery is configured and not already recovering.
+                if (cfg.recovery != "none" && !recovering) {
+                    log_observer_fmt("GAP DETECTED! Expected seq=%u, got %u. "
+                                     "Entering recovery...",
+                                     ds.last_seq + 1, seq_hdr.seq_num);
+                    recovering = true;
+                    recovery_buffer.clear();
+                }
             }
             ds.last_seq = seq_hdr.seq_num;
+
+            // If recovering, buffer the incremental instead of applying it.
+            if (recovering) {
+                log_observer("Buffering incrementals during recovery...");
+                recovery_buffer.push_back(
+                    {std::vector<char>(buf, buf + n), seq_hdr.seq_num});
+
+                // Re-snapshot to recover.
+                log_observer("Re-requesting snapshot...");
+                strategy->recover(cfg.instrument, ds);
+                log_observer_fmt("Re-snapshot complete. Book: %d bids, %d asks.",
+                                 ds.bid_levels, ds.ask_levels);
+
+                // Replay buffered incrementals.
+                log_observer_fmt("Replaying %zu buffered messages.",
+                                 recovery_buffer.size());
+                for (const auto& msg : recovery_buffer) {
+                    const char* p = msg.data.data() + sizeof(exchange::McastSeqHeader);
+                    size_t plen = msg.data.size() - sizeof(exchange::McastSeqHeader);
+                    if (cfg.exchange == "cme") {
+                        cme_ns::decode_mdp3_message(p, plen, cme_visitor);
+                    } else {
+                        ice_ns::decode_messages(p, plen, ice_visitor);
+                    }
+                }
+                recovery_buffer.clear();
+                recovering = false;
+                log_observer("Recovery complete. Resuming incremental feed.");
+                continue;
+            }
 
             const char* payload = buf + sizeof(exchange::McastSeqHeader);
             size_t payload_len = static_cast<size_t>(n) - sizeof(exchange::McastSeqHeader);
