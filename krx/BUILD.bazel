@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
@@ -78,4 +79,24 @@ cc_test(
         ":krx_sim_config",
         "@googletest//:gtest_main",
     ],
+)
+
+cc_binary(
+    name = "krx-sim",
+    srcs = ["krx_sim_runner.cc"],
+    deps = [
+        ":krx_products",
+        ":krx_sim_config",
+        ":krx_simulator",
+        "//exchange-core:composite_listener",
+        "//krx/fast:fast_publisher",
+        "//krx/fix:krx_fix_exec_publisher",
+        "//krx/fix:krx_fix_gateway",
+        "//tools:shm_listener",
+        "//tools:shm_transport",
+        "//tools:tcp_server",
+        "//tools:udp_multicast",
+    ],
+    linkopts = ["-lrt"],
+    visibility = ["//visibility:public"],
 )
