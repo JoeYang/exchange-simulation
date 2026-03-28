@@ -2,6 +2,7 @@
 
 #include "exchange-core/events.h"
 #include "exchange-core/listeners.h"
+#include "exchange-core/matching_engine.h"
 #include "exchange-core/object_pool.h"
 #include "exchange-core/orderbook.h"
 #include "exchange-core/types.h"

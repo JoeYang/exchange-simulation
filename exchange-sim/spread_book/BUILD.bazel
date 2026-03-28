@@ -52,7 +52,10 @@ cc_library(
 cc_library(
     name = "multi_leg_coordinator",
     hdrs = ["multi_leg_coordinator.h"],
-    deps = ["//exchange-core:types"],
+    deps = [
+        "//exchange-core:matching_engine",
+        "//exchange-core:types",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -64,6 +67,7 @@ cc_library(
         ":spread_strategy",
         "//exchange-core:events",
         "//exchange-core:listeners",
+        "//exchange-core:matching_engine",
         "//exchange-core:object_pool",
         "//exchange-core:orderbook",
         "//exchange-core:types",
@@ -97,6 +101,19 @@ cc_test(
     srcs = ["circular_guard_test.cc"],
     deps = [
         ":circular_guard",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "spread_book_test",
+    srcs = ["spread_book_test.cc"],
+    deps = [
+        ":multi_leg_coordinator",
+        ":spread_book",
+        ":spread_events",
+        ":spread_strategy",
+        "//test-harness:recording_listener",
         "@googletest//:gtest_main",
     ],
 )

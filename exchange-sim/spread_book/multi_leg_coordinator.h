@@ -1,5 +1,6 @@
 #pragma once
 
+#include "exchange-core/matching_engine.h"
 #include "exchange-core/types.h"
 
 #include <cstdint>
