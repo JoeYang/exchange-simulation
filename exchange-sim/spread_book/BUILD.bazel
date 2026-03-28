@@ -43,6 +43,13 @@ cc_library(
 )
 
 cc_library(
+    name = "spread_events",
+    hdrs = ["spread_events.h"],
+    deps = ["//exchange-core:types"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "multi_leg_coordinator",
     hdrs = ["multi_leg_coordinator.h"],
     deps = ["//exchange-core:types"],
