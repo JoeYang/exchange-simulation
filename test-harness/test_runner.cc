@@ -327,6 +327,13 @@ void JournalTestRunner::execute_action(EngineT& engine,
         throw std::runtime_error(
             "ICE FIX actions require the ICE E2E test runner");
 
+    // KRX FIX E2E actions — handled by the KRX E2E test runner.
+    case ParsedAction::KrxFixNewOrder:
+    case ParsedAction::KrxFixCancel:
+    case ParsedAction::KrxFixReplace:
+        throw std::runtime_error(
+            "KRX FIX actions require the KRX E2E test runner");
+
     // E2E session lifecycle actions — handled by E2E test runner.
     case ParsedAction::SessionStart:
     case ParsedAction::SessionOpen:
