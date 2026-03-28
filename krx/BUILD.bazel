@@ -33,3 +33,49 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "krx_simulator",
+    hdrs = ["krx_simulator.h"],
+    deps = [
+        ":krx_exchange",
+        ":krx_products",
+        "//exchange-sim:exchange_simulator",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_simulator_test",
+    srcs = ["krx_simulator_test.cc"],
+    deps = [
+        ":krx_simulator",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "krx_integration_test",
+    srcs = ["krx_integration_test.cc"],
+    deps = [
+        ":krx_simulator",
+        "//test-harness:recording_listener",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "krx_sim_config",
+    hdrs = ["krx_sim_config.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_sim_config_test",
+    srcs = ["krx_sim_config_test.cc"],
+    deps = [
+        ":krx_sim_config",
+        "@googletest//:gtest_main",
+    ],
+)
