@@ -7,3 +7,10 @@ cc_library(
     deps = ["//exchange-core:types"],
     visibility = ["//visibility:public"],
 )
+
+cc_library(
+    name = "spread_strategy_registry",
+    hdrs = ["spread_strategy_registry.h"],
+    deps = [":spread_strategy"],
+    visibility = ["//visibility:public"],
+)
