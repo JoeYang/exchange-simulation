@@ -28,6 +28,15 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "krx_journals",
+    srcs = glob(
+        ["krx/*.journal"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
 cc_test(
     name = "journal_test",
     srcs = ["journal_test.cc"],
