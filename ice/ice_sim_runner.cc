@@ -230,6 +230,104 @@ int run_sim(SimulatorT& sim,
     TcpServer tcp(tcp_cfg);
     std::fprintf(stderr, "FIX gateway listening on port %u\n", tcp.port());
 
+    // -- Start TCP snapshot server --
+    TcpServer* snap_server_ptr = nullptr;
+    TcpServer::Config snap_cfg{};
+    snap_cfg.port = cfg.snapshot_port;
+
+    snap_cfg.on_message = [&](int fd, const char* data, size_t len) {
+        // Parse "SNAP <symbol>\n" request.
+        std::string req(data, len);
+        if (req.size() < 6 || req.substr(0, 5) != "SNAP ") {
+            std::fprintf(stderr, "Snapshot: invalid request: %s\n", req.c_str());
+            return;
+        }
+        // Strip trailing newline.
+        std::string symbol = req.substr(5);
+        if (!symbol.empty() && symbol.back() == '\n') symbol.pop_back();
+
+        auto it = symbol_map.find(symbol);
+        if (it == symbol_map.end()) {
+            std::fprintf(stderr, "Snapshot: unknown symbol: %s\n", symbol.c_str());
+            return;
+        }
+        uint32_t iid = it->second;
+
+        // Encode snapshot: BundleStart + SnapshotOrders + BundleEnd(seq=0).
+        // Max buffer: BundleStart(17) + 256*SnapshotOrder(32) + BundleEnd(7) = 8216
+        constexpr size_t SNAP_BUF_SIZE = 16384;
+        char snap_buf[SNAP_BUF_SIZE];
+        ImpactEncodeContext snap_ctx{};
+        snap_ctx.instrument_id = static_cast<int32_t>(iid);
+
+        // Get the engine and iterate its book.
+        const exchange::PriceLevel* first_bid = nullptr;
+        const exchange::PriceLevel* first_ask = nullptr;
+
+        // Build linked PriceLevel lists from the engine's book.
+        // for_each_level gives us (price, qty, order_count) — we need to
+        // build temporary PriceLevel nodes for encode_snapshot_orders().
+        struct SnapLevel {
+            exchange::PriceLevel lv{};
+        };
+        std::vector<SnapLevel> bid_levels, ask_levels;
+
+        auto collect = [](auto* engine, std::vector<SnapLevel>& bids,
+                          std::vector<SnapLevel>& asks) {
+            if (!engine) return;
+            engine->for_each_level(exchange::Side::Buy,
+                [&](exchange::Price p, exchange::Quantity q, uint32_t oc) {
+                    SnapLevel sl{};
+                    sl.lv.price = p;
+                    sl.lv.total_quantity = q;
+                    sl.lv.order_count = oc;
+                    bids.push_back(sl);
+                });
+            engine->for_each_level(exchange::Side::Sell,
+                [&](exchange::Price p, exchange::Quantity q, uint32_t oc) {
+                    SnapLevel sl{};
+                    sl.lv.price = p;
+                    sl.lv.total_quantity = q;
+                    sl.lv.order_count = oc;
+                    asks.push_back(sl);
+                });
+        };
+
+        if (sim.is_gtbpr_instrument(iid)) {
+            collect(sim.get_gtbpr_engine(iid), bid_levels, ask_levels);
+        } else {
+            collect(sim.get_fifo_engine(iid), bid_levels, ask_levels);
+        }
+
+        // Link the temporary PriceLevels into a list.
+        for (size_t i = 0; i < bid_levels.size(); ++i) {
+            bid_levels[i].lv.next = (i + 1 < bid_levels.size())
+                ? &bid_levels[i + 1].lv : nullptr;
+        }
+        for (size_t i = 0; i < ask_levels.size(); ++i) {
+            ask_levels[i].lv.next = (i + 1 < ask_levels.size())
+                ? &ask_levels[i + 1].lv : nullptr;
+        }
+
+        first_bid = bid_levels.empty() ? nullptr : &bid_levels[0].lv;
+        first_ask = ask_levels.empty() ? nullptr : &ask_levels[0].lv;
+
+        size_t snap_len = encode_snapshot_orders(
+            snap_buf, SNAP_BUF_SIZE,
+            static_cast<int32_t>(iid),
+            first_bid, first_ask, snap_ctx);
+
+        if (snap_len > 0) {
+            snap_server_ptr->send_message(fd, snap_buf, snap_len);
+            std::fprintf(stderr, "Snapshot: sent %zu bytes for %s (%zu bid + %zu ask levels)\n",
+                         snap_len, symbol.c_str(), bid_levels.size(), ask_levels.size());
+        }
+    };
+
+    TcpServer snap_server(snap_cfg);
+    snap_server_ptr = &snap_server;
+    std::fprintf(stderr, "Snapshot server listening on port %u\n", snap_server.port());
+
     // -- Publish initial security definitions on iMpact channel --
     publish_secdefs(products, mcast);
     std::fprintf(stderr, "Published %zu secdef(s) on iMpact channel\n",
@@ -247,6 +345,9 @@ int run_sim(SimulatorT& sim,
         //    The on_message callback fires synchronously during poll(),
         //    which runs the gateway -> engine -> publishers inline.
         tcp.poll(/* timeout_ms= */ 10);
+
+        // 1b. Poll TCP snapshot server for snapshot requests.
+        snap_server.poll(/* timeout_ms= */ 0);
 
         // 2. Flush pending execution reports back to connected clients.
         const auto& messages = exec_pub.messages();
@@ -283,6 +384,7 @@ int run_sim(SimulatorT& sim,
     sim.close_market(now());
     sim.end_of_day(now());
     tcp.shutdown();
+    snap_server.shutdown();
     std::fprintf(stderr, "Simulator stopped.\n");
 
     return 0;

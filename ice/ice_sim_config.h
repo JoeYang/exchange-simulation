@@ -16,6 +16,7 @@ struct IceSimConfig {
     uint16_t    fix_port{9200};            // FIX 4.2 TCP listen port
     std::string impact_group{"239.0.32.1"};// iMpact multicast group
     uint16_t    impact_port{14400};        // iMpact multicast port
+    uint16_t    snapshot_port{14401};      // TCP snapshot server port
     std::string shm_path;                  // empty = no shared memory transport
     std::vector<std::string> products;     // empty = load all ICE products
 
@@ -31,6 +32,8 @@ struct IceSimConfig {
                 cfg.impact_group = argv[++i];
             } else if (std::strcmp(argv[i], "--impact-port") == 0 && i + 1 < argc) {
                 cfg.impact_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+            } else if (std::strcmp(argv[i], "--snapshot-port") == 0 && i + 1 < argc) {
+                cfg.snapshot_port = static_cast<uint16_t>(std::stoi(argv[++i]));
             } else if (std::strcmp(argv[i], "--shm-path") == 0 && i + 1 < argc) {
                 cfg.shm_path = argv[++i];
             } else if (std::strcmp(argv[i], "--products") == 0 && i + 1 < argc) {
@@ -52,6 +55,7 @@ struct IceSimConfig {
             "  --fix-port      PORT    FIX 4.2 TCP listen port    (default: 9200)\n"
             "  --impact-group  ADDR    iMpact multicast group     (default: 239.0.32.1)\n"
             "  --impact-port   PORT    iMpact multicast port      (default: 14400)\n"
+            "  --snapshot-port PORT    TCP snapshot server port   (default: 14401)\n"
             "  --shm-path      PATH    Shared memory path         (default: none)\n"
             "  --products      SYM,..  Comma-separated symbols    (default: all)\n"
             "  -h, --help              Show this message\n",

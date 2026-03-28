@@ -10,6 +10,7 @@ TEST(IceSimConfigTest, DefaultValues) {
     EXPECT_EQ(cfg.fix_port, 9200);
     EXPECT_EQ(cfg.impact_group, "239.0.32.1");
     EXPECT_EQ(cfg.impact_port, 14400);
+    EXPECT_EQ(cfg.snapshot_port, 14401);
     EXPECT_TRUE(cfg.shm_path.empty());
     EXPECT_TRUE(cfg.products.empty());
 }
@@ -63,6 +64,16 @@ TEST(IceSimConfigTest, ParsePartialProducts) {
     ASSERT_TRUE(IceSimConfig::parse(3, const_cast<char**>(argv), cfg));
     ASSERT_EQ(cfg.products.size(), 1u);
     EXPECT_EQ(cfg.products[0], "B");
+}
+
+TEST(IceSimConfigTest, ParseSnapshotPort) {
+    const char* argv[] = {"ice-sim", "--snapshot-port", "15000"};
+    IceSimConfig cfg{};
+    ASSERT_TRUE(IceSimConfig::parse(3, const_cast<char**>(argv), cfg));
+    EXPECT_EQ(cfg.snapshot_port, 15000);
+    // Other fields should be defaults.
+    EXPECT_EQ(cfg.fix_port, 9200);
+    EXPECT_EQ(cfg.impact_port, 14400);
 }
 
 }  // namespace
