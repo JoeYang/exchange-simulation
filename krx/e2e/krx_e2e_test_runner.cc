@@ -439,7 +439,8 @@ std::vector<KrxE2EResult> KrxE2ETestRunner::run(const Journal& journal) {
                 req.timestamp = ts;
 
                 // Register with exec publisher before engine fires callbacks.
-                exec_pub.register_order(cl_id, cl_id, price, qty, side);
+                // on_order_accepted() remaps from pending_ to orders_.
+                exec_pub.register_order(cl_id, price, qty, side);
 
                 sim.new_order(iid, req);
 
@@ -449,9 +450,6 @@ std::vector<KrxE2EResult> KrxE2ETestRunner::run(const Journal& journal) {
                     if (accepted) {
                         cl_to_exchange_id_[accepted->client_order_id] =
                             accepted->id;
-                        exec_pub.register_order(
-                            accepted->id, accepted->client_order_id,
-                            price, qty, side);
                     }
                 }
                 recording_ol.clear();

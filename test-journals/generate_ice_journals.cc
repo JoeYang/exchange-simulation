@@ -94,7 +94,7 @@ struct IcePipeline {
         switch_instrument(instrument);
 
         auto iid = resolve(instrument);
-        exec_pub.register_order(cl_ord_id, cl_ord_id, price, qty, side);
+        exec_pub.register_order(cl_ord_id, price, qty, side);
 
         OrderRequest req{};
         req.client_order_id = cl_ord_id;
@@ -112,9 +112,6 @@ struct IcePipeline {
             auto* accepted = std::get_if<OrderAccepted>(&evt);
             if (accepted) {
                 cl_to_exch[accepted->client_order_id] = accepted->id;
-                exec_pub.register_order(
-                    accepted->id, accepted->client_order_id,
-                    price, qty, side);
             }
         }
         recording_ol.clear();
@@ -443,7 +440,7 @@ void gen_ice_session_lifecycle(const std::string& dir) {
     buy_req.price = 800000;
     buy_req.quantity = 10000;
     buy_req.timestamp = 1000;
-    p.exec_pub.register_order(1, 1, 800000, 10000, Side::Buy);
+    p.exec_pub.register_order(1, 800000, 10000, Side::Buy);
     p.sim.new_order(1, buy_req);
     for (const auto& evt : p.recording_ol.events()) {
         auto* acc = std::get_if<OrderAccepted>(&evt);
@@ -461,7 +458,7 @@ void gen_ice_session_lifecycle(const std::string& dir) {
     sell_req.account_id = 2;
     sell_req.side = Side::Sell;
     sell_req.timestamp = 2000;
-    p.exec_pub.register_order(2, 2, 800000, 10000, Side::Sell);
+    p.exec_pub.register_order(2, 800000, 10000, Side::Sell);
     p.sim.new_order(1, sell_req);
     for (const auto& evt : p.recording_ol.events()) {
         auto* acc = std::get_if<OrderAccepted>(&evt);
@@ -496,7 +493,7 @@ void gen_ice_iceberg(const std::string& dir) {
     iceberg.quantity = 30000;
     iceberg.display_qty = 10000;
     iceberg.timestamp = 1000;
-    p.exec_pub.register_order(1, 1, 800000, 30000, Side::Sell);
+    p.exec_pub.register_order(1, 800000, 30000, Side::Sell);
     p.sim.new_order(1, iceberg);
     for (const auto& evt : p.recording_ol.events()) {
         auto* acc = std::get_if<OrderAccepted>(&evt);

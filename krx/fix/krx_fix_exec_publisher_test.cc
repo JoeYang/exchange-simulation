@@ -36,14 +36,14 @@ protected:
             "KRX_SIM", "CLIENT1", "KOSPI200");
     }
 
-    void register_buy_order(OrderId id, uint64_t client_id,
+    void register_buy_order(OrderId /*id*/, uint64_t client_id,
                             Price price, Quantity qty) {
-        publisher_->register_order(id, client_id, price, qty, Side::Buy);
+        publisher_->register_order(client_id, price, qty, Side::Buy);
     }
 
-    void register_sell_order(OrderId id, uint64_t client_id,
+    void register_sell_order(OrderId /*id*/, uint64_t client_id,
                              Price price, Quantity qty) {
-        publisher_->register_order(id, client_id, price, qty, Side::Sell);
+        publisher_->register_order(client_id, price, qty, Side::Sell);
     }
 
     std::unique_ptr<KrxFixExecPublisher> publisher_;

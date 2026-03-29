@@ -210,11 +210,10 @@ int run_sim(SimulatorT& sim,
             exchange::Side side;
             fix_to_side(nos.side, side);
 
-            // Register with a placeholder OrderId; the engine will assign the
-            // real one. We use cl_ord_id as a temporary key and the publisher
-            // will match on the engine-assigned id via on_order_accepted.
+            // Store in pending_ keyed by client_order_id; on_order_accepted()
+            // will remap to the engine-assigned OrderId.
             exec_pub.register_order(
-                static_cast<OrderId>(cl_ord_id), cl_ord_id,
+                cl_ord_id,
                 fix_price_to_engine(msg.get_string(tags::Price)),
                 fix_qty_to_engine(msg.get_string(tags::OrderQty)),
                 side);

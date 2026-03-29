@@ -31,31 +31,41 @@ public:
     }
 
     // Register order info before submitting to the engine.
-    // Must be called so that fill/cancel/modify callbacks have context.
-    void register_order(OrderId id, uint64_t client_order_id,
+    // Stores in pending_ keyed by client_order_id; on_order_accepted()
+    // moves to orders_ keyed by engine-assigned OrderId.
+    void register_order(uint64_t client_order_id,
                         Price price, Quantity qty, Side side)
     {
         OrderInfo info;
-        info.id = id;
+        info.id = 0;  // placeholder; set in on_order_accepted
         info.client_order_id = client_order_id;
         info.price = price;
         info.quantity = qty;
         info.filled_quantity = 0;
         info.side = side;
-        orders_[id] = info;
+        pending_[client_order_id] = info;
     }
 
     // --- OrderListenerBase callbacks (name hiding, not virtual) ---
 
     void on_order_accepted(const OrderAccepted& e) {
-        auto it = orders_.find(e.id);
-        if (it == orders_.end()) return;
+        // Move from pending (keyed by client_order_id) to orders (keyed by
+        // engine-assigned OrderId). This is the same two-phase pattern used
+        // by the CME iLink3 report publisher.
+        auto pit = pending_.find(e.client_order_id);
+        if (pit == pending_.end()) return;
 
-        Order order = to_order(it->second);
+        OrderInfo info = pit->second;
+        info.id = e.id;
+        pending_.erase(pit);
+        orders_[e.id] = info;
+
+        Order order = to_order(info);
         messages_.push_back(encode_exec_new(e, order, ctx_));
     }
 
     void on_order_rejected(const OrderRejected& e) {
+        pending_.erase(e.client_order_id);
         messages_.push_back(encode_exec_reject(e, ctx_));
     }
 
@@ -120,7 +130,8 @@ private:
     }
 
     EncodeContext ctx_;
-    std::unordered_map<OrderId, OrderInfo> orders_;
+    std::unordered_map<uint64_t, OrderInfo> pending_;   // keyed by client_order_id
+    std::unordered_map<OrderId, OrderInfo> orders_;     // keyed by engine-assigned OrderId
     std::vector<std::string> messages_;
 };
 

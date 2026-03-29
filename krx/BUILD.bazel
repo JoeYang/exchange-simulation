@@ -116,6 +116,7 @@ cc_binary(
         "//krx/fast:fast_publisher",
         "//krx/fix:krx_fix_exec_publisher",
         "//krx/fix:krx_fix_gateway",
+        "//krx/fix:krx_fix_messages",
         "//tools:shm_listener",
         "//tools:shm_transport",
         "//tools:tcp_server",
@@ -124,3 +125,4 @@ cc_binary(
     linkopts = ["-lrt"],
     visibility = ["//visibility:public"],
 )
+

@@ -439,9 +439,8 @@ std::vector<IceE2EResult> IceE2ETestRunner::run(const Journal& journal) {
                 req.timestamp = ts;
 
                 // Register with exec publisher before engine fires callbacks.
-                // We don't know the exchange-assigned ID yet; use cl_id as
-                // placeholder. The accepted callback will give us the real ID.
-                exec_pub.register_order(cl_id, cl_id, price, qty, side);
+                // on_order_accepted() remaps from pending_ to orders_.
+                exec_pub.register_order(cl_id, price, qty, side);
 
                 sim.new_order(iid, req);
 
@@ -451,10 +450,6 @@ std::vector<IceE2EResult> IceE2ETestRunner::run(const Journal& journal) {
                     if (accepted) {
                         cl_to_exchange_id_[accepted->client_order_id] =
                             accepted->id;
-                        // Re-register with correct exchange ID.
-                        exec_pub.register_order(
-                            accepted->id, accepted->client_order_id,
-                            price, qty, side);
                     }
                 }
                 recording_ol.clear();

@@ -19,6 +19,7 @@
 #include "krx/krx_sim_config.h"
 #include "krx/fix/krx_fix_gateway.h"
 #include "krx/fix/krx_fix_exec_publisher.h"
+#include "krx/fix/krx_fix_messages.h"
 #include "krx/fast/fast_encoder.h"
 #include "krx/fast/fast_publisher.h"
 #include "exchange-core/composite_listener.h"
@@ -32,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -117,6 +119,12 @@ int run_sim(SimulatorT& sim,
 
     auto now = make_clock();
 
+    // -- Build symbol -> instrument_id map for FIX routing --
+    std::unordered_map<std::string, uint32_t> symbol_map;
+    for (const auto& p : products) {
+        symbol_map[p.symbol] = p.instrument_id;
+    }
+
     // -- Set reference prices (use 0 for now; real system gets from feed) --
     // In a production system these would come from the previous close feed.
     // For the simulator, we start without daily limits until set externally.
@@ -126,30 +134,27 @@ int run_sim(SimulatorT& sim,
     sim.open_regular_market(now());
     std::fprintf(stderr, "Market open. Session: Regular Continuous\n");
 
-    // -- Create FIX gateway (routes to first instrument by default) --
-    // The gateway is templated on the simulator which exposes new_order etc.
-    // For multi-instrument routing, the gateway extracts board_id from FIX.
-    // For simplicity, the runner routes all orders to the first product.
-    auto first_id = products[0].instrument_id;
-
-    // Wrapper that routes FIX gateway calls to a specific instrument.
-    struct SimRouter {
+    // -- Create symbol router + FIX gateway --
+    // SymbolRouter adapts the multi-instrument KrxSimulator to the
+    // single-engine interface that KrxFixGateway expects. Before each
+    // gateway dispatch, we set active_instrument from the FIX Symbol tag.
+    struct SymbolRouter {
         SimulatorT& sim;
-        uint32_t instrument_id;
+        uint32_t active_instrument{0};
 
         void new_order(const OrderRequest& req) {
-            sim.new_order(instrument_id, req);
+            sim.new_order(active_instrument, req);
         }
         void cancel_order(OrderId id, Timestamp ts) {
-            sim.cancel_order(instrument_id, id, ts);
+            sim.cancel_order(active_instrument, id, ts);
         }
         void modify_order(const ModifyRequest& req) {
-            sim.modify_order(instrument_id, req);
+            sim.modify_order(active_instrument, req);
         }
     };
 
-    SimRouter router{sim, first_id};
-    fix::KrxFixGateway<SimRouter> gateway(router);
+    SymbolRouter router{sim, products[0].instrument_id};
+    fix::KrxFixGateway<SymbolRouter> gateway(router);
 
     // -- Start UDP multicast publisher for FAST --
     UdpMulticastPublisher fast_mcast(cfg.fast_group.c_str(), cfg.fast_port);
@@ -192,6 +197,46 @@ int run_sim(SimulatorT& sim,
     tcp_cfg.on_message = [&](int fd, const char* data, size_t len) {
         (void)fd;
         auto ts = now();
+
+        // Pre-parse the FIX message to extract Symbol (tag 55) for
+        // instrument routing and to register orders with the exec publisher.
+        auto pre_parse = ::ice::fix::parse_fix_message(data, len);
+        if (!pre_parse.has_value()) {
+            std::fprintf(stderr, "FIX parse error: %s (fd=%d)\n",
+                         pre_parse.error().c_str(), fd);
+            return;
+        }
+
+        const auto& msg = pre_parse.value();
+        std::string symbol = msg.get_string(fix::tags::Symbol);
+        auto it = symbol_map.find(symbol);
+        if (it == symbol_map.end()) {
+            std::fprintf(stderr, "Unknown symbol: %s (fd=%d)\n",
+                         symbol.c_str(), fd);
+            return;
+        }
+
+        // Set active instrument for the router before gateway dispatch.
+        router.active_instrument = it->second;
+
+        // Register order context with exec publisher for new orders (35=D).
+        // The exec publisher needs this so it can produce FIX execution
+        // reports when the engine fires on_order_accepted/filled/etc.
+        if (msg.msg_type == "D") {
+            auto nos = fix::KrxNewOrderSingle::from_fix(msg);
+            uint64_t cl_ord_id = static_cast<uint64_t>(
+                std::strtoll(nos.cl_ord_id.c_str(), nullptr, 10));
+
+            Side side;
+            fix::fix_to_side(nos.side, side);
+
+            exec_pub.register_order(
+                cl_ord_id,
+                fix::fix_price_to_engine(msg.get_string(fix::tags::Price)),
+                fix::fix_qty_to_engine(msg.get_string(fix::tags::OrderQty)),
+                side);
+        }
+
         auto result = gateway.on_message(data, len, ts);
         if (!result.ok) {
             std::fprintf(stderr, "FIX gateway error: %s (fd=%d)\n",

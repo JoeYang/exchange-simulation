@@ -56,3 +56,20 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "krx_fix_pipeline_test",
+    srcs = ["krx_fix_pipeline_test.cc"],
+    deps = [
+        ":krx_fix_exec_publisher",
+        ":krx_fix_gateway",
+        ":krx_fix_messages",
+        "//exchange-core:types",
+        "//ice/fix:fix_encoder",
+        "//ice/fix:fix_parser",
+        "//krx:krx_products",
+        "//krx:krx_simulator",
+        "//krx/fast:fast_publisher",
+        "@googletest//:gtest_main",
+    ],
+)
