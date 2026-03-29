@@ -152,21 +152,21 @@ test_ice() {
     sleep 1
 
     # Send orders via trader (3 seconds of random-walk)
-    timeout 4 bazel-bin/tools/exchange-trader --exchange ice \
+    timeout 7 bazel-bin/tools/exchange-trader --exchange ice \
         --host 127.0.0.1 --port 9200 \
         --account 1 --instrument B \
-        --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 10 \
+        --strategy market-maker --ref-price 82.00 --spread 0.10 --rate 10 \
         > /tmp/smoke_ice_trader1.log 2>&1 &
     local T1_PID=$!
 
-    timeout 4 bazel-bin/tools/exchange-trader --exchange ice \
+    timeout 6 bazel-bin/tools/exchange-trader --exchange ice \
         --host 127.0.0.1 --port 9200 \
         --account 2 --instrument B \
-        --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 10 \
+        --strategy market-maker --ref-price 82.00 --spread 0.10 --rate 10 \
         > /tmp/smoke_ice_trader2.log 2>&1 &
     local T2_PID=$!
 
-    sleep 4
+    sleep 6
 
     # Check observer
     if [ -f /tmp/smoke_ice_observer.journal ] && [ -s /tmp/smoke_ice_observer.journal ]; then
@@ -222,21 +222,21 @@ test_krx() {
     sleep 1
 
     # Send orders via trader
-    timeout 4 bazel-bin/tools/exchange-trader --exchange krx \
+    timeout 7 bazel-bin/tools/exchange-trader --exchange krx \
         --host 127.0.0.1 --port 9300 \
         --account 1 --instrument KS \
-        --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 10 \
+        --strategy market-maker --ref-price 350.00 --spread 0.50 --rate 10 \
         > /tmp/smoke_krx_trader1.log 2>&1 &
     local T1_PID=$!
 
-    timeout 4 bazel-bin/tools/exchange-trader --exchange krx \
+    timeout 7 bazel-bin/tools/exchange-trader --exchange krx \
         --host 127.0.0.1 --port 9300 \
         --account 2 --instrument KS \
-        --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 10 \
+        --strategy market-maker --ref-price 350.00 --spread 0.50 --rate 10 \
         > /tmp/smoke_krx_trader2.log 2>&1 &
     local T2_PID=$!
 
-    sleep 4
+    sleep 6
 
     # Check observer
     if [ -f /tmp/smoke_krx_observer.journal ] && [ -s /tmp/smoke_krx_observer.journal ]; then
