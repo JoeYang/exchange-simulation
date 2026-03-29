@@ -83,3 +83,20 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "ice_fix_pipeline_test",
+    srcs = ["ice_fix_pipeline_test.cc"],
+    deps = [
+        ":fix_encoder",
+        ":fix_parser",
+        ":ice_fix_exec_publisher",
+        ":ice_fix_gateway",
+        ":ice_fix_messages",
+        "//exchange-core:types",
+        "//ice:ice_products",
+        "//ice:ice_simulator",
+        "//ice/impact:impact_publisher",
+        "@googletest//:gtest_main",
+    ],
+)
