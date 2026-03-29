@@ -1,9 +1,12 @@
 #pragma once
 
 #include "exchange-sim/exchange_simulator.h"
+#include "exchange-sim/spread_book/spread_instrument_config.h"
+#include "exchange-sim/spread_book/spread_simulator.h"
 #include "krx/krx_exchange.h"
 #include "krx/krx_products.h"
 
+#include <memory>
 #include <vector>
 
 namespace exchange {
@@ -34,6 +37,9 @@ class KrxSimulator {
     using Sim = ExchangeSimulator<KrxEngine<OrderListenerT, MdListenerT>,
                                   OrderListenerT, MdListenerT>;
 
+    using Engine = KrxEngine<OrderListenerT, MdListenerT>;
+    using SpreadSim = SpreadSimulator<Engine, OrderListenerT>;
+
     Sim regular_sim_;
     Sim after_hours_sim_;
 
@@ -41,6 +47,10 @@ class KrxSimulator {
 
     // Product configs retained for after-hours engine setup.
     std::vector<KrxProductConfig> products_;
+
+    // Spread simulator for the regular session.
+    // Lazily created by load_spreads().
+    std::unique_ptr<SpreadSim> spread_sim_;
 
 public:
     KrxSimulator(OrderListenerT& ol, MdListenerT& ml)
@@ -62,6 +72,23 @@ public:
         for (const auto& p : products) {
             add_product_to_sim(regular_sim_, p);
             add_product_to_sim(after_hours_sim_, p);
+        }
+    }
+
+    // load_spreads -- register spread instruments in the SpreadSimulator.
+    //
+    // Must be called after load_products() so outright engines exist.
+    // Creates a SpreadSimulator that routes to the regular session's engines
+    // and registers each spread instrument.
+    void load_spreads(const std::vector<SpreadInstrumentConfig>& spreads,
+                      OrderListenerT& ol) {
+        spread_sim_ = std::make_unique<SpreadSim>(
+            [this](uint32_t id) -> Engine* {
+                return regular_sim_.get_engine(id);
+            },
+            ol);
+        for (const auto& s : spreads) {
+            spread_sim_->add_spread_instrument(s);
         }
     }
 
@@ -115,6 +142,45 @@ public:
     void modify_order(uint32_t instrument, const ModifyRequest& req) {
         active_sim().modify_order(instrument, req);
     }
+
+    // --- Spread Order Routing ---
+    //
+    // These route to the SpreadSimulator. Spread trading is only available
+    // in the regular session (not after-hours).
+
+    OrderId new_spread_order(uint32_t spread_id,
+                             const SpreadOrderRequest& req) {
+        if (!spread_sim_) return 0;
+        return spread_sim_->new_spread_order(spread_id, req);
+    }
+
+    bool cancel_spread_order(uint32_t spread_id,
+                             const SpreadCancelRequest& req) {
+        if (!spread_sim_) return false;
+        return spread_sim_->cancel_spread_order(spread_id, req);
+    }
+
+    bool modify_spread_order(uint32_t spread_id,
+                             const SpreadModifyRequest& req) {
+        if (!spread_sim_) return false;
+        return spread_sim_->modify_spread_order(spread_id, req);
+    }
+
+    // Notify spread simulator of outright BBO change (call after outright fill).
+    int on_outright_bbo_change(uint32_t outright_id, Timestamp ts) {
+        if (!spread_sim_) return 0;
+        return spread_sim_->on_outright_bbo_change(outright_id, ts);
+    }
+
+    // Check if an instrument ID is a spread.
+    bool is_spread(uint32_t id) const {
+        return spread_sim_ && spread_sim_->is_spread(id);
+    }
+
+    // --- Spread Access ---
+
+    SpreadSim* spread_simulator() { return spread_sim_.get(); }
+    const SpreadSim* spread_simulator() const { return spread_sim_.get(); }
 
     // --- Engine Access ---
 
