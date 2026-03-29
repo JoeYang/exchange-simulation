@@ -36,12 +36,35 @@ cc_test(
 )
 
 cc_library(
+    name = "krx_spreads",
+    hdrs = ["krx_spreads.h"],
+    deps = [
+        ":krx_products",
+        "//exchange-sim/spread_book:spread_instrument_config",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_spreads_test",
+    srcs = ["krx_spreads_test.cc"],
+    deps = [
+        ":krx_products",
+        ":krx_spreads",
+        "//exchange-sim/spread_book:spread_strategy_registry",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "krx_simulator",
     hdrs = ["krx_simulator.h"],
     deps = [
         ":krx_exchange",
         ":krx_products",
         "//exchange-sim:exchange_simulator",
+        "//exchange-sim/spread_book:spread_instrument_config",
+        "//exchange-sim/spread_book:spread_simulator",
     ],
     visibility = ["//visibility:public"],
 )
@@ -89,6 +112,7 @@ cc_binary(
         ":krx_sim_config",
         ":krx_simulator",
         "//exchange-core:composite_listener",
+        "//krx/fast:fast_encoder",
         "//krx/fast:fast_publisher",
         "//krx/fix:krx_fix_exec_publisher",
         "//krx/fix:krx_fix_gateway",
