@@ -593,6 +593,7 @@ cc_binary(
         ":trading_strategy",
         "//cme:cme_products",
         "//ice:ice_products",
+        "//krx:krx_products",
     ],
     visibility = ["//visibility:public"],
 )

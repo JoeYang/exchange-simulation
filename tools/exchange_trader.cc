@@ -12,6 +12,7 @@
 #include "tools/trading_strategy.h"
 #include "cme/cme_products.h"
 #include "ice/ice_products.h"
+#include "krx/krx_products.h"
 #include "exchange-core/types.h"
 
 #include <csignal>
@@ -59,7 +60,7 @@ void print_usage(const char* prog) {
     std::fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
-        "  --exchange STR       cme or ice            (default: cme)\n"
+        "  --exchange STR       cme, ice, or krx      (default: cme)\n"
         "  --host HOST          TCP host              (default: 127.0.0.1)\n"
         "  --port PORT          TCP port              (default: 9100)\n"
         "  --instrument SYM     Instrument symbol     (default: ES)\n"
@@ -150,6 +151,19 @@ InstrumentInfo resolve_ice(const std::string& symbol) {
     return {};
 }
 
+InstrumentInfo resolve_krx(const std::string& symbol) {
+    for (const auto& p : exchange::krx::get_krx_products()) {
+        if (p.symbol == symbol) {
+            InstrumentInfo info;
+            info.security_id = static_cast<int32_t>(p.instrument_id);
+            info.tick_size = p.tick_size;
+            info.lot_size = p.lot_size;
+            return info;
+        }
+    }
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Timestamp helpers
 // ---------------------------------------------------------------------------
@@ -175,8 +189,10 @@ int main(int argc, char* argv[]) {
         info = resolve_cme(args.instrument);
     } else if (args.exchange == "ice") {
         info = resolve_ice(args.instrument);
+    } else if (args.exchange == "krx") {
+        info = resolve_krx(args.instrument);
     } else {
-        std::fprintf(stderr, "Unknown exchange: %s (use cme or ice)\n",
+        std::fprintf(stderr, "Unknown exchange: %s (use cme, ice, or krx)\n",
                      args.exchange.c_str());
         return 1;
     }
@@ -192,6 +208,7 @@ int main(int argc, char* argv[]) {
     if (args.exchange == "cme") {
         codec = std::make_unique<exchange::CmeCodec>(info.security_id, args.account);
     } else {
+        // ICE and KRX both use FIX 4.2 order entry
         codec = std::make_unique<exchange::IceCodec>(
             args.instrument, args.account, "EXCHANGE");
     }
