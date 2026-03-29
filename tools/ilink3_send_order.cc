@@ -399,7 +399,11 @@ sbe::ilink3::EncodeContext make_encode_context(
     size_t copy_len = std::min(account.size(), sizeof(ctx.sender_id) - 1);
     std::memcpy(ctx.sender_id, account.c_str(), copy_len);
     std::memcpy(ctx.location, "US,IL", 5);
-    ctx.party_details_list_req_id = 1;
+    // Use account string hash as party_details_list_req_id for SMP differentiation.
+    // Different --account values produce different IDs, preventing false SMP triggers.
+    uint64_t hash = 0;
+    for (char c : account) hash = hash * 31 + static_cast<uint8_t>(c);
+    ctx.party_details_list_req_id = static_cast<uint64_t>(hash == 0 ? 1 : hash);
     return ctx;
 }
 
