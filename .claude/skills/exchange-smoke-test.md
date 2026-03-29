@@ -80,12 +80,12 @@ bazel-bin/tools/exchange-observer --exchange ice \
 
 # Orders (ICE uses exchange-trader with --exchange ice)
 bazel-bin/tools/exchange-trader --exchange ice --port 9200 \
-    --client-id 1 --account 1 --instrument B \
+    --account FIRM_A --instrument B \
     --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 5
 
 # Second trader (opposing flow for fills)
 bazel-bin/tools/exchange-trader --exchange ice --port 9200 \
-    --client-id 2 --account 2 --instrument B \
+    --account FIRM_B --instrument B \
     --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 5
 
 # Ref prices: B (Brent) ~82, G (Gasoil) ~700, M (NatGas) ~100
@@ -103,12 +103,12 @@ bazel-bin/tools/exchange-observer --exchange krx \
 
 # Orders (KRX uses exchange-trader with --exchange krx)
 bazel-bin/tools/exchange-trader --exchange krx --port 9300 \
-    --client-id 1 --account 1 --instrument KS \
+    --account FIRM_A --instrument KS \
     --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 5
 
 # Second trader
 bazel-bin/tools/exchange-trader --exchange krx --port 9300 \
-    --client-id 2 --account 2 --instrument KS \
+    --account FIRM_B --instrument KS \
     --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 5
 
 # Ref prices: KS (KOSPI200) ~350, KTB ~110, USD ~1300

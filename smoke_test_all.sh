@@ -154,14 +154,14 @@ test_ice() {
     # Send orders via trader (3 seconds of random-walk)
     timeout 4 bazel-bin/tools/exchange-trader --exchange ice \
         --host 127.0.0.1 --port 9200 \
-        --client-id 1 --account 1 --instrument B \
+        --account FIRM_A --instrument B \
         --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 10 \
         > /tmp/smoke_ice_trader1.log 2>&1 &
     local T1_PID=$!
 
     timeout 4 bazel-bin/tools/exchange-trader --exchange ice \
         --host 127.0.0.1 --port 9200 \
-        --client-id 2 --account 2 --instrument B \
+        --account FIRM_B --instrument B \
         --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 10 \
         > /tmp/smoke_ice_trader2.log 2>&1 &
     local T2_PID=$!
@@ -224,14 +224,14 @@ test_krx() {
     # Send orders via trader
     timeout 4 bazel-bin/tools/exchange-trader --exchange krx \
         --host 127.0.0.1 --port 9300 \
-        --client-id 1 --account 1 --instrument KS \
+        --account FIRM_A --instrument KS \
         --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 10 \
         > /tmp/smoke_krx_trader1.log 2>&1 &
     local T1_PID=$!
 
     timeout 4 bazel-bin/tools/exchange-trader --exchange krx \
         --host 127.0.0.1 --port 9300 \
-        --client-id 2 --account 2 --instrument KS \
+        --account FIRM_B --instrument KS \
         --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 10 \
         > /tmp/smoke_krx_trader2.log 2>&1 &
     local T2_PID=$!
