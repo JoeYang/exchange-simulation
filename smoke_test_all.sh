@@ -155,14 +155,14 @@ test_ice() {
     timeout 7 bazel-bin/tools/exchange-trader --exchange ice \
         --host 127.0.0.1 --port 9200 \
         --account 1 --instrument B \
-        --strategy market-maker --ref-price 82.00 --spread 0.10 --rate 10 \
+        --strategy market-maker --ref-price 81.95 --spread 0.10 --rate 10 \
         > /tmp/smoke_ice_trader1.log 2>&1 &
     local T1_PID=$!
 
-    timeout 6 bazel-bin/tools/exchange-trader --exchange ice \
+    timeout 7 bazel-bin/tools/exchange-trader --exchange ice \
         --host 127.0.0.1 --port 9200 \
         --account 2 --instrument B \
-        --strategy market-maker --ref-price 82.00 --spread 0.10 --rate 10 \
+        --strategy market-maker --ref-price 82.05 --spread 0.10 --rate 10 \
         > /tmp/smoke_ice_trader2.log 2>&1 &
     local T2_PID=$!
 
@@ -225,14 +225,14 @@ test_krx() {
     timeout 7 bazel-bin/tools/exchange-trader --exchange krx \
         --host 127.0.0.1 --port 9300 \
         --account 1 --instrument KS \
-        --strategy market-maker --ref-price 350.00 --spread 0.50 --rate 10 \
+        --strategy market-maker --ref-price 349.75 --spread 0.50 --rate 10 \
         > /tmp/smoke_krx_trader1.log 2>&1 &
     local T1_PID=$!
 
     timeout 7 bazel-bin/tools/exchange-trader --exchange krx \
         --host 127.0.0.1 --port 9300 \
         --account 2 --instrument KS \
-        --strategy market-maker --ref-price 350.00 --spread 0.50 --rate 10 \
+        --strategy market-maker --ref-price 350.25 --spread 0.50 --rate 10 \
         > /tmp/smoke_krx_trader2.log 2>&1 &
     local T2_PID=$!
 
@@ -271,7 +271,7 @@ case "$EXCHANGE" in
     cme) test_cme ;;
     ice) test_ice ;;
     krx) test_krx ;;
-    all) test_cme; cleanup; test_ice; cleanup; test_krx ;;
+    all) test_cme; cleanup; sleep 2; test_ice; cleanup; sleep 2; test_krx ;;
     *) echo "Usage: $0 [cme|ice|krx|all]"; exit 1 ;;
 esac
 
