@@ -396,5 +396,78 @@ TEST_F(KrxFixPipelineTest, MultipleTraders) {
     EXPECT_EQ(engine->active_order_count(), 2u);
 }
 
+// ===========================================================================
+// Test 7: Crossing orders with no account tag (account_id=0) must still fill.
+//
+// Reproduces the KRX smoke test bug: IceCodec does not send FIX tag 1
+// (Account), so both traders' orders arrive with account_id=0. KRX SMP
+// treated 0==0 as a self-match and cancelled the aggressor, preventing
+// all fills. The fix: is_self_match must guard against zero account_id.
+// ===========================================================================
+
+TEST_F(KrxFixPipelineTest, ZeroAccountCrossingOrdersMustFill) {
+    // Resting sell at 350.00 with NO account tag (account=0 default).
+    std::string sell = encoder_.encode_new_order(
+        30, Side::Sell, 3500000, 10000, /*account=*/0);
+    ASSERT_TRUE(dispatch_fix(sell, 3000));
+    ASSERT_EQ(exec_pub_.messages().size(), 1u);
+    exec_pub_.clear_messages();
+
+    // Aggressive buy at 350.00, also no account.
+    std::string buy = encoder_.encode_new_order(
+        40, Side::Buy, 3500000, 10000, /*account=*/0);
+    ASSERT_TRUE(dispatch_fix(buy, 3001));
+
+    // Must produce a fill, not an SMP cancellation.
+    bool found_fill = false;
+    for (const auto& msg : exec_pub_.messages()) {
+        TestExecReport rpt;
+        if (decode_exec_report(msg, rpt) && rpt.type == TestExecReport::Fill) {
+            found_fill = true;
+            EXPECT_EQ(rpt.fill_price, 3500000);
+            EXPECT_EQ(rpt.fill_qty, 10000);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_fill)
+        << "Orders with account_id=0 must NOT trigger SMP — they must fill";
+}
+
+// ===========================================================================
+// Test 8: Crossing orders with different numeric accounts must fill.
+//
+// Verifies the full smoke-test scenario: two traders with accounts "1"
+// and "2" send crossing orders. These must match (not SMP-cancelled).
+// This mirrors the exact smoke test invocation:
+//   exchange-trader --account 1 --instrument KS ...
+//   exchange-trader --account 2 --instrument KS ...
+// ===========================================================================
+
+TEST_F(KrxFixPipelineTest, DifferentAccountsCrossingMustFill) {
+    // Resting sell at 350.00 from account 1.
+    std::string sell = encoder_.encode_new_order(
+        50, Side::Sell, 3500000, 10000, /*account=*/1);
+    ASSERT_TRUE(dispatch_fix(sell, 4000));
+    ASSERT_EQ(exec_pub_.messages().size(), 1u);
+    exec_pub_.clear_messages();
+
+    // Aggressive buy at 350.00 from account 2.
+    std::string buy = encoder_.encode_new_order(
+        60, Side::Buy, 3500000, 10000, /*account=*/2);
+    ASSERT_TRUE(dispatch_fix(buy, 4001));
+
+    bool found_fill = false;
+    for (const auto& msg : exec_pub_.messages()) {
+        TestExecReport rpt;
+        if (decode_exec_report(msg, rpt) && rpt.type == TestExecReport::Fill) {
+            found_fill = true;
+            EXPECT_EQ(rpt.fill_price, 3500000);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_fill)
+        << "Different accounts must not trigger SMP — orders must fill";
+}
+
 }  // namespace
 }  // namespace exchange::krx::fix

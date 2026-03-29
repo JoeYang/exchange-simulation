@@ -233,6 +233,10 @@ public:
         append_tag(body, "34", static_cast<uint64_t>(ctx_.next_seq_num++));
         append_tag(body, "52", format_sending_time(now_ns()));
         append_tag(body, "11", cl_ord_id);
+        // Tag 1 (Account): required by KRX for SMP (Self-Match Prevention).
+        // Without this tag, account_id defaults to 0 and all orders from
+        // different traders are treated as self-matches, blocking all fills.
+        append_tag(body, "1", ctx_.sender_comp_id);
         append_tag(body, "55", symbol_);
         append_tag(body, "54", encode_side(side));
         append_tag(body, "44", price_to_fix_str(price));

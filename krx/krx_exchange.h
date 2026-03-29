@@ -112,8 +112,12 @@ public:
     // --- CRTP hook overrides ---
 
     // KRX SMP: same account_id = self-match.
+    // Guard: account_id==0 means "no account set" (e.g. FIX tag 1 absent).
+    // Two orders with unset accounts must NOT trigger SMP -- they may belong
+    // to different firms. Same pattern as ICE (ice_exchange.h).
     bool is_self_match(const Order& aggressor, const Order& resting) {
-        return aggressor.account_id == resting.account_id;
+        return aggressor.account_id != 0 &&
+               aggressor.account_id == resting.account_id;
     }
 
     // KRX SMP action: cancel newest (aggressor).

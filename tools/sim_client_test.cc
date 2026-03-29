@@ -298,5 +298,24 @@ TEST_F(SimClientTest, SyncStatePopulatesClientState) {
     EXPECT_EQ(client.state().fill_count, 0u);
 }
 
+TEST_F(SimClientTest, IceCodecIncludesAccountTag) {
+    // IceCodec must include FIX tag 1 (Account) in NewOrderSingle so that
+    // KRX (and ICE) gateways can extract account_id for SMP routing.
+    IceCodec codec("KS", "42", "EXCHANGE");
+    char buf[2048];
+    size_t n = codec.encode_new_order(
+        buf, 1, Side::Buy, 3500000, 10000,
+        OrderType::Limit, TimeInForce::DAY);
+    ASSERT_GT(n, 0u);
+
+    auto result = ::ice::fix::parse_fix_message(buf, n);
+    ASSERT_TRUE(result.has_value());
+
+    // Tag 1 (Account) must be present and equal to sender_comp_id ("42").
+    std::string account = result.value().get_string(1);
+    EXPECT_EQ(account, "42")
+        << "IceCodec must include FIX tag 1 (Account) for SMP routing";
+}
+
 }  // namespace
 }  // namespace exchange
