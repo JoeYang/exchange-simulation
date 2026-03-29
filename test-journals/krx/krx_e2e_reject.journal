@@ -1,0 +1,32 @@
+# KRX E2E: Order rejection scenarios
+# Tests:
+#   1. Market order in PreOpen -> rejected (KRX phase validation)
+#   2. IOC order in PreOpen -> rejected (KRX phase validation)
+#   3. FOK order in PreOpen -> rejected (KRX phase validation)
+#   4. Valid limit/DAY order in PreOpen -> accepted
+#
+# Note: Rejection for Closed-session orders requires explicit session
+# close (engine defaults to Continuous). That scenario is covered in
+# the dual-session journal. Tick-size and price-band rejection require
+# simulator API calls not exposed as journal actions.
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+
+# --- PreOpen session: only limit/DAY/GTC orders allowed ---
+ACTION SESSION_START ts=0 state=PRE_OPEN
+
+# Market order in PreOpen -> rejected
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=0 qty=10000 type=MARKET tif=DAY
+EXPECT KRX_EXEC_REJECTED
+
+# IOC order in PreOpen -> rejected
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=BUY price=3500000 qty=10000 type=LIMIT tif=IOC
+EXPECT KRX_EXEC_REJECTED
+
+# FOK order in PreOpen -> rejected
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=3 side=BUY price=3500000 qty=10000 type=LIMIT tif=FOK
+EXPECT KRX_EXEC_REJECTED
+
+# Valid limit/DAY in PreOpen -> accepted
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KS cl_ord_id=4 account=4 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4

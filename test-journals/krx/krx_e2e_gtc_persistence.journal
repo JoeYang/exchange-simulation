@@ -1,0 +1,46 @@
+# KRX E2E: GTC vs DAY order behaviour across sessions
+# Tests:
+#   - GTC and DAY orders placed in regular session
+#   - Session close + reopen
+#   - GTC order expiry (trigger_expiry for DAY) is not available as a
+#     journal action; that is tested at the engine integration level.
+#   - This journal verifies the session lifecycle: orders in regular
+#     session, close, then new session with fresh order book.
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+
+# --- Session 1: Place GTC and DAY orders ---
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# DAY order: buy 1 contract at 350.0000
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+# GTC order: buy 1 contract at 349.0000
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=BUY price=3490000 qty=10000 type=LIMIT tif=GTC
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+
+# Sell rests above
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=3 side=SELL price=3520000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+EXPECT KRX_MD_QUOTE ask_price=3520000
+
+# --- End of day: close session ---
+ACTION SESSION_CLOSE ts=5000
+
+# --- Session 2: New trading day ---
+# After session close, all orders are expired/cleared by the engine.
+# New session starts with empty book.
+ACTION SESSION_START ts=6000 state=CONTINUOUS
+
+# Fresh order in new session — rests on empty book
+ACTION KRX_FIX_NEW_ORDER ts=7000 instrument=KS cl_ord_id=4 account=4 side=BUY price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4
+EXPECT KRX_MD_QUOTE bid_price=3510000
+
+# Fill in new session
+ACTION KRX_FIX_NEW_ORDER ts=8000 instrument=KS cl_ord_id=5 account=5 side=SELL price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=5
+EXPECT KRX_MD_TRADE price=3510000

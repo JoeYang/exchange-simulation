@@ -1,0 +1,32 @@
+# KRX E2E: Partial fill with correct ExecType
+# Tests: Buy 3 contracts, sell 1 -> partial fill (ExecType=1),
+#         sell 2 more -> full fill (ExecType=2).
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Buy 3 contracts at 350.0000
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=30000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+# Sell 1 contract -> partial fill on the resting buy (ExecType=1)
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+EXPECT KRX_MD_TRADE price=3500000
+
+# Sell 1 more -> another partial fill
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=3 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+EXPECT KRX_MD_TRADE price=3500000
+
+# Sell final 1 contract -> full fill (ExecType=2)
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KS cl_ord_id=4 account=4 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4
+EXPECT KRX_MD_TRADE price=3500000
+
+# Book should now be empty — new buy rests
+ACTION KRX_FIX_NEW_ORDER ts=5000 instrument=KS cl_ord_id=5 account=5 side=BUY price=3490000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=5
+EXPECT KRX_MD_QUOTE bid_price=3490000

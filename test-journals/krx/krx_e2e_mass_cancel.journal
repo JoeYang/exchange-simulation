@@ -1,0 +1,42 @@
+# KRX E2E: Mass cancel via individual cancel requests
+# Tests: Multiple orders from one account, cancelled individually.
+#         Verifies each cancel produces KRX_EXEC_CANCELLED and book clears.
+#
+# Note: The KRX E2E runner routes KRX_FIX_CANCEL to sim.cancel_order()
+#       which cancels by exchange-assigned OrderId. True mass-cancel-by-account
+#       is tested at the engine integration level (krx_integration_test.cc).
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Account 1 places 3 buy orders at different price levels
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=1 side=BUY price=3490000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=1 side=BUY price=3480000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+
+# Account 2 places a sell that should NOT be affected by cancels
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KS cl_ord_id=4 account=2 side=SELL price=3520000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4
+EXPECT KRX_MD_QUOTE ask_price=3520000
+
+# Cancel all 3 of account 1's orders
+ACTION KRX_FIX_CANCEL ts=5000 instrument=KS cl_ord_id=10 orig_cl_ord_id=1
+EXPECT KRX_EXEC_CANCELLED
+
+ACTION KRX_FIX_CANCEL ts=6000 instrument=KS cl_ord_id=11 orig_cl_ord_id=2
+EXPECT KRX_EXEC_CANCELLED
+
+ACTION KRX_FIX_CANCEL ts=7000 instrument=KS cl_ord_id=12 orig_cl_ord_id=3
+EXPECT KRX_EXEC_CANCELLED
+
+# Verify account 2's sell is still resting — place a crossing buy
+ACTION KRX_FIX_NEW_ORDER ts=8000 instrument=KS cl_ord_id=5 account=3 side=BUY price=3520000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=5
+EXPECT KRX_MD_TRADE price=3520000

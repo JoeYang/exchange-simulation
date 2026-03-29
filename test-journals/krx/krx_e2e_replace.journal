@@ -1,0 +1,34 @@
+# KRX E2E: Cancel-replace (modify) order
+# Tests: Place order, modify price via cancel-replace, modify qty,
+#         verify the modified order fills at the new price.
+#
+# KRX modify policy: cancel-replace (loses time priority, reuses OrderId).
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Place a buy limit at 350.0000 for 2 contracts
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=20000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+# Modify price up to 351.0000, keep qty at 2 contracts
+ACTION KRX_FIX_REPLACE ts=2000 instrument=KS cl_ord_id=2 orig_cl_ord_id=1 price=3510000 qty=20000
+EXPECT KRX_EXEC_REPLACED
+
+# Modify qty down to 1 contract at 351.0000
+ACTION KRX_FIX_REPLACE ts=3000 instrument=KS cl_ord_id=3 orig_cl_ord_id=1 price=3510000 qty=10000
+EXPECT KRX_EXEC_REPLACED
+
+# Place a sell at 351.0000 — crosses the modified buy.
+# The aggressive sell fills immediately against the resting buy.
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KS cl_ord_id=4 account=2 side=SELL price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_MD_TRADE price=3510000
+
+# Place new orders to verify the book is clear after the fill
+ACTION KRX_FIX_NEW_ORDER ts=5000 instrument=KS cl_ord_id=5 account=3 side=BUY price=3490000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_MD_QUOTE bid_price=3490000
+
+ACTION KRX_FIX_NEW_ORDER ts=6000 instrument=KS cl_ord_id=6 account=4 side=SELL price=3530000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_MD_QUOTE ask_price=3530000

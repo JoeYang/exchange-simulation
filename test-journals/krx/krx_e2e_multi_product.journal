@@ -1,0 +1,42 @@
+# KRX E2E: Multi-product cross-instrument isolation
+# Tests: Orders on KS, KTB, and USD are routed to separate engines.
+#         A fill on one instrument must not affect resting orders on another.
+#
+# Note: Exchange-assigned OrderIds may overlap across instruments (each
+#       engine allocates from 1). We test instruments sequentially —
+#       place + fill on one instrument before moving to the next — to
+#       avoid ID collisions in the shared exec publisher.
+#
+# Products:
+#   KS  (KOSPI200 Futures) — tick 500, lot 10000
+#   KTB (KTB 3Y Futures)   — tick 100, lot 10000
+#   USD (USD/KRW Futures)   — tick 1000, lot 10000
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# --- KS: place and fill ---
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+EXPECT KRX_MD_TRADE price=3500000
+
+# --- KTB: place and fill (KS book empty, no ID collision) ---
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KTB cl_ord_id=3 account=3 side=BUY price=1100000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+EXPECT KRX_MD_QUOTE bid_price=1100000
+
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KTB cl_ord_id=4 account=4 side=SELL price=1100000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4
+EXPECT KRX_MD_TRADE price=1100000
+
+# --- USD: place and fill (KS + KTB books empty) ---
+ACTION KRX_FIX_NEW_ORDER ts=5000 instrument=USD cl_ord_id=5 account=5 side=BUY price=13500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=5
+EXPECT KRX_MD_QUOTE bid_price=13500000
+
+ACTION KRX_FIX_NEW_ORDER ts=6000 instrument=USD cl_ord_id=6 account=6 side=SELL price=13500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=6
+EXPECT KRX_MD_TRADE price=13500000

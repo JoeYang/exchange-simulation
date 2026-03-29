@@ -1,0 +1,38 @@
+# KRX E2E: Iceberg order behaviour
+# Tests: Iceberg display quantity is not currently wired through the E2E
+#         journal runner (display_qty field not passed to OrderRequest).
+#         Full iceberg tranche-reveal testing is covered in unit tests
+#         (matching_engine_test.cc) and KRX integration tests.
+#
+#         This journal tests the related scenario: a large resting order
+#         filled in multiple tranches by successive aggressive orders,
+#         verifying correct partial/full fill semantics.
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+
+ACTION SESSION_START ts=0 state=CONTINUOUS
+
+# Large buy: 5 contracts at 350.0000
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3500000 qty=50000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+EXPECT KRX_MD_QUOTE bid_price=3500000
+
+# Sell 1 contract -> partial fill (tranche 1)
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+EXPECT KRX_MD_TRADE price=3500000
+
+# Sell 2 contracts -> partial fill (tranche 2)
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=3 side=SELL price=3500000 qty=20000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+EXPECT KRX_MD_TRADE price=3500000
+
+# Sell 2 contracts -> full fill (tranche 3, exhausts the 5-contract buy)
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KS cl_ord_id=4 account=4 side=SELL price=3500000 qty=20000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4
+EXPECT KRX_MD_TRADE price=3500000
+
+# Book should be empty — new sell rests
+ACTION KRX_FIX_NEW_ORDER ts=5000 instrument=KS cl_ord_id=5 account=5 side=SELL price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=5
+EXPECT KRX_MD_QUOTE ask_price=3510000

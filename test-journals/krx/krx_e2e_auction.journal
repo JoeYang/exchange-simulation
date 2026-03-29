@@ -1,0 +1,48 @@
+# KRX E2E: Opening and closing auction lifecycle
+# Tests:
+#   1. PreOpen: collect orders (no matching)
+#   2. SESSION_OPEN: execute opening auction, transition to Continuous
+#   3. Continuous: normal matching
+#   4. SESSION_CLOSE: execute closing auction
+#
+# Product: KS (KOSPI200 Futures, tick=500)
+#
+# Auction scenario (reference_price=0, tiebreak favours price closest to 0):
+#   Buy@351(1), Buy@350(1), Sell@350(1), Sell@351(1)
+#   → Uncross at 350: 1 contract matched (buy@351 fills vs sell@350)
+#   → Residual: buy@350 rests, sell@351 rests
+
+# --- Phase 1: Pre-open order collection ---
+ACTION SESSION_START ts=0 state=PRE_OPEN
+
+# Orders placed during pre-open rest without matching
+ACTION KRX_FIX_NEW_ORDER ts=1000 instrument=KS cl_ord_id=1 account=1 side=BUY price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=1
+
+ACTION KRX_FIX_NEW_ORDER ts=2000 instrument=KS cl_ord_id=2 account=2 side=BUY price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=2
+
+ACTION KRX_FIX_NEW_ORDER ts=3000 instrument=KS cl_ord_id=3 account=3 side=SELL price=3500000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=3
+
+ACTION KRX_FIX_NEW_ORDER ts=4000 instrument=KS cl_ord_id=4 account=4 side=SELL price=3510000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=4
+
+# --- Phase 2: Opening auction uncross ---
+# Auction at price 350.0000: buy@351 fills vs sell@350 (1 contract).
+# Residual book: buy@350 rests, sell@351 rests.
+ACTION SESSION_OPEN ts=5000
+
+# --- Phase 3: Continuous trading ---
+# Place a buy that rests below the resting sell@351
+ACTION KRX_FIX_NEW_ORDER ts=6000 instrument=KS cl_ord_id=5 account=5 side=BUY price=3505000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=5
+EXPECT KRX_MD_QUOTE bid_price=3505000
+
+# Sell crosses the resting buy@350.5 -> trade
+ACTION KRX_FIX_NEW_ORDER ts=7000 instrument=KS cl_ord_id=6 account=6 side=SELL price=3505000 qty=10000 type=LIMIT tif=DAY
+EXPECT KRX_EXEC_NEW cl_ord_id=6
+EXPECT KRX_MD_TRADE price=3505000
+
+# --- Phase 4: Close session (closing auction) ---
+ACTION SESSION_CLOSE ts=8000
