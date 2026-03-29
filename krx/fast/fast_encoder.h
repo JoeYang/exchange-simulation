@@ -205,6 +205,147 @@ inline size_t encode_snapshot(
 }
 
 // ---------------------------------------------------------------------------
+// Encode a FastInstrumentDef message.
+//
+// Wire layout: PMAP(1B) + TemplateID + instrument_id + symbol(8B raw) +
+//              description(32B raw) + product_group + tick_size + lot_size +
+//              max_order_size + total_instruments + timestamp
+// ---------------------------------------------------------------------------
+
+inline size_t encode_instrument_def(
+    uint8_t* buf, size_t buf_len, const FastInstrumentDef& msg)
+{
+    uint8_t* p = buf;
+    size_t remaining = buf_len;
+
+    PresenceMap pmap{};
+    pmap.set_bit(0);
+    p = encode_pmap(p, remaining, pmap);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, static_cast<uint64_t>(TemplateId::InstrumentDef));
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.instrument_id);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    // Fixed-length byte fields (no stop-bit encoding).
+    p = encode_bytes(p, remaining, msg.symbol, sizeof(msg.symbol));
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_bytes(p, remaining, msg.description, sizeof(msg.description));
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.product_group);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_i64(p, remaining, msg.tick_size);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_i64(p, remaining, msg.lot_size);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_i64(p, remaining, msg.max_order_size);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.total_instruments);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_i64(p, remaining, msg.timestamp);
+    if (!p) return 0;
+
+    return static_cast<size_t>(p - buf);
+}
+
+// ---------------------------------------------------------------------------
+// Encode a FastFullSnapshot message (template 6).
+//
+// Wire layout: PMAP(1B) + TemplateID + instrument_id + seq_num +
+//              num_bid_levels + num_ask_levels +
+//              [bid levels: price + qty + order_count] * num_bid +
+//              [ask levels: price + qty + order_count] * num_ask +
+//              timestamp
+// ---------------------------------------------------------------------------
+
+inline size_t encode_full_snapshot(
+    uint8_t* buf, size_t buf_len, const FastFullSnapshot& msg)
+{
+    uint8_t* p = buf;
+    size_t remaining = buf_len;
+
+    PresenceMap pmap{};
+    pmap.set_bit(0);
+    p = encode_pmap(p, remaining, pmap);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, static_cast<uint64_t>(TemplateId::FullSnapshot));
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.instrument_id);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.seq_num);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.num_bid_levels);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    p = encode_u64(p, remaining, msg.num_ask_levels);
+    if (!p) return 0;
+    remaining = buf_len - static_cast<size_t>(p - buf);
+
+    // Encode bid levels.
+    for (uint8_t i = 0; i < msg.num_bid_levels; ++i) {
+        p = encode_i64(p, remaining, msg.bids[i].price);
+        if (!p) return 0;
+        remaining = buf_len - static_cast<size_t>(p - buf);
+
+        p = encode_i64(p, remaining, msg.bids[i].quantity);
+        if (!p) return 0;
+        remaining = buf_len - static_cast<size_t>(p - buf);
+
+        p = encode_u64(p, remaining, msg.bids[i].order_count);
+        if (!p) return 0;
+        remaining = buf_len - static_cast<size_t>(p - buf);
+    }
+
+    // Encode ask levels.
+    for (uint8_t i = 0; i < msg.num_ask_levels; ++i) {
+        p = encode_i64(p, remaining, msg.asks[i].price);
+        if (!p) return 0;
+        remaining = buf_len - static_cast<size_t>(p - buf);
+
+        p = encode_i64(p, remaining, msg.asks[i].quantity);
+        if (!p) return 0;
+        remaining = buf_len - static_cast<size_t>(p - buf);
+
+        p = encode_u64(p, remaining, msg.asks[i].order_count);
+        if (!p) return 0;
+        remaining = buf_len - static_cast<size_t>(p - buf);
+    }
+
+    p = encode_i64(p, remaining, msg.timestamp);
+    if (!p) return 0;
+
+    return static_cast<size_t>(p - buf);
+}
+
+// ---------------------------------------------------------------------------
 // Convenience: encode from engine event types.
 // ---------------------------------------------------------------------------
 

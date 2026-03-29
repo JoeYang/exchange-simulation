@@ -325,14 +325,37 @@ inline const uint8_t* decode_pmap(
 }
 
 // ---------------------------------------------------------------------------
+// Fixed-length byte string encode/decode for FAST.
+//
+// Encodes/decodes a fixed-length char array as raw bytes (no stop-bit).
+// Used for symbol/description fields in InstrumentDef.
+// ---------------------------------------------------------------------------
+
+inline uint8_t* encode_bytes(uint8_t* buf, size_t buf_len,
+                             const char* src, size_t field_len) {
+    if (buf_len < field_len) return nullptr;
+    std::memcpy(buf, src, field_len);
+    return buf + field_len;
+}
+
+inline const uint8_t* decode_bytes(const uint8_t* buf, size_t buf_len,
+                                   char* dst, size_t field_len) {
+    if (buf_len < field_len) return nullptr;
+    std::memcpy(dst, buf, field_len);
+    return buf + field_len;
+}
+
+// ---------------------------------------------------------------------------
 // FAST message template IDs for KRX market data.
 // ---------------------------------------------------------------------------
 
 enum class TemplateId : uint32_t {
-    Quote    = 1,  // Top-of-book quote (bid/ask price + qty)
-    Trade    = 2,  // Trade execution (price, qty, aggressor side)
-    Status   = 3,  // Session/market status change
-    Snapshot = 4,  // Full order book snapshot (bid + ask levels)
+    Quote         = 1,  // Top-of-book quote (bid/ask price + qty)
+    Trade         = 2,  // Trade execution (price, qty, aggressor side)
+    Status        = 3,  // Session/market status change
+    Snapshot      = 4,  // Full order book snapshot (bid + ask levels)
+    InstrumentDef = 5,  // Security definition (secdef channel)
+    FullSnapshot  = 6,  // Full-depth book snapshot (snapshot channel)
 };
 
 // ---------------------------------------------------------------------------
@@ -381,9 +404,46 @@ struct FastSnapshot {
     int64_t timestamp{0};
 };
 
+struct FastInstrumentDef {
+    static constexpr TemplateId TEMPLATE_ID = TemplateId::InstrumentDef;
+
+    uint32_t instrument_id{0};      // unique ID from krx_products.h
+    char     symbol[8]{};           // null-padded (e.g. "KS\0\0\0\0\0\0")
+    char     description[32]{};     // null-padded
+    uint8_t  product_group{0};      // KrxProductGroup as uint8_t
+    int64_t  tick_size{0};          // engine fixed-point
+    int64_t  lot_size{0};           // engine fixed-point
+    int64_t  max_order_size{0};     // engine fixed-point
+    uint32_t total_instruments{0};  // total count (for completion detection)
+    int64_t  timestamp{0};          // epoch nanoseconds
+};
+
 // Maximum encoded size for any single FAST message.
-// Template ID (1 byte) + PMAP (2 bytes) + 7 fields * 10 bytes = 73.
-// Round up for safety.
-constexpr size_t kMaxFastEncodedSize = 128;
+// Maximum depth levels in a full snapshot.
+constexpr int kSnapshotBookDepth = 5;
+
+struct FastSnapshotLevel {
+    int64_t  price{0};
+    int64_t  quantity{0};
+    uint32_t order_count{0};
+};
+
+struct FastFullSnapshot {
+    static constexpr TemplateId TEMPLATE_ID = TemplateId::FullSnapshot;
+
+    uint32_t instrument_id{0};
+    uint32_t seq_num{0};            // for gap detection
+    uint8_t  num_bid_levels{0};
+    uint8_t  num_ask_levels{0};
+    FastSnapshotLevel bids[kSnapshotBookDepth]{};
+    FastSnapshotLevel asks[kSnapshotBookDepth]{};
+    int64_t  timestamp{0};
+};
+
+// Maximum encoded size for any single FAST message.
+// FullSnapshot is the largest: PMAP(2) + TemplateID(10) + instrument_id(5) +
+// seq_num(5) + num_bid(1) + num_ask(1) + 10 levels * (i64+i64+u32 = 25) +
+// timestamp(10) = ~284. Round up for safety.
+constexpr size_t kMaxFastEncodedSize = 512;
 
 }  // namespace exchange::krx::fast

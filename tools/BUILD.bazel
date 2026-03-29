@@ -410,6 +410,32 @@ cc_test(
     ],
 )
 
+# --- Secdef: KrxSecdefConsumer ---
+cc_library(
+    name = "krx_secdef",
+    hdrs = ["krx_secdef.h"],
+    deps = [
+        ":instrument_info",
+        ":secdef_consumer",
+        ":udp_multicast",
+        "//krx/fast:fast_decoder",
+        "//krx/fast:fast_encoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_secdef_test",
+    srcs = ["krx_secdef_test.cc"],
+    deps = [
+        ":krx_secdef",
+        ":udp_multicast",
+        "//krx:krx_products",
+        "//krx/fast:fast_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Display State (shared between observer and recovery strategies) ---
 cc_library(
     name = "display_state",
@@ -495,6 +521,32 @@ cc_test(
     ],
 )
 
+# --- KRX Recovery Strategy ---
+cc_library(
+    name = "krx_recovery",
+    hdrs = ["krx_recovery.h"],
+    deps = [
+        ":display_state",
+        ":recovery_strategy",
+        ":udp_multicast",
+        "//krx/fast:fast_decoder",
+        "//krx/fast:fast_encoder",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "krx_recovery_test",
+    srcs = ["krx_recovery_test.cc"],
+    deps = [
+        ":display_state",
+        ":krx_recovery",
+        ":udp_multicast",
+        "//krx/fast:fast_encoder",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # --- Simulation Exercise: Exchange Observer ---
 cc_binary(
     name = "exchange-observer",
@@ -506,6 +558,8 @@ cc_binary(
         ":ice_recovery",
         ":ice_secdef",
         ":instrument_info",
+        ":krx_recovery",
+        ":krx_secdef",
         ":null_recovery",
         ":recovery_strategy",
         ":udp_multicast",
@@ -513,6 +567,8 @@ cc_binary(
         "//ice/impact:impact_decoder",
         "//cme:cme_products",
         "//ice:ice_products",
+        "//krx:krx_products",
+        "//krx/fast:fast_decoder",
     ],
     visibility = ["//visibility:public"],
 )

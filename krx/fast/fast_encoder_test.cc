@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 
 namespace exchange::krx::fast {
 namespace {
@@ -231,6 +232,157 @@ TEST(FastEncoder, SnapshotBasic) {
     EXPECT_EQ(bc, 3u);
     EXPECT_EQ(ac, 5u);
     EXPECT_EQ(ts, 1234567890);
+}
+
+// ---------------------------------------------------------------------------
+// InstrumentDef encoding
+// ---------------------------------------------------------------------------
+
+TEST(FastEncoder, InstrumentDefBasic) {
+    FastInstrumentDef msg{};
+    msg.instrument_id = 1;
+    std::memcpy(msg.symbol, "KS\0\0\0\0\0\0", 8);
+    std::memcpy(msg.description, "KOSPI200 Futures", 16);
+    msg.product_group = 0;  // Futures
+    msg.tick_size = 500;
+    msg.lot_size = 10000;
+    msg.max_order_size = 30000000;
+    msg.total_instruments = 10;
+    msg.timestamp = 1711612800000000000LL;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_instrument_def(buf, sizeof(buf), msg);
+    ASSERT_GT(n, 0u);
+
+    // Verify template ID
+    TemplateId tid{};
+    const uint8_t* p = read_header(buf, n, tid);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(tid, TemplateId::InstrumentDef);
+
+    // Decode fields in order
+    size_t remaining = n - static_cast<size_t>(p - buf);
+
+    uint64_t instrument_id = 0;
+    p = decode_u64(p, remaining, instrument_id);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(instrument_id, 1u);
+    remaining = n - static_cast<size_t>(p - buf);
+
+    // symbol: 8 raw bytes
+    char symbol[8]{};
+    p = decode_bytes(p, remaining, symbol, 8);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(std::string(symbol, 2), "KS");
+    remaining = n - static_cast<size_t>(p - buf);
+
+    // description: 32 raw bytes
+    char desc[32]{};
+    p = decode_bytes(p, remaining, desc, 32);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(std::string(desc, 16), "KOSPI200 Futures");
+    remaining = n - static_cast<size_t>(p - buf);
+
+    uint64_t pg = 0;
+    p = decode_u64(p, remaining, pg);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(pg, 0u);
+    remaining = n - static_cast<size_t>(p - buf);
+
+    int64_t tick = 0;
+    p = decode_i64(p, remaining, tick);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(tick, 500);
+    remaining = n - static_cast<size_t>(p - buf);
+
+    int64_t lot = 0;
+    p = decode_i64(p, remaining, lot);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(lot, 10000);
+    remaining = n - static_cast<size_t>(p - buf);
+
+    int64_t max_ord = 0;
+    p = decode_i64(p, remaining, max_ord);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(max_ord, 30000000);
+    remaining = n - static_cast<size_t>(p - buf);
+
+    uint64_t total = 0;
+    p = decode_u64(p, remaining, total);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(total, 10u);
+    remaining = n - static_cast<size_t>(p - buf);
+
+    int64_t ts = 0;
+    p = decode_i64(p, remaining, ts);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(ts, 1711612800000000000LL);
+}
+
+// ---------------------------------------------------------------------------
+// FullSnapshot encoding
+// ---------------------------------------------------------------------------
+
+TEST(FastEncoder, FullSnapshotBasic) {
+    FastFullSnapshot msg{};
+    msg.instrument_id = 1;
+    msg.seq_num = 42;
+    msg.num_bid_levels = 3;
+    msg.num_ask_levels = 2;
+    msg.bids[0] = {3275000, 500000, 10};
+    msg.bids[1] = {3270000, 300000, 5};
+    msg.bids[2] = {3265000, 100000, 2};
+    msg.asks[0] = {3280000, 400000, 8};
+    msg.asks[1] = {3285000, 200000, 3};
+    msg.timestamp = 1711612800000000000LL;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_full_snapshot(buf, sizeof(buf), msg);
+    ASSERT_GT(n, 0u);
+
+    // Verify template ID
+    TemplateId tid{};
+    const uint8_t* p = read_header(buf, n, tid);
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(tid, TemplateId::FullSnapshot);
+}
+
+TEST(FastEncoder, FullSnapshotEmptyBook) {
+    FastFullSnapshot msg{};
+    msg.instrument_id = 5;
+    msg.seq_num = 1;
+    msg.num_bid_levels = 0;
+    msg.num_ask_levels = 0;
+    msg.timestamp = 100;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_full_snapshot(buf, sizeof(buf), msg);
+    ASSERT_GT(n, 0u);
+
+    TemplateId tid{};
+    read_header(buf, n, tid);
+    EXPECT_EQ(tid, TemplateId::FullSnapshot);
+}
+
+TEST(FastEncoder, FullSnapshotBufferTooSmall) {
+    FastFullSnapshot msg{};
+    msg.instrument_id = 1;
+    msg.num_bid_levels = 5;
+    msg.num_ask_levels = 5;
+
+    uint8_t buf[4]{};
+    size_t n = encode_full_snapshot(buf, sizeof(buf), msg);
+    EXPECT_EQ(n, 0u);
+}
+
+TEST(FastEncoder, InstrumentDefBufferTooSmall) {
+    FastInstrumentDef msg{};
+    msg.instrument_id = 1;
+    msg.tick_size = 500;
+
+    uint8_t buf[4]{};
+    size_t n = encode_instrument_def(buf, sizeof(buf), msg);
+    EXPECT_EQ(n, 0u);
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -15,15 +16,19 @@ namespace {
 // ---------------------------------------------------------------------------
 
 struct RoundtripVisitor : public FastDecoderVisitorBase {
-    std::vector<FastQuote>    quotes;
-    std::vector<FastTrade>    trades;
-    std::vector<FastStatus>   statuses;
-    std::vector<FastSnapshot> snapshots;
+    std::vector<FastQuote>         quotes;
+    std::vector<FastTrade>         trades;
+    std::vector<FastStatus>        statuses;
+    std::vector<FastSnapshot>      snapshots;
+    std::vector<FastInstrumentDef> instrument_defs;
+    std::vector<FastFullSnapshot>  full_snapshots;
 
     void on_quote(const FastQuote& q) { quotes.push_back(q); }
     void on_trade(const FastTrade& t) { trades.push_back(t); }
     void on_status(const FastStatus& s) { statuses.push_back(s); }
     void on_snapshot(const FastSnapshot& s) { snapshots.push_back(s); }
+    void on_instrument_def(const FastInstrumentDef& d) { instrument_defs.push_back(d); }
+    void on_full_snapshot(const FastFullSnapshot& s) { full_snapshots.push_back(s); }
 };
 
 // ---------------------------------------------------------------------------
@@ -401,6 +406,105 @@ TEST(FastCodecRoundtrip, EngineMarketStatusThroughCodec) {
     EXPECT_EQ(v.statuses[0].session_state,
               static_cast<uint8_t>(SessionState::VolatilityAuction));
     EXPECT_EQ(v.statuses[0].timestamp, 777);
+}
+
+// ---------------------------------------------------------------------------
+// InstrumentDef round-trip
+// ---------------------------------------------------------------------------
+
+TEST(FastCodecRoundtrip, InstrumentDefAllProducts) {
+    // Encode all 10 KRX products and verify round-trip.
+    const struct {
+        uint32_t id;
+        const char* sym;
+        const char* desc;
+        uint8_t group;
+        int64_t tick;
+        int64_t lot;
+        int64_t max_ord;
+    } products[] = {
+        {1, "KS",   "KOSPI200 Futures",       0, 500,  10000, 30000000},
+        {2, "MKS",  "Mini-KOSPI200 Futures",   0, 200,  10000, 50000000},
+        {9, "KTB",  "KTB 3-Year Futures",      3, 100,  10000, 30000000},
+    };
+
+    for (const auto& prod : products) {
+        FastInstrumentDef orig{};
+        orig.instrument_id = prod.id;
+        std::memset(orig.symbol, 0, sizeof(orig.symbol));
+        std::memcpy(orig.symbol, prod.sym, std::strlen(prod.sym));
+        std::memset(orig.description, 0, sizeof(orig.description));
+        std::memcpy(orig.description, prod.desc, std::strlen(prod.desc));
+        orig.product_group = prod.group;
+        orig.tick_size = prod.tick;
+        orig.lot_size = prod.lot;
+        orig.max_order_size = prod.max_ord;
+        orig.total_instruments = 10;
+        orig.timestamp = 1711612800000000000LL;
+
+        uint8_t buf[kMaxFastEncodedSize]{};
+        size_t n = encode_instrument_def(buf, sizeof(buf), orig);
+        ASSERT_GT(n, 0u) << "encode failed for " << prod.sym;
+
+        RoundtripVisitor v;
+        size_t consumed = decode_message(buf, n, v);
+        EXPECT_EQ(consumed, n) << "decode size mismatch for " << prod.sym;
+        ASSERT_EQ(v.instrument_defs.size(), 1u) << "no def for " << prod.sym;
+
+        const auto& d = v.instrument_defs[0];
+        EXPECT_EQ(d.instrument_id, prod.id);
+        EXPECT_EQ(std::string(d.symbol, std::strlen(prod.sym)), prod.sym);
+        EXPECT_EQ(d.product_group, prod.group);
+        EXPECT_EQ(d.tick_size, prod.tick);
+        EXPECT_EQ(d.lot_size, prod.lot);
+        EXPECT_EQ(d.max_order_size, prod.max_ord);
+        EXPECT_EQ(d.total_instruments, 10u);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FullSnapshot round-trip
+// ---------------------------------------------------------------------------
+
+TEST(FastCodecRoundtrip, FullSnapshotMaxDepth) {
+    FastFullSnapshot orig{};
+    orig.instrument_id = 1;
+    orig.seq_num = 999;
+    orig.num_bid_levels = kSnapshotBookDepth;
+    orig.num_ask_levels = kSnapshotBookDepth;
+    for (int i = 0; i < kSnapshotBookDepth; ++i) {
+        orig.bids[i] = {3275000 - i * 5000,
+                        static_cast<int64_t>((i + 1) * 100000),
+                        static_cast<uint32_t>(10 - i)};
+        orig.asks[i] = {3280000 + i * 5000,
+                        static_cast<int64_t>((i + 1) * 100000),
+                        static_cast<uint32_t>(8 - i)};
+    }
+    orig.timestamp = 1711612800000000000LL;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_full_snapshot(buf, sizeof(buf), orig);
+    ASSERT_GT(n, 0u);
+
+    RoundtripVisitor v;
+    size_t consumed = decode_message(buf, n, v);
+    EXPECT_EQ(consumed, n);
+    ASSERT_EQ(v.full_snapshots.size(), 1u);
+
+    const auto& s = v.full_snapshots[0];
+    EXPECT_EQ(s.instrument_id, orig.instrument_id);
+    EXPECT_EQ(s.seq_num, orig.seq_num);
+    EXPECT_EQ(s.num_bid_levels, kSnapshotBookDepth);
+    EXPECT_EQ(s.num_ask_levels, kSnapshotBookDepth);
+    for (int i = 0; i < kSnapshotBookDepth; ++i) {
+        EXPECT_EQ(s.bids[i].price, orig.bids[i].price) << "bid[" << i << "]";
+        EXPECT_EQ(s.bids[i].quantity, orig.bids[i].quantity) << "bid[" << i << "]";
+        EXPECT_EQ(s.bids[i].order_count, orig.bids[i].order_count) << "bid[" << i << "]";
+        EXPECT_EQ(s.asks[i].price, orig.asks[i].price) << "ask[" << i << "]";
+        EXPECT_EQ(s.asks[i].quantity, orig.asks[i].quantity) << "ask[" << i << "]";
+        EXPECT_EQ(s.asks[i].order_count, orig.asks[i].order_count) << "ask[" << i << "]";
+    }
+    EXPECT_EQ(s.timestamp, orig.timestamp);
 }
 
 // ---------------------------------------------------------------------------

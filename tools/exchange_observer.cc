@@ -9,12 +9,16 @@
 #include "cme/codec/mdp3_decoder.h"
 #include "ice/ice_products.h"
 #include "ice/impact/impact_decoder.h"
+#include "krx/fast/fast_decoder.h"
+#include "krx/krx_products.h"
 #include "tools/cme_recovery.h"
 #include "tools/cme_secdef.h"
 #include "tools/display_state.h"
 #include "tools/ice_recovery.h"
 #include "tools/ice_secdef.h"
 #include "tools/instrument_info.h"
+#include "tools/krx_recovery.h"
+#include "tools/krx_secdef.h"
 #include "tools/null_recovery.h"
 #include "tools/recovery_strategy.h"
 #include "tools/udp_multicast.h"
@@ -67,11 +71,11 @@ struct ObserverConfig {
 
 static void print_usage(const char* prog) {
     std::fprintf(stderr,
-        "Usage: %s --exchange cme|ice --group ADDR --port PORT\n"
+        "Usage: %s --exchange cme|ice|krx --group ADDR --port PORT\n"
         "          [--instrument SYMBOL] [--journal FILE]\n"
         "          [--auto-discover] [--secdef-group ADDR] [--secdef-port PORT]\n"
         "\n"
-        "  --exchange       cme or ice\n"
+        "  --exchange       cme, ice, or krx\n"
         "  --group          Multicast group address (e.g. 239.0.31.1)\n"
         "  --port           Multicast port\n"
         "  --instrument     Instrument symbol to filter (e.g. ES, B)\n"
@@ -136,8 +140,8 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
                              "(or use --auto-discover).\n");
         return false;
     }
-    if (cfg.exchange != "cme" && cfg.exchange != "ice") {
-        std::fprintf(stderr, "Error: --exchange must be 'cme' or 'ice'.\n");
+    if (cfg.exchange != "cme" && cfg.exchange != "ice" && cfg.exchange != "krx") {
+        std::fprintf(stderr, "Error: --exchange must be 'cme', 'ice', or 'krx'.\n");
         return false;
     }
     if (cfg.recovery != "none" && cfg.recovery != "snapshot" &&
@@ -155,6 +159,11 @@ static bool parse_args(int argc, char* argv[], ObserverConfig& cfg) {
     if (cfg.exchange == "ice" && cfg.recovery == "snapshot") {
         std::fprintf(stderr, "Error: --recovery snapshot is not valid for ICE "
                              "(use 'tcp').\n");
+        return false;
+    }
+    if (cfg.exchange == "krx" && cfg.recovery == "tcp") {
+        std::fprintf(stderr, "Error: --recovery tcp is not valid for KRX "
+                             "(use 'snapshot').\n");
         return false;
     }
     return true;
@@ -626,6 +635,79 @@ struct IceVisitor {
 };
 
 // ---------------------------------------------------------------------------
+// KRX FAST visitor
+// ---------------------------------------------------------------------------
+
+namespace krx_ns = exchange::krx::fast;
+
+struct KrxVisitor : public krx_ns::FastDecoderVisitorBase {
+    DisplayState&      ds;
+    JournalWriter&     journal;
+    TransitionLogger&  transitions;
+    std::string        instrument;
+
+    KrxVisitor(DisplayState& d, JournalWriter& j, TransitionLogger& t,
+               std::string sym)
+        : ds(d), journal(j), transitions(t), instrument(std::move(sym)) {}
+
+    void on_quote(const krx_ns::FastQuote& msg) {
+        // KRX quotes are top-of-book updates. Apply as single-level book.
+        // Bid side
+        if (msg.bid_price != 0) {
+            update_book_side(ds.bids, ds.bid_levels,
+                             msg.bid_price, static_cast<int32_t>(msg.bid_qty),
+                             1, false, true);
+            double dp = static_cast<double>(msg.bid_price) / 10000.0;
+            transitions.log_book_update(true, dp,
+                                        static_cast<int32_t>(msg.bid_qty),
+                                        ds.bid_levels, ds.ask_levels);
+        }
+        // Ask side
+        if (msg.ask_price != 0) {
+            update_book_side(ds.asks, ds.ask_levels,
+                             msg.ask_price, static_cast<int32_t>(msg.ask_qty),
+                             1, false, false);
+            double dp = static_cast<double>(msg.ask_price) / 10000.0;
+            transitions.log_book_update(false, dp,
+                                        static_cast<int32_t>(msg.ask_qty),
+                                        ds.bid_levels, ds.ask_levels);
+        }
+    }
+
+    void on_trade(const krx_ns::FastTrade& msg) {
+        // Map KRX side encoding (0=Buy, 1=Sell) to observer convention (1=Buy, 2=Sell).
+        uint8_t agg = (msg.aggressor_side == 0) ? 1 : 2;
+        record_trade(ds, msg.price, static_cast<int32_t>(msg.quantity),
+                     agg, static_cast<uint64_t>(msg.timestamp));
+        journal.write_trade(static_cast<uint64_t>(msg.timestamp), instrument,
+                            msg.price, static_cast<int32_t>(msg.quantity), agg);
+        double dp = static_cast<double>(msg.price) / 10000.0;
+        transitions.log_trade(dp, static_cast<int32_t>(msg.quantity), agg);
+    }
+
+    void on_status(const krx_ns::FastStatus& msg) {
+        auto state_enum = static_cast<exchange::SessionState>(msg.session_state);
+        const char* state = "UNKNOWN";
+        switch (state_enum) {
+            case exchange::SessionState::Closed:           state = "CLOSED"; break;
+            case exchange::SessionState::PreOpen:          state = "PRE_OPEN"; break;
+            case exchange::SessionState::OpeningAuction:   state = "OPENING_AUCTION"; break;
+            case exchange::SessionState::Continuous:       state = "OPEN"; break;
+            case exchange::SessionState::PreClose:         state = "PRE_CLOSE"; break;
+            case exchange::SessionState::ClosingAuction:   state = "CLOSING_AUCTION"; break;
+            case exchange::SessionState::Halt:             state = "HALT"; break;
+            case exchange::SessionState::VolatilityAuction:state = "VI_AUCTION"; break;
+            case exchange::SessionState::LockLimit:        state = "LOCK_LIMIT"; break;
+        }
+        journal.write_status(static_cast<uint64_t>(msg.timestamp), instrument, state);
+        transitions.log_status(state);
+    }
+
+    void on_snapshot(const krx_ns::FastSnapshot& /*msg*/) {}
+    void on_instrument_def(const krx_ns::FastInstrumentDef& /*msg*/) {}
+};
+
+// ---------------------------------------------------------------------------
 // Observer lifecycle logging
 // ---------------------------------------------------------------------------
 
@@ -664,6 +746,11 @@ static std::unique_ptr<RecoveryStrategy> create_recovery_strategy(
     const ObserverConfig& cfg, int32_t instrument_id)
 {
     if (cfg.recovery == "snapshot") {
+        if (cfg.exchange == "krx") {
+            return std::make_unique<KrxRecovery>(
+                cfg.snapshot_group, cfg.snapshot_port,
+                static_cast<uint32_t>(instrument_id));
+        }
         return std::make_unique<CmeRecovery>(
             cfg.snapshot_group, cfg.snapshot_port, instrument_id);
     }
@@ -692,6 +779,13 @@ static int32_t resolve_ice_instrument_id(const std::string& symbol) {
     return -1;
 }
 
+static int32_t resolve_krx_instrument_id(const std::string& symbol) {
+    for (const auto& p : exchange::krx::get_krx_products()) {
+        if (p.symbol == symbol) return static_cast<int32_t>(p.instrument_id);
+    }
+    return -1;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -712,6 +806,9 @@ int main(int argc, char* argv[]) {
         std::unique_ptr<exchange::SecdefConsumer> consumer;
         if (cfg.exchange == "cme") {
             consumer = std::make_unique<exchange::CmeSecdefConsumer>(
+                cfg.secdef_group, cfg.secdef_port);
+        } else if (cfg.exchange == "krx") {
+            consumer = std::make_unique<exchange::KrxSecdefConsumer>(
                 cfg.secdef_group, cfg.secdef_port);
         } else {
             // ICE secdef uses the same multicast channel as market data.
@@ -764,6 +861,8 @@ int main(int argc, char* argv[]) {
         // Legacy hardcoded lookup.
         if (cfg.exchange == "cme") {
             instrument_id = resolve_cme_security_id(cfg.instrument);
+        } else if (cfg.exchange == "krx") {
+            instrument_id = resolve_krx_instrument_id(cfg.instrument);
         } else {
             instrument_id = resolve_ice_instrument_id(cfg.instrument);
         }
@@ -829,6 +928,7 @@ int main(int argc, char* argv[]) {
     // Prepare visitors.
     CmeVisitor cme_visitor{ds, journal, transitions, instrument_id, cfg.instrument};
     IceVisitor ice_visitor{ds, journal, transitions, instrument_id, cfg.instrument, 0};
+    KrxVisitor krx_visitor(ds, journal, transitions, cfg.instrument);
 
     char buf[65536]; // max UDP datagram
 
@@ -895,6 +995,9 @@ int main(int argc, char* argv[]) {
                     size_t plen = msg.data.size() - sizeof(exchange::McastSeqHeader);
                     if (cfg.exchange == "cme") {
                         cme_ns::decode_mdp3_message(p, plen, cme_visitor);
+                    } else if (cfg.exchange == "krx") {
+                        krx_ns::decode_message(
+                            reinterpret_cast<const uint8_t*>(p), plen, krx_visitor);
                     } else {
                         ice_ns::decode_messages(p, plen, ice_visitor);
                     }
@@ -913,6 +1016,13 @@ int main(int argc, char* argv[]) {
                                                        cme_visitor);
                 if (rc != cme_ns::DecodeResult::kOk &&
                     rc != cme_ns::DecodeResult::kUnknownTemplateId) {
+                    ++ds.decode_errors;
+                }
+            } else if (cfg.exchange == "krx") {
+                size_t consumed = krx_ns::decode_message(
+                    reinterpret_cast<const uint8_t*>(payload),
+                    payload_len, krx_visitor);
+                if (consumed == 0 && payload_len > 0) {
                     ++ds.decode_errors;
                 }
             } else {

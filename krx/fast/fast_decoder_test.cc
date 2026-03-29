@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace exchange::krx::fast {
@@ -14,15 +15,19 @@ namespace {
 // ---------------------------------------------------------------------------
 
 struct RecordingVisitor : public FastDecoderVisitorBase {
-    std::vector<FastQuote>    quotes;
-    std::vector<FastTrade>    trades;
-    std::vector<FastStatus>   statuses;
-    std::vector<FastSnapshot> snapshots;
+    std::vector<FastQuote>         quotes;
+    std::vector<FastTrade>         trades;
+    std::vector<FastStatus>        statuses;
+    std::vector<FastSnapshot>      snapshots;
+    std::vector<FastInstrumentDef> instrument_defs;
+    std::vector<FastFullSnapshot>  full_snapshots;
 
     void on_quote(const FastQuote& q) { quotes.push_back(q); }
     void on_trade(const FastTrade& t) { trades.push_back(t); }
     void on_status(const FastStatus& s) { statuses.push_back(s); }
     void on_snapshot(const FastSnapshot& s) { snapshots.push_back(s); }
+    void on_instrument_def(const FastInstrumentDef& d) { instrument_defs.push_back(d); }
+    void on_full_snapshot(const FastFullSnapshot& s) { full_snapshots.push_back(s); }
 };
 
 // ---------------------------------------------------------------------------
@@ -135,6 +140,100 @@ TEST(FastDecoder, DecodeSnapshot) {
     EXPECT_EQ(s.bid_count, orig.bid_count);
     EXPECT_EQ(s.ask_count, orig.ask_count);
     EXPECT_EQ(s.timestamp, orig.timestamp);
+}
+
+// ---------------------------------------------------------------------------
+// InstrumentDef decode
+// ---------------------------------------------------------------------------
+
+TEST(FastDecoder, DecodeInstrumentDef) {
+    FastInstrumentDef orig{};
+    orig.instrument_id = 1;
+    std::memcpy(orig.symbol, "KS\0\0\0\0\0\0", 8);
+    std::memcpy(orig.description, "KOSPI200 Futures", 16);
+    orig.product_group = 0;
+    orig.tick_size = 500;
+    orig.lot_size = 10000;
+    orig.max_order_size = 30000000;
+    orig.total_instruments = 10;
+    orig.timestamp = 1711612800000000000LL;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_instrument_def(buf, sizeof(buf), orig);
+    ASSERT_GT(n, 0u);
+
+    RecordingVisitor visitor;
+    size_t consumed = decode_message(buf, n, visitor);
+    EXPECT_EQ(consumed, n);
+    ASSERT_EQ(visitor.instrument_defs.size(), 1u);
+
+    const auto& d = visitor.instrument_defs[0];
+    EXPECT_EQ(d.instrument_id, orig.instrument_id);
+    EXPECT_EQ(std::memcmp(d.symbol, orig.symbol, 8), 0);
+    EXPECT_EQ(std::memcmp(d.description, orig.description, 32), 0);
+    EXPECT_EQ(d.product_group, orig.product_group);
+    EXPECT_EQ(d.tick_size, orig.tick_size);
+    EXPECT_EQ(d.lot_size, orig.lot_size);
+    EXPECT_EQ(d.max_order_size, orig.max_order_size);
+    EXPECT_EQ(d.total_instruments, orig.total_instruments);
+    EXPECT_EQ(d.timestamp, orig.timestamp);
+}
+
+// ---------------------------------------------------------------------------
+// FullSnapshot decode
+// ---------------------------------------------------------------------------
+
+TEST(FastDecoder, DecodeFullSnapshot) {
+    FastFullSnapshot orig{};
+    orig.instrument_id = 1;
+    orig.seq_num = 42;
+    orig.num_bid_levels = 2;
+    orig.num_ask_levels = 2;
+    orig.bids[0] = {3275000, 500000, 10};
+    orig.bids[1] = {3270000, 300000, 5};
+    orig.asks[0] = {3280000, 400000, 8};
+    orig.asks[1] = {3285000, 200000, 3};
+    orig.timestamp = 1711612800000000000LL;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_full_snapshot(buf, sizeof(buf), orig);
+    ASSERT_GT(n, 0u);
+
+    RecordingVisitor visitor;
+    size_t consumed = decode_message(buf, n, visitor);
+    EXPECT_EQ(consumed, n);
+    ASSERT_EQ(visitor.full_snapshots.size(), 1u);
+
+    const auto& s = visitor.full_snapshots[0];
+    EXPECT_EQ(s.instrument_id, 1u);
+    EXPECT_EQ(s.seq_num, 42u);
+    EXPECT_EQ(s.num_bid_levels, 2);
+    EXPECT_EQ(s.num_ask_levels, 2);
+    EXPECT_EQ(s.bids[0].price, 3275000);
+    EXPECT_EQ(s.bids[0].quantity, 500000);
+    EXPECT_EQ(s.bids[0].order_count, 10u);
+    EXPECT_EQ(s.bids[1].price, 3270000);
+    EXPECT_EQ(s.asks[0].price, 3280000);
+    EXPECT_EQ(s.asks[1].order_count, 3u);
+    EXPECT_EQ(s.timestamp, 1711612800000000000LL);
+}
+
+TEST(FastDecoder, DecodeFullSnapshotEmptyBook) {
+    FastFullSnapshot orig{};
+    orig.instrument_id = 5;
+    orig.seq_num = 1;
+    orig.timestamp = 100;
+
+    uint8_t buf[kMaxFastEncodedSize]{};
+    size_t n = encode_full_snapshot(buf, sizeof(buf), orig);
+    ASSERT_GT(n, 0u);
+
+    RecordingVisitor visitor;
+    size_t consumed = decode_message(buf, n, visitor);
+    EXPECT_EQ(consumed, n);
+    ASSERT_EQ(visitor.full_snapshots.size(), 1u);
+    EXPECT_EQ(visitor.full_snapshots[0].num_bid_levels, 0);
+    EXPECT_EQ(visitor.full_snapshots[0].num_ask_levels, 0);
 }
 
 // ---------------------------------------------------------------------------

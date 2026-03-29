@@ -30,6 +30,8 @@ public:
     void on_trade(const FastTrade&) {}
     void on_status(const FastStatus&) {}
     void on_snapshot(const FastSnapshot&) {}
+    void on_instrument_def(const FastInstrumentDef&) {}
+    void on_full_snapshot(const FastFullSnapshot&) {}
 };
 
 // ---------------------------------------------------------------------------
@@ -162,6 +164,134 @@ inline const uint8_t* decode_snapshot_fields(
 }
 
 // ---------------------------------------------------------------------------
+// Decode a single InstrumentDef message.
+// ---------------------------------------------------------------------------
+
+inline const uint8_t* decode_instrument_def_fields(
+    const uint8_t* buf, size_t len, FastInstrumentDef& msg)
+{
+    const uint8_t* p = buf;
+    size_t remaining = len;
+
+    uint64_t iid = 0;
+    p = decode_u64(p, remaining, iid);
+    if (!p) return nullptr;
+    msg.instrument_id = static_cast<uint32_t>(iid);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    p = decode_bytes(p, remaining, msg.symbol, sizeof(msg.symbol));
+    if (!p) return nullptr;
+    remaining = len - static_cast<size_t>(p - buf);
+
+    p = decode_bytes(p, remaining, msg.description, sizeof(msg.description));
+    if (!p) return nullptr;
+    remaining = len - static_cast<size_t>(p - buf);
+
+    uint64_t pg = 0;
+    p = decode_u64(p, remaining, pg);
+    if (!p) return nullptr;
+    msg.product_group = static_cast<uint8_t>(pg);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    p = decode_i64(p, remaining, msg.tick_size);
+    if (!p) return nullptr;
+    remaining = len - static_cast<size_t>(p - buf);
+
+    p = decode_i64(p, remaining, msg.lot_size);
+    if (!p) return nullptr;
+    remaining = len - static_cast<size_t>(p - buf);
+
+    p = decode_i64(p, remaining, msg.max_order_size);
+    if (!p) return nullptr;
+    remaining = len - static_cast<size_t>(p - buf);
+
+    uint64_t total = 0;
+    p = decode_u64(p, remaining, total);
+    if (!p) return nullptr;
+    msg.total_instruments = static_cast<uint32_t>(total);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    p = decode_i64(p, remaining, msg.timestamp);
+    if (!p) return nullptr;
+
+    return p;
+}
+
+// ---------------------------------------------------------------------------
+// Decode a single FullSnapshot message.
+// ---------------------------------------------------------------------------
+
+inline const uint8_t* decode_full_snapshot_fields(
+    const uint8_t* buf, size_t len, FastFullSnapshot& msg)
+{
+    const uint8_t* p = buf;
+    size_t remaining = len;
+
+    uint64_t iid = 0;
+    p = decode_u64(p, remaining, iid);
+    if (!p) return nullptr;
+    msg.instrument_id = static_cast<uint32_t>(iid);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    uint64_t seq = 0;
+    p = decode_u64(p, remaining, seq);
+    if (!p) return nullptr;
+    msg.seq_num = static_cast<uint32_t>(seq);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    uint64_t nb = 0;
+    p = decode_u64(p, remaining, nb);
+    if (!p) return nullptr;
+    msg.num_bid_levels = static_cast<uint8_t>(nb);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    uint64_t na = 0;
+    p = decode_u64(p, remaining, na);
+    if (!p) return nullptr;
+    msg.num_ask_levels = static_cast<uint8_t>(na);
+    remaining = len - static_cast<size_t>(p - buf);
+
+    // Decode bid levels.
+    for (uint8_t i = 0; i < msg.num_bid_levels && i < kSnapshotBookDepth; ++i) {
+        p = decode_i64(p, remaining, msg.bids[i].price);
+        if (!p) return nullptr;
+        remaining = len - static_cast<size_t>(p - buf);
+
+        p = decode_i64(p, remaining, msg.bids[i].quantity);
+        if (!p) return nullptr;
+        remaining = len - static_cast<size_t>(p - buf);
+
+        uint64_t oc = 0;
+        p = decode_u64(p, remaining, oc);
+        if (!p) return nullptr;
+        msg.bids[i].order_count = static_cast<uint32_t>(oc);
+        remaining = len - static_cast<size_t>(p - buf);
+    }
+
+    // Decode ask levels.
+    for (uint8_t i = 0; i < msg.num_ask_levels && i < kSnapshotBookDepth; ++i) {
+        p = decode_i64(p, remaining, msg.asks[i].price);
+        if (!p) return nullptr;
+        remaining = len - static_cast<size_t>(p - buf);
+
+        p = decode_i64(p, remaining, msg.asks[i].quantity);
+        if (!p) return nullptr;
+        remaining = len - static_cast<size_t>(p - buf);
+
+        uint64_t oc = 0;
+        p = decode_u64(p, remaining, oc);
+        if (!p) return nullptr;
+        msg.asks[i].order_count = static_cast<uint32_t>(oc);
+        remaining = len - static_cast<size_t>(p - buf);
+    }
+
+    p = decode_i64(p, remaining, msg.timestamp);
+    if (!p) return nullptr;
+
+    return p;
+}
+
+// ---------------------------------------------------------------------------
 // decode_message() — decode a single FAST message and dispatch to visitor.
 //
 // Reads PMAP + template ID, then dispatches to the appropriate field
@@ -216,6 +346,20 @@ size_t decode_message(const uint8_t* buf, size_t len, VisitorT& visitor) {
             p = decode_snapshot_fields(p, remaining, msg);
             if (!p) return 0;
             visitor.on_snapshot(msg);
+            break;
+        }
+        case TemplateId::InstrumentDef: {
+            FastInstrumentDef msg{};
+            p = decode_instrument_def_fields(p, remaining, msg);
+            if (!p) return 0;
+            visitor.on_instrument_def(msg);
+            break;
+        }
+        case TemplateId::FullSnapshot: {
+            FastFullSnapshot msg{};
+            p = decode_full_snapshot_fields(p, remaining, msg);
+            if (!p) return 0;
+            visitor.on_full_snapshot(msg);
             break;
         }
         default:
