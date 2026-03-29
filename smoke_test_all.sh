@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
+# NOTE: NOT using set -e — we handle errors explicitly via report()
 
 # Exchange Smoke Test — All Exchanges
 # Tests: sim startup, order entry, market data flow, observer receives data
@@ -11,16 +12,18 @@ PASS=0
 FAIL=0
 RESULTS=()
 
+ALL_PIDS=()
+
 cleanup() {
-    # Kill any leftover processes
-    pkill -f "cme-sim.*smoke" 2>/dev/null || true
-    pkill -f "ice-sim.*smoke" 2>/dev/null || true
-    pkill -f "krx-sim.*smoke" 2>/dev/null || true
-    pkill -f "exchange-observer.*smoke" 2>/dev/null || true
-    pkill -f "exchange-trader.*smoke" 2>/dev/null || true
-    pkill -f "ilink3-send-order" 2>/dev/null || true
+    # Kill all tracked PIDs
+    for pid in "${ALL_PIDS[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    for pid in "${ALL_PIDS[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+    ALL_PIDS=()
     rm -f /dev/shm/smoke-* 2>/dev/null || true
-    rm -f /tmp/smoke_*.log 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -55,6 +58,7 @@ test_cme() {
     bazel-bin/cme/cme-sim --shm-path /smoke-cme \
         > /tmp/smoke_cme_sim.log 2>&1 &
     local SIM_PID=$!
+    ALL_PIDS+=($SIM_PID)
     sleep 2
 
     if ! kill -0 $SIM_PID 2>/dev/null; then
@@ -69,8 +73,9 @@ test_cme() {
     bazel-bin/tools/exchange-observer --exchange cme \
         --group 239.0.31.1 --port 14310 --instrument ES \
         --transitions --journal /tmp/smoke_cme_observer.journal \
-        > /tmp/smoke_cme_obs.log 2>&1 &
+        > /tmp/smoke_cme_obs.log 2>/tmp/smoke_cme_obs_err.log &
     local OBS_PID=$!
+    ALL_PIDS+=($OBS_PID)
     sleep 1
 
     # Send crossing orders
@@ -94,13 +99,19 @@ test_cme() {
         report "CME observer received data" "FAIL"
     fi
 
-    # Check for trade in observer transitions
-    if grep -q "TRADE" /tmp/smoke_cme_obs.log 2>/dev/null; then
-        report "CME trade visible in observer" "PASS"
+    # Check for trade in observer (transitions on stderr, journal on disk)
+    if grep -q "TRADE" /tmp/smoke_cme_obs_err.log 2>/dev/null; then
+        report "CME trade visible in transitions" "PASS"
     elif grep -q "TRADE" /tmp/smoke_cme_observer.journal 2>/dev/null; then
-        report "CME trade in journal (transitions may be on stderr)" "PASS"
+        report "CME trade visible in journal" "PASS"
+    elif grep -q "TRADE" /tmp/smoke_cme_obs.log 2>/dev/null; then
+        report "CME trade visible in stdout" "PASS"
     else
         report "CME trade visible" "FAIL"
+        echo "  Debug: sim log:" && tail -5 /tmp/smoke_cme_sim.log 2>/dev/null || true
+        echo "  Debug: observer stderr:" && tail -5 /tmp/smoke_cme_obs_err.log 2>/dev/null || true
+        echo "  Debug: order1:" && cat /tmp/smoke_cme_order1.log 2>/dev/null || true
+        echo "  Debug: order2:" && cat /tmp/smoke_cme_order2.log 2>/dev/null || true
     fi
 
     kill $OBS_PID 2>/dev/null || true
@@ -120,6 +131,7 @@ test_ice() {
     bazel-bin/ice/ice-sim --shm-path /smoke-ice \
         > /tmp/smoke_ice_sim.log 2>&1 &
     local SIM_PID=$!
+    ALL_PIDS+=($SIM_PID)
     sleep 2
 
     if ! kill -0 $SIM_PID 2>/dev/null; then
@@ -134,8 +146,9 @@ test_ice() {
     bazel-bin/tools/exchange-observer --exchange ice \
         --group 239.0.32.1 --port 14400 --instrument B \
         --transitions --journal /tmp/smoke_ice_observer.journal \
-        > /tmp/smoke_ice_obs.log 2>&1 &
+        > /tmp/smoke_ice_obs.log 2>/tmp/smoke_ice_obs_err.log &
     local OBS_PID=$!
+    ALL_PIDS+=($OBS_PID)
     sleep 1
 
     # Send orders via trader (3 seconds of random-walk)
@@ -163,11 +176,14 @@ test_ice() {
         report "ICE observer received data" "FAIL"
     fi
 
-    if grep -q "TRADE" /tmp/smoke_ice_obs.log 2>/dev/null || \
-       grep -q "TRADE" /tmp/smoke_ice_observer.journal 2>/dev/null; then
+    if grep -q "TRADE" /tmp/smoke_ice_obs_err.log 2>/dev/null || \
+       grep -q "TRADE" /tmp/smoke_ice_observer.journal 2>/dev/null || \
+       grep -q "TRADE" /tmp/smoke_ice_obs.log 2>/dev/null; then
         report "ICE trade visible" "PASS"
     else
         report "ICE trade visible" "FAIL"
+        echo "  Debug: sim log:" && tail -5 /tmp/smoke_ice_sim.log 2>/dev/null || true
+        echo "  Debug: observer stderr:" && tail -5 /tmp/smoke_ice_obs_err.log 2>/dev/null || true
     fi
 
     kill $OBS_PID $SIM_PID $T1_PID $T2_PID 2>/dev/null || true
@@ -185,6 +201,7 @@ test_krx() {
     bazel-bin/krx/krx-sim --shm-path /smoke-krx \
         > /tmp/smoke_krx_sim.log 2>&1 &
     local SIM_PID=$!
+    ALL_PIDS+=($SIM_PID)
     sleep 2
 
     if ! kill -0 $SIM_PID 2>/dev/null; then
@@ -199,8 +216,9 @@ test_krx() {
     bazel-bin/tools/exchange-observer --exchange krx \
         --group 224.0.33.1 --port 16000 --instrument KS \
         --transitions --journal /tmp/smoke_krx_observer.journal \
-        > /tmp/smoke_krx_obs.log 2>&1 &
+        > /tmp/smoke_krx_obs.log 2>/tmp/smoke_krx_obs_err.log &
     local OBS_PID=$!
+    ALL_PIDS+=($OBS_PID)
     sleep 1
 
     # Send orders via trader
@@ -228,11 +246,16 @@ test_krx() {
         report "KRX observer received data" "FAIL"
     fi
 
-    if grep -q "TRADE" /tmp/smoke_krx_obs.log 2>/dev/null || \
-       grep -q "TRADE" /tmp/smoke_krx_observer.journal 2>/dev/null; then
+    if grep -q "TRADE" /tmp/smoke_krx_obs_err.log 2>/dev/null || \
+       grep -q "TRADE" /tmp/smoke_krx_observer.journal 2>/dev/null || \
+       grep -q "TRADE" /tmp/smoke_krx_obs.log 2>/dev/null; then
         report "KRX trade visible" "PASS"
     else
         report "KRX trade visible" "FAIL"
+        echo "  Debug: sim log:" && tail -5 /tmp/smoke_krx_sim.log 2>/dev/null || true
+        echo "  Debug: observer stderr:" && tail -5 /tmp/smoke_krx_obs_err.log 2>/dev/null || true
+        echo "  Debug: trader1:" && tail -5 /tmp/smoke_krx_trader1.log 2>/dev/null || true
+        echo "  Debug: trader2:" && tail -5 /tmp/smoke_krx_trader2.log 2>/dev/null || true
     fi
 
     kill $OBS_PID $SIM_PID $T1_PID $T2_PID 2>/dev/null || true
