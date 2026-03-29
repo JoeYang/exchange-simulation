@@ -52,7 +52,7 @@ test_cme() {
     echo "[CME] Starting CME smoke test..."
 
     # Start sim
-    bazel-bin/cme/cme-sim --ilink3-port 9200 --shm-path /smoke-cme \
+    bazel-bin/cme/cme-sim --shm-path /smoke-cme \
         > /tmp/smoke_cme_sim.log 2>&1 &
     local SIM_PID=$!
     sleep 2
@@ -74,13 +74,13 @@ test_cme() {
     sleep 1
 
     # Send crossing orders
-    timeout 5 bazel-bin/tools/ilink3-send-order --port 9200 \
+    timeout 5 bazel-bin/tools/ilink3-send-order --port 9100 \
         --instrument ES --side BUY --price 5000.00 --qty 10 \
         --type LIMIT --tif DAY --account 1 \
         > /tmp/smoke_cme_order1.log 2>&1 || true
     sleep 0.5
 
-    timeout 5 bazel-bin/tools/ilink3-send-order --port 9200 \
+    timeout 5 bazel-bin/tools/ilink3-send-order --port 9100 \
         --instrument ES --side SELL --price 5000.00 --qty 10 \
         --type LIMIT --tif DAY --account 2 \
         > /tmp/smoke_cme_order2.log 2>&1 || true
@@ -117,7 +117,7 @@ test_ice() {
     echo "[ICE] Starting ICE smoke test..."
 
     # Start sim
-    bazel-bin/ice/ice-sim --fix-port 9300 --shm-path /smoke-ice \
+    bazel-bin/ice/ice-sim --shm-path /smoke-ice \
         > /tmp/smoke_ice_sim.log 2>&1 &
     local SIM_PID=$!
     sleep 2
@@ -132,7 +132,7 @@ test_ice() {
 
     # Start observer
     bazel-bin/tools/exchange-observer --exchange ice \
-        --group 239.0.32.1 --port 15000 --instrument B \
+        --group 239.0.32.1 --port 14400 --instrument B \
         --transitions --journal /tmp/smoke_ice_observer.journal \
         > /tmp/smoke_ice_obs.log 2>&1 &
     local OBS_PID=$!
@@ -140,14 +140,14 @@ test_ice() {
 
     # Send orders via trader (3 seconds of random-walk)
     timeout 4 bazel-bin/tools/exchange-trader --exchange ice \
-        --host 127.0.0.1 --port 9300 \
+        --host 127.0.0.1 --port 9200 \
         --client-id 1 --account 1 --instrument B \
         --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 10 \
         > /tmp/smoke_ice_trader1.log 2>&1 &
     local T1_PID=$!
 
     timeout 4 bazel-bin/tools/exchange-trader --exchange ice \
-        --host 127.0.0.1 --port 9300 \
+        --host 127.0.0.1 --port 9200 \
         --client-id 2 --account 2 --instrument B \
         --strategy random-walk --ref-price 82.00 --spread 0.50 --rate 10 \
         > /tmp/smoke_ice_trader2.log 2>&1 &
@@ -182,7 +182,7 @@ test_krx() {
     echo "[KRX] Starting KRX smoke test..."
 
     # Start sim
-    bazel-bin/krx/krx-sim --fix-port 9400 --shm-path /smoke-krx \
+    bazel-bin/krx/krx-sim --shm-path /smoke-krx \
         > /tmp/smoke_krx_sim.log 2>&1 &
     local SIM_PID=$!
     sleep 2
@@ -197,7 +197,7 @@ test_krx() {
 
     # Start observer
     bazel-bin/tools/exchange-observer --exchange krx \
-        --group 239.1.1.1 --port 16000 --instrument KS \
+        --group 224.0.33.1 --port 16000 --instrument KS \
         --transitions --journal /tmp/smoke_krx_observer.journal \
         > /tmp/smoke_krx_obs.log 2>&1 &
     local OBS_PID=$!
@@ -205,14 +205,14 @@ test_krx() {
 
     # Send orders via trader
     timeout 4 bazel-bin/tools/exchange-trader --exchange krx \
-        --host 127.0.0.1 --port 9400 \
+        --host 127.0.0.1 --port 9300 \
         --client-id 1 --account 1 --instrument KS \
         --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 10 \
         > /tmp/smoke_krx_trader1.log 2>&1 &
     local T1_PID=$!
 
     timeout 4 bazel-bin/tools/exchange-trader --exchange krx \
-        --host 127.0.0.1 --port 9400 \
+        --host 127.0.0.1 --port 9300 \
         --client-id 2 --account 2 --instrument KS \
         --strategy random-walk --ref-price 350.00 --spread 1.00 --rate 10 \
         > /tmp/smoke_krx_trader2.log 2>&1 &
